@@ -1,194 +1,216 @@
 #!/bin/bash
-
 # Launch MCP Tool Services
 # This script starts the various MCP tool services required for the smart-agent to function properly
 
-# Default settings
-PYTHON_REPL_DATA_DIR="python_repl_storage"
+set -e
+
+# Default values
+CONFIG_FILE="config/tools.yaml"
+PYTHON_REPL_DATA="python_repl_storage"
 PYTHON_REPL_PORT=8000
-LAUNCH_PYTHON_REPL=true
-
-THINK_TOOL_REPO="git+https://github.com/ddkang1/mcp-think-tool"
 THINK_TOOL_PORT=8001
-LAUNCH_THINK_TOOL=true
-
-SEARCH_TOOL_REPO="git+https://github.com/ddkang1/ddg-mcp"
 SEARCH_TOOL_PORT=8002
-LAUNCH_SEARCH_TOOL=true
+ENABLE_PYTHON_REPL=true
+ENABLE_THINK_TOOL=true
+ENABLE_SEARCH_TOOL=true
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --no-python-repl)
-      LAUNCH_PYTHON_REPL=false
+    --config=*)
+      CONFIG_FILE="${1#*=}"
       shift
       ;;
     --python-repl-data=*)
-      PYTHON_REPL_DATA_DIR="${1#*=}"
+      PYTHON_REPL_DATA="${1#*=}"
       shift
       ;;
     --python-repl-port=*)
       PYTHON_REPL_PORT="${1#*=}"
       shift
       ;;
-    --no-think-tool)
-      LAUNCH_THINK_TOOL=false
-      shift
-      ;;
     --think-tool-port=*)
       THINK_TOOL_PORT="${1#*=}"
-      shift
-      ;;
-    --think-tool-repo=*)
-      THINK_TOOL_REPO="${1#*=}"
-      shift
-      ;;
-    --no-search-tool)
-      LAUNCH_SEARCH_TOOL=false
       shift
       ;;
     --search-tool-port=*)
       SEARCH_TOOL_PORT="${1#*=}"
       shift
       ;;
-    --search-tool-repo=*)
-      SEARCH_TOOL_REPO="${1#*=}"
+    --no-python-repl)
+      ENABLE_PYTHON_REPL=false
+      shift
+      ;;
+    --no-think-tool)
+      ENABLE_THINK_TOOL=false
+      shift
+      ;;
+    --no-search-tool)
+      ENABLE_SEARCH_TOOL=false
       shift
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--no-python-repl] [--python-repl-data=DIR] [--python-repl-port=PORT]"
-      echo "          [--no-think-tool] [--think-tool-port=PORT] [--think-tool-repo=REPO]"
-      echo "          [--no-search-tool] [--search-tool-port=PORT] [--search-tool-repo=REPO]"
       exit 1
       ;;
   esac
 done
 
-# Function to check if a service is running
-is_service_running() {
-    local service_pattern=$1
-    pgrep -f "$service_pattern" > /dev/null
+# Function to parse YAML using Python
+parse_yaml() {
+  local file=$1
+  local tool=$2
+  local property=$3
+  python3 -c "
+import yaml
+try:
+    with open('$file', 'r') as f:
+        config = yaml.safe_load(f)
+    print(config.get('tools', {}).get('$tool', {}).get('$property', ''))
+except Exception as e:
+    print('')
+"
 }
 
-# Function to launch Python REPL tool
-launch_python_repl() {
-    # Create data directory if it doesn't exist
-    mkdir -p "$PYTHON_REPL_DATA_DIR"
-    echo "Created directory for Python REPL tool: $PYTHON_REPL_DATA_DIR"
-
-    # Check if the service is already running
-    if is_service_running "supergateway.*mcp-py-repl.*$PYTHON_REPL_PORT"; then
-        echo "MCP Python REPL service is already running on port $PYTHON_REPL_PORT."
-        return 0
+# Check if config file exists and load values from it
+if [ -f "$CONFIG_FILE" ]; then
+  echo "Loading tool configuration from $CONFIG_FILE"
+  
+  # Only override if not explicitly set via command line
+  if [ "$ENABLE_PYTHON_REPL" = true ]; then
+    PYTHON_TOOL_REPO=$(parse_yaml "$CONFIG_FILE" "python_tool" "repository")
+    PYTHON_TOOL_ENABLED=$(parse_yaml "$CONFIG_FILE" "python_tool" "enabled")
+    if [ -n "$PYTHON_TOOL_ENABLED" ] && [ "$PYTHON_TOOL_ENABLED" = "false" ]; then
+      ENABLE_PYTHON_REPL=false
     fi
-
-    echo "Launching MCP Python REPL service on port $PYTHON_REPL_PORT..."
-    echo "Data will be stored in: $PYTHON_REPL_DATA_DIR"
-    
-    # Run the MCP Python REPL service
-    npx -y supergateway \
-        --stdio "docker run -i --rm --pull=always -v ./$PYTHON_REPL_DATA_DIR:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest" \
-        --port "$PYTHON_REPL_PORT" --baseUrl "http://localhost:$PYTHON_REPL_PORT" \
-        --ssePath /sse --messagePath /message &
-    
-    # Store the PID
-    PYTHON_REPL_PID=$!
-    echo "Python REPL service started with PID: $PYTHON_REPL_PID"
-    
-    # Add to PIDs array
-    TOOL_PIDS+=($PYTHON_REPL_PID)
-}
-
-# Function to launch Think Tool
-launch_think_tool() {
-    # Check if the service is already running
-    if is_service_running "supergateway.*mcp-think-tool.*$THINK_TOOL_PORT"; then
-        echo "MCP Think Tool service is already running on port $THINK_TOOL_PORT."
-        return 0
+  fi
+  
+  if [ "$ENABLE_THINK_TOOL" = true ]; then
+    THINK_TOOL_REPO=$(parse_yaml "$CONFIG_FILE" "think_tool" "repository")
+    THINK_TOOL_ENABLED=$(parse_yaml "$CONFIG_FILE" "think_tool" "enabled")
+    if [ -n "$THINK_TOOL_ENABLED" ] && [ "$THINK_TOOL_ENABLED" = "false" ]; then
+      ENABLE_THINK_TOOL=false
     fi
-
-    echo "Launching MCP Think Tool service on port $THINK_TOOL_PORT..."
-    
-    # Run the MCP Think Tool service
-    npx -y supergateway \
-        --stdio "uvx --from $THINK_TOOL_REPO mcp-think-tool" \
-        --port "$THINK_TOOL_PORT" --baseUrl "http://localhost:$THINK_TOOL_PORT" \
-        --ssePath /sse --messagePath /message &
-    
-    # Store the PID
-    THINK_TOOL_PID=$!
-    echo "Think Tool service started with PID: $THINK_TOOL_PID"
-    
-    # Add to PIDs array
-    TOOL_PIDS+=($THINK_TOOL_PID)
-}
-
-# Function to launch Search Tool
-launch_search_tool() {
-    # Check if the service is already running
-    if is_service_running "supergateway.*ddg-mcp.*$SEARCH_TOOL_PORT"; then
-        echo "MCP Search Tool service is already running on port $SEARCH_TOOL_PORT."
-        return 0
+  fi
+  
+  if [ "$ENABLE_SEARCH_TOOL" = true ]; then
+    SEARCH_TOOL_REPO=$(parse_yaml "$CONFIG_FILE" "search_tool" "repository")
+    SEARCH_TOOL_ENABLED=$(parse_yaml "$CONFIG_FILE" "search_tool" "enabled")
+    if [ -n "$SEARCH_TOOL_ENABLED" ] && [ "$SEARCH_TOOL_ENABLED" = "false" ]; then
+      ENABLE_SEARCH_TOOL=false
     fi
-
-    echo "Launching MCP Search Tool service on port $SEARCH_TOOL_PORT..."
-    
-    # Run the MCP Search Tool service
-    npx -y supergateway \
-        --stdio "uvx --from $SEARCH_TOOL_REPO ddg-mcp" \
-        --port "$SEARCH_TOOL_PORT" --baseUrl "http://localhost:$SEARCH_TOOL_PORT" \
-        --ssePath /sse --messagePath /message &
-    
-    # Store the PID
-    SEARCH_TOOL_PID=$!
-    echo "Search Tool service started with PID: $SEARCH_TOOL_PID"
-    
-    # Add to PIDs array
-    TOOL_PIDS+=($SEARCH_TOOL_PID)
-}
-
-# Main execution
-echo "Launching MCP Tool Services..."
-echo "These services need to be running for smart-agent to function properly."
-echo "Press Ctrl+C to stop all services when you're done."
-echo ""
-
-# Initialize array to store PIDs
-TOOL_PIDS=()
-
-# Launch requested services
-if [ "$LAUNCH_PYTHON_REPL" = true ]; then
-    launch_python_repl
+  fi
 fi
 
-if [ "$LAUNCH_THINK_TOOL" = true ]; then
-    launch_think_tool
+# Environment variables take precedence over config file
+PYTHON_TOOL_REPO=${MCP_PYTHON_TOOL_REPO:-${PYTHON_TOOL_REPO:-"ghcr.io/ddkang1/mcp-py-repl:latest"}}
+THINK_TOOL_REPO=${MCP_THINK_TOOL_REPO:-${THINK_TOOL_REPO:-"git+https://github.com/ddkang1/mcp-think-tool"}}
+SEARCH_TOOL_REPO=${MCP_SEARCH_TOOL_REPO:-${SEARCH_TOOL_REPO:-"git+https://github.com/ddkang1/ddg-mcp"}}
+
+# Override enable flags from environment variables if set
+if [ -n "$ENABLE_PYTHON_TOOL" ]; then
+  if [ "$ENABLE_PYTHON_TOOL" = "false" ]; then
+    ENABLE_PYTHON_REPL=false
+  fi
 fi
 
-if [ "$LAUNCH_SEARCH_TOOL" = true ]; then
-    launch_search_tool
+if [ -n "$ENABLE_THINK_TOOL" ]; then
+  if [ "$ENABLE_THINK_TOOL" = "false" ]; then
+    ENABLE_THINK_TOOL=false
+  fi
 fi
 
-# Add more tool launching functions here as needed
-# For example: launch_web_browser_tool, launch_file_system_tool, etc.
+if [ -n "$ENABLE_SEARCH_TOOL" ]; then
+  if [ "$ENABLE_SEARCH_TOOL" = "false" ]; then
+    ENABLE_SEARCH_TOOL=false
+  fi
+fi
 
-echo ""
-echo "All requested MCP tool services are now running."
-echo "You can now run smart-agent in a separate terminal."
-echo "Leave this terminal open to keep the services running."
+# Create data directory if it doesn't exist
+mkdir -p "$PYTHON_REPL_DATA"
 
-# Function to kill all tool processes
+# Start Python REPL tool
+if [ "$ENABLE_PYTHON_REPL" = true ]; then
+  echo "Starting Python REPL tool on port $PYTHON_REPL_PORT"
+  docker run -d --rm --name mcp-python-repl \
+    -p "$PYTHON_REPL_PORT:8000" \
+    -v "$(pwd)/$PYTHON_REPL_DATA:/app/data" \
+    "$PYTHON_TOOL_REPO"
+  
+  # Set environment variable for the URL
+  export MCP_PYTHON_TOOL_URL="http://localhost:$PYTHON_REPL_PORT/sse"
+  echo "Python REPL tool available at $MCP_PYTHON_TOOL_URL"
+else
+  echo "Python REPL tool disabled"
+fi
+
+# Start Think tool
+if [ "$ENABLE_THINK_TOOL" = true ]; then
+  echo "Starting Think tool on port $THINK_TOOL_PORT"
+  
+  # Install the Think tool if not already installed
+  if ! pip show mcp-think-tool &> /dev/null; then
+    echo "Installing Think tool from $THINK_TOOL_REPO"
+    pip install "$THINK_TOOL_REPO"
+  fi
+  
+  # Start the Think tool server
+  python -m mcp_think_tool.server --port "$THINK_TOOL_PORT" &
+  THINK_TOOL_PID=$!
+  
+  # Set environment variable for the URL
+  export MCP_THINK_TOOL_URL="http://localhost:$THINK_TOOL_PORT/sse"
+  echo "Think tool available at $MCP_THINK_TOOL_URL"
+else
+  echo "Think tool disabled"
+fi
+
+# Start Search tool
+if [ "$ENABLE_SEARCH_TOOL" = true ]; then
+  echo "Starting Search tool on port $SEARCH_TOOL_PORT"
+  
+  # Install the Search tool if not already installed
+  if ! pip show ddg-mcp &> /dev/null; then
+    echo "Installing Search tool from $SEARCH_TOOL_REPO"
+    pip install "$SEARCH_TOOL_REPO"
+  fi
+  
+  # Start the Search tool server
+  python -m ddg_mcp.server --port "$SEARCH_TOOL_PORT" &
+  SEARCH_TOOL_PID=$!
+  
+  # Set environment variable for the URL
+  export MCP_SEARCH_TOOL_URL="http://localhost:$SEARCH_TOOL_PORT/sse"
+  echo "Search tool available at $MCP_SEARCH_TOOL_URL"
+else
+  echo "Search tool disabled"
+fi
+
+echo "All enabled tools are now running. Press Ctrl+C to stop."
+
+# Handle cleanup on exit
 cleanup() {
-    echo "Stopping all services..."
-    for pid in "${TOOL_PIDS[@]}"; do
-        kill $pid 2>/dev/null
-    done
-    exit 0
+  echo "Stopping all tools..."
+  
+  if [ "$ENABLE_PYTHON_REPL" = true ]; then
+    docker stop mcp-python-repl &> /dev/null || true
+  fi
+  
+  if [ "$ENABLE_THINK_TOOL" = true ]; then
+    kill $THINK_TOOL_PID &> /dev/null || true
+  fi
+  
+  if [ "$ENABLE_SEARCH_TOOL" = true ]; then
+    kill $SEARCH_TOOL_PID &> /dev/null || true
+  fi
+  
+  echo "All tools stopped."
+  exit 0
 }
 
-# Set up trap for Ctrl+C
-trap cleanup INT
+trap cleanup INT TERM
 
-# Wait for all background processes
-wait
+# Keep the script running
+while true; do
+  sleep 1
+done
