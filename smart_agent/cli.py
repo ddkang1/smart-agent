@@ -78,7 +78,6 @@ async def chat_loop(
     langfuse_public_key: Optional[str] = None,
     langfuse_secret_key: Optional[str] = None,
     langfuse_host: Optional[str] = None,
-    mcp_config: Optional[Dict[str, Any]] = None,
     tools_config_path: Optional[str] = None,
 ):
     """
@@ -295,24 +294,25 @@ def launch_tools(
     help="Langfuse host",
 )
 @click.option(
-    "--mcp-config",
-    type=click.Path(exists=False),
-    help="Path to MCP configuration file",
+    "--model",
+    default=None,
+    help="OpenAI model to use",
 )
 @click.option(
     "--tools-config",
+    default=None,
     type=click.Path(exists=False),
     help="Path to tools YAML configuration file",
-)
-@click.option(
-    "--launch-tools",
-    is_flag=True,
-    help="Launch required tool services before starting the chat",
 )
 @click.option(
     "--disable-tools",
     is_flag=True,
     help="Disable all tool services",
+)
+@click.option(
+    "--launch-tools",
+    is_flag=True,
+    help="Launch tool services before starting chat",
 )
 def chat(
     api_key,
@@ -321,18 +321,12 @@ def chat(
     langfuse_public_key,
     langfuse_secret_key,
     langfuse_host,
-    mcp_config,
+    model,
     tools_config,
-    launch_tools,
     disable_tools,
+    launch_tools,
 ):
     """Start a chat session with the Smart Agent."""
-    # Load MCP config if provided
-    mcp_config_dict = None
-    if mcp_config:
-        with open(mcp_config, "r") as f:
-            mcp_config_dict = json.load(f)
-    
     # Launch tools if requested
     tool_processes = []
     if launch_tools and not disable_tools:
@@ -427,7 +421,6 @@ def chat(
                 langfuse_public_key=langfuse_public_key,
                 langfuse_secret_key=langfuse_secret_key,
                 langfuse_host=langfuse_host,
-                mcp_config=mcp_config_dict,
                 tools_config_path=tools_config,
             )
         )
