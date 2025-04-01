@@ -1,0 +1,39 @@
+# Smart Agent Tools Configuration
+
+tools:
+  think_tool:
+    name: "Think Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_THINK_TOOL"
+    repository: "git+https://github.com/ddkang1/mcp-think-tool"
+    url: "http://localhost:8001/sse"
+    description: "Enables the agent to pause, reflect, and ground its reasoning process"
+    
+  search_tool:
+    name: "Search Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_SEARCH_TOOL"
+    repository: "git+https://github.com/ddkang1/ddg-mcp"
+    url: "http://localhost:8002/sse"
+    description: "Provides web search capabilities to find information online"
+    
+  python_tool:
+    name: "Python REPL Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_PYTHON_TOOL"
+    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
+    url: "http://localhost:8000/sse"
+    description: "Allows execution of Python code in a secure environment"
+
+# Tool configuration schema
+# Each tool should have:
+# - name: Human-readable name
+# - type: Tool type (sse, stdio, etc.)
+# - enabled: Whether the tool is enabled by default
+# - env_prefix: Environment variable prefix for this tool
+# - repository: Git repository or Docker image for the tool
+# - url: URL for the tool's endpoint
+# - description: Brief description of what the tool does

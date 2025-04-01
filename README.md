@@ -22,48 +22,32 @@ The combination of these technologies creates an agent that can reason effective
 - **Verifiable Problem-Solving**: Tools provide factual grounding that makes solutions more accurate and verifiable
 - **Adaptable Intelligence**: Easily extend capabilities by adding new tools without retraining the model
 
-## Installation & Usage
+## Installation and Usage
 
 ### Option 1: Using Docker Compose (Easiest)
 
-The simplest way to get started with Smart Agent is using Docker Compose, which handles all the setup for you:
+The simplest way to run Smart Agent is using Docker Compose, which will automatically set up all the necessary tool services:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ddkang1/smart-agent.git
 cd smart-agent
 
-# Create and edit the .env file with your API keys
+# Create a .env file with your API keys (see .env.example)
 cp .env.example .env
-nano .env  # Edit with your favorite editor
+# Edit the .env file with your API keys
 
-# Start all services with Docker Compose
+# Start Smart Agent and all tool services
 docker-compose up
-
-# To run in detached mode
-docker-compose up -d
-
-# To stop all services
-docker-compose down
 ```
-
-This approach starts both the Smart Agent and all required tool services in one command, making it the easiest option for beginners.
 
 ### Option 2: Using Docker with Separate Tool Services
 
-If you need more control over the tool services:
+If you prefer more control over the tool services:
 
 ```bash
-# Clone the repository
-git clone https://github.com/ddkang1/smart-agent.git
-cd smart-agent
-
-# Create and edit the .env file
-cp .env.example .env
-nano .env  # Edit with your favorite editor
-
 # First terminal: Start the tool services
-./launch-tools.sh
+smart-agent launch-tools
 
 # Second terminal: Run Smart Agent using Docker with environment variables from .env file
 docker run --rm -it --env-file .env --network host ghcr.io/ddkang1/smart-agent:latest
@@ -92,60 +76,78 @@ For more customization, you can install the package from PyPI:
 # Install the package
 pip install smart-agent
 
-# Create a directory for your project
-mkdir my-smart-agent
-cd my-smart-agent
+# Start the tool services and launch the chat in one command
+smart-agent chat --launch-tools
 
-# Download the example environment file and launch script
-curl -O https://raw.githubusercontent.com/ddkang1/smart-agent/main/.env.example
-curl -O https://raw.githubusercontent.com/ddkang1/smart-agent/main/launch-tools.sh
-
-# Rename and edit the environment file
-mv .env.example .env
-nano .env  # Edit with your favorite editor
-
-# Make the launch script executable
-chmod +x launch-tools.sh
-
-# Create a directory for Python REPL storage
-mkdir -p python_repl_storage
-
+# Or start tools and chat separately
 # First terminal: Start the tool services
-./launch-tools.sh
+smart-agent launch-tools
 
-# Second terminal: Run the Smart Agent CLI
+# Second terminal: Start the chat
 smart-agent chat
-
-# Run with custom options
-smart-agent chat --api-key your_api_key
-smart-agent chat --api-base-url https://custom-api-url.com
 ```
 
-### Option 4: Clone the Repository (Development)
+### Option 4: Clone Repository (For Development)
 
-For development or full customization:
+For development or contributing to the project:
 
 ```bash
 # Clone the repository
 git clone https://github.com/ddkang1/smart-agent.git
 cd smart-agent
 
-# Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
 # Install the package in development mode
 pip install -e .
 
-# Create and edit the .env file
-cp .env.example .env
-nano .env  # Edit with your favorite editor
+# Start the tool services and launch the chat in one command
+smart-agent chat --launch-tools
 
+# Or start tools and chat separately
 # First terminal: Start the tool services
+smart-agent launch-tools
+
+# Second terminal: Start the chat
+smart-agent chat
+```
+
+### Tool Management
+
+Smart Agent provides two ways to launch and manage the required tool services:
+
+#### Using the CLI (Recommended)
+
+The Smart Agent CLI includes commands to manage tool services directly:
+
+```bash
+# Launch all tool services and keep them running
+smart-agent launch-tools
+
+# Launch tools with custom configuration
+smart-agent launch-tools --tools-config /path/to/tools.yaml
+
+# Disable specific tools
+smart-agent launch-tools --no-python-repl --no-search-tool
+
+# Start the chat and automatically launch required tools
+smart-agent chat --launch-tools
+
+# Start the chat with custom tool configuration
+smart-agent chat --launch-tools --tools-config /path/to/tools.yaml
+```
+
+#### Using the Launch Script
+
+Alternatively, you can use the provided shell script:
+
+```bash
+# Launch all tool services
 ./launch-tools.sh
 
-# Second terminal: Run the Smart Agent CLI
-smart-agent chat
+# Launch with custom configuration
+./launch-tools.sh --config=/path/to/tools.yaml
+
+# Disable specific tools
+./launch-tools.sh --no-python-repl --no-search-tool
 ```
 
 ## Environment Configuration
@@ -192,6 +194,63 @@ Smart Agent uses environment variables for configuration. These can be set in a 
 - `ENABLE_PYTHON_TOOL`: Enable the Python REPL tool (default: `true`)
 
 ## Advanced Configuration
+
+### Tool Configuration
+
+Smart Agent now supports YAML-based tool configuration, making it easier to manage and customize the tools used by the agent. The configuration file is located at `config/tools.yaml` by default.
+
+```yaml
+# Example tools.yaml configuration
+tools:
+  think_tool:
+    name: "Think Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_THINK_TOOL"
+    repository: "git+https://github.com/ddkang1/mcp-think-tool"
+    url: "http://localhost:8001/sse"
+    description: "Enables the agent to pause, reflect, and ground its reasoning process"
+```
+
+#### Using the Tool Configuration
+
+You can specify a custom tool configuration file when running the agent:
+
+```bash
+# Start the agent with a custom tool configuration
+smart-agent chat --tools-config /path/to/your/tools.yaml
+
+# Launch tools with a custom configuration
+./launch-tools.sh --config=/path/to/your/tools.yaml
+```
+
+#### Adding New Tools
+
+To add a new tool to Smart Agent, simply add a new entry to the `tools` section in the YAML file:
+
+```yaml
+tools:
+  # Existing tools...
+  
+  my_custom_tool:
+    name: "My Custom Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_CUSTOM_TOOL"
+    repository: "git+https://github.com/username/my-custom-tool"
+    url: "http://localhost:8003/sse"
+    description: "Description of what my custom tool does"
+```
+
+#### Environment Variable Override
+
+You can override tool configuration using environment variables:
+
+- `ENABLE_TOOL_NAME`: Enable or disable a tool (e.g., `ENABLE_THINK_TOOL=false`)
+- `MCP_TOOL_NAME_REPO`: Override the tool repository (e.g., `MCP_THINK_TOOL_REPO=git+https://github.com/user/repo`)
+- `MCP_TOOL_NAME_URL`: Override the tool URL (e.g., `MCP_THINK_TOOL_URL=http://localhost:9001/sse`)
+
+The environment variables take precedence over the YAML configuration.
 
 ### Tool Service Options
 
