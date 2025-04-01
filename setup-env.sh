@@ -3,8 +3,8 @@
 # Setup environment for Smart Agent
 
 # Create data directory if it doesn't exist
-mkdir -p data
-echo "Created data directory for Python tool"
+mkdir -p python_repl_storage
+echo "Created directory for Python REPL tool: python_repl_storage"
 
 # Check if .env file already exists
 if [ -f .env ]; then

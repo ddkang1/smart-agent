@@ -35,7 +35,7 @@ chmod +x setup-env.sh
 ```
 
 This script will:
-1. Create a `data` directory for the Python tool
+1. Create a `data` directory for the tool
 2. Create a `.env` file from the example template
 3. Prompt you for your OpenAI API key
 4. Guide you on how to run the agent
@@ -51,9 +51,9 @@ If you prefer to set up manually:
 
 2. Edit the `.env` file with your API keys and configuration
 
-3. Create a data directory for the Python tool:
+3. Create a data directory for the tool:
    ```bash
-   mkdir -p data
+   mkdir -p python_repl_storage
    ```
 
 ## Environment Configuration
@@ -92,7 +92,38 @@ MCP_PYTHON_TOOL_URL=http://localhost:8000/sse
 
 ## Usage
 
+### Running the Required Tool Services
+
+Before running Smart Agent, you need to start the MCP tool services which are required for the agent to function properly:
+
+```bash
+# Start the MCP tool services in a terminal
+./launch-tools.sh
+
+# This will keep running in the terminal
+# Leave this terminal open and use a new terminal for the next steps
+```
+
+The tool services need to stay running while you use Smart Agent. You can stop them with Ctrl+C when you're done.
+
+#### Tool Service Options
+
+The launch-tools.sh script supports several options:
+
+```bash
+# Customize the Python REPL data directory
+./launch-tools.sh --python-repl-data=my_python_data
+
+# Customize the Python REPL port
+./launch-tools.sh --python-repl-port=8888
+
+# Disable launching the Python REPL service
+./launch-tools.sh --no-python-repl
+```
+
 ### Command Line Interface
+
+Once the tool services are running, open a new terminal and run:
 
 ```bash
 # Run the Smart Agent CLI
@@ -107,37 +138,42 @@ smart-agent chat --api-base-url https://custom-api-url.com
 
 ### Using Docker
 
-If you don't want to install the package locally, you can use the Docker image:
+If you don't want to install the package locally, you can use the Docker image. Note that you still need to run the tool services first:
 
 ```bash
-# Run using Docker with environment variables from .env file
-docker run --rm -it --env-file .env ghcr.io/ddkang1/smart-agent:latest
+# First terminal: Start the tool services
+./launch-tools.sh
+
+# Second terminal: Run Smart Agent using Docker with environment variables from .env file
+docker run --rm -it --env-file .env --network host ghcr.io/ddkang1/smart-agent:latest
 
 # Run with custom API key
-docker run --rm -it -e OPENAI_API_KEY=your_api_key ghcr.io/ddkang1/smart-agent:latest
+docker run --rm -it -e CLAUDE_API_KEY=your_api_key --network host ghcr.io/ddkang1/smart-agent:latest
 
 # Run with custom command
-docker run --rm -it -e OPENAI_API_KEY=your_api_key ghcr.io/ddkang1/smart-agent:latest chat --langfuse-host https://custom-langfuse.com
+docker run --rm -it -e CLAUDE_API_KEY=your_api_key --network host ghcr.io/ddkang1/smart-agent:latest chat --langfuse-host https://custom-langfuse.com
 ```
+
+The `--network host` flag is important as it allows the Docker container to connect to the tool services running on your host machine.
 
 ### Using the Convenience Script
 
 A convenience script is provided to make it easier to run the Docker image:
 
 ```bash
-# Make the script executable (first time only)
-chmod +x run-docker.sh
+# First terminal: Start the tool services
+./launch-tools.sh
 
-# Run the script (will use .env file if it exists)
+# Second terminal: Run the script (will use .env file if it exists)
 ./run-docker.sh
 
 # Pass additional arguments to the smart-agent command
 ./run-docker.sh chat --langfuse-host https://custom-langfuse.com
 ```
 
-### Using Docker Compose
+### Using Docker Compose (All-in-One Solution)
 
-For a complete setup including the Python tool service, you can use Docker Compose:
+For a complete setup including both the Smart Agent and all required tool services, you can use Docker Compose:
 
 ```bash
 # Start all services
@@ -150,11 +186,7 @@ docker-compose up -d
 docker-compose down
 ```
 
-Make sure to create a `data` directory in your project root for the Python tool to store files:
-
-```bash
-mkdir -p data
-```
+Docker Compose is the simplest option as it handles starting all services for you, but it will restart the tool services each time you run it.
 
 ## Development
 

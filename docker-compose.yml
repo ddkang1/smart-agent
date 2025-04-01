@@ -24,11 +24,11 @@ services:
   python-tool:
     image: ghcr.io/ddkang1/mcp-py-repl:latest
     volumes:
-      - ./data:/mnt/data/
+      - ./python_repl_storage:/mnt/data/
     ports:
       - "8000:8000"
     command: >
       sh -c "npx -y supergateway \
-        --stdio 'docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest' \
+        --stdio 'docker run -i --rm --pull=always -v /mnt/data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest' \
         --port 8000 --baseUrl http://localhost:8000 \
         --ssePath /sse --messagePath /message"

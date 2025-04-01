@@ -17,6 +17,7 @@ fi
 # Run the Docker container
 echo "Starting Smart Agent Docker container..."
 docker run --rm -it \
+    --network host \
     -e CLAUDE_API_KEY="$CLAUDE_API_KEY" \
     -e CLAUDE_BASE_URL="${CLAUDE_BASE_URL:-http://0.0.0.0:4000}" \
     -e API_PROVIDER="${API_PROVIDER:-proxy}" \
