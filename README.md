@@ -74,6 +74,7 @@ Smart Agent uses environment variables for configuration. These can be set in a 
 
 ### Optional Variables
 
+- `MODEL_NAME`: The model name to use (default: `claude-3-7-sonnet-20250219`)
 - `CLAUDE_BASE_URL`: Base URL for the Claude API (default: `http://0.0.0.0:4000` for proxy mode)
 - `API_PROVIDER`: API provider to use (options: `anthropic`, `bedrock`, `proxy`, default: `proxy`)
 
