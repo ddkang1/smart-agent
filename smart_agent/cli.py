@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 from langfuse.openai import openai
 from langfuse.decorators import observe
-from agents.mcp import MCPServerStdio, MCPServerSse
+from agents.mcp import MCPServerSse
 from agents import (
     Agent,
     OpenAIChatCompletionsModel,
@@ -118,8 +118,14 @@ async def ask(history: list[dict], api_base_url=None, api_key=None, langfuse_con
         os.environ["LANGFUSE_HOST"] = langfuse_config.get("host", "https://cloud.langfuse.com")
     
     # Get MCP configuration
+    # Tool repositories
     mcp_think_tool_repo = mcp_config.get("think_tool_repo") if mcp_config else os.getenv("MCP_THINK_TOOL_REPO", "git+https://github.com/ddkang1/mcp-think-tool")
     mcp_search_tool_repo = mcp_config.get("search_tool_repo") if mcp_config else os.getenv("MCP_SEARCH_TOOL_REPO", "git+https://github.com/ddkang1/ddg-mcp")
+    mcp_python_tool_repo = mcp_config.get("python_tool_repo") if mcp_config else os.getenv("MCP_PYTHON_TOOL_REPO", "ghcr.io/ddkang1/mcp-py-repl:latest")
+    
+    # Tool URLs
+    mcp_think_tool_url = mcp_config.get("think_tool_url") if mcp_config else os.getenv("MCP_THINK_TOOL_URL", "http://localhost:8001/sse")
+    mcp_search_tool_url = mcp_config.get("search_tool_url") if mcp_config else os.getenv("MCP_SEARCH_TOOL_URL", "http://localhost:8002/sse")
     mcp_python_tool_url = mcp_config.get("python_tool_url") if mcp_config else os.getenv("MCP_PYTHON_TOOL_URL", "http://localhost:8000/sse")
     
     # Disable tracing
@@ -138,32 +144,40 @@ async def ask(history: list[dict], api_base_url=None, api_key=None, langfuse_con
         os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", "")
         os.environ["AWS_REGION"] = os.getenv("AWS_REGION", "us-west-2")
 
-    async with MCPServerStdio(
-        cache_tools_list=True,
-        params={
-            "command": "uvx",
-            "args": [
-                "--from",
-                mcp_think_tool_repo,
-                "mcp-think-tool",
-            ],
-        },
-    ) as think_tool, MCPServerStdio(
-        cache_tools_list=True,
-        params={
-            "command": "uvx",
-            "args": [
-                "--from",
-                mcp_search_tool_repo,
-                "ddg-mcp",
-            ],
-        },
-    ) as internet_search_tool, MCPServerSse(
-        params={
-            "url": mcp_python_tool_url,
-        },
-    ) as python_tool:
-
+    # Initialize MCP servers for each tool
+    mcp_servers = []
+    
+    # Add Think Tool
+    if os.getenv("ENABLE_THINK_TOOL", "true").lower() == "true":
+        mcp_think_tool = MCPServerSse(params={"url": mcp_think_tool_url})
+        mcp_servers.append(mcp_think_tool)
+    
+    # Add Search Tool
+    if os.getenv("ENABLE_SEARCH_TOOL", "true").lower() == "true":
+        mcp_search_tool = MCPServerSse(params={"url": mcp_search_tool_url})
+        mcp_servers.append(mcp_search_tool)
+    
+    # Add Python Tool
+    if os.getenv("ENABLE_PYTHON_TOOL", "true").lower() == "true":
+        mcp_python_tool = MCPServerSse(params={"url": mcp_python_tool_url})
+        mcp_servers.append(mcp_python_tool)
+    
+    # Create context manager for all MCP servers
+    class MCPServersManager:
+        def __init__(self, servers):
+            self.servers = servers
+        
+        async def __aenter__(self):
+            for server in self.servers:
+                await server.__aenter__()
+            return self.servers
+        
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            for server in reversed(self.servers):
+                await server.__aexit__(exc_type, exc_val, exc_tb)
+    
+    # Use the manager to handle all servers
+    async with MCPServersManager(mcp_servers) as servers:
         agent = Agent(
             name="Assistant",
             # Optionally, you can include instructions as follows:
@@ -172,7 +186,7 @@ async def ask(history: list[dict], api_base_url=None, api_key=None, langfuse_con
                 model="claude-3-7-sonnet",  # or use any other model configuration
                 openai_client=client,
             ),
-            mcp_servers=[think_tool, internet_search_tool, python_tool],
+            mcp_servers=servers,
         )
 
         # Run the agent with the conversation history.

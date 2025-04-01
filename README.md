@@ -1,6 +1,6 @@
 # Smart Agent
 
-A powerful AI agent chatbot that leverages external tools to augment its intelligence rather than being constrained by built-in capabilities, enabling more accurate, verifiable, and adaptable problem-solving capabilities for practical application development.
+A powerful AI agent chatbot that leverages external tools to augment its intelligence rather than being constrained by built-in capabilities, enabling more accurate, verifiable, and adaptable problem-solving capabilities for practical AI application development.
 
 ## Overview
 
@@ -66,37 +66,45 @@ If you prefer to set up manually:
 
 ## Environment Configuration
 
-Smart Agent uses environment variables for configuration. You can set these in several ways:
+Smart Agent uses environment variables for configuration. These can be set in a `.env` file or passed directly to the CLI.
 
-1. Create a `.env` file in your project directory (recommended for development)
-2. Set environment variables directly in your shell
-3. Pass them as command-line arguments
+### Required Variables
 
-### Using .env File
+- `CLAUDE_API_KEY`: Your Claude API key
 
-Copy the example environment file and modify it with your credentials:
+### Optional Variables
 
-```bash
-cp .env.example .env
-```
+- `CLAUDE_BASE_URL`: Base URL for the Claude API (default: `http://0.0.0.0:4000` for proxy mode)
+- `API_PROVIDER`: API provider to use (options: `anthropic`, `bedrock`, `proxy`, default: `proxy`)
 
-Then edit the `.env` file with your API keys and configuration:
+### AWS Bedrock Configuration (if using bedrock provider)
 
-```
-# OpenAI API Configuration
-OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_BASE_URL=https://api.openai.com/v1
+- `AWS_ACCESS_KEY_ID`: Your AWS access key
+- `AWS_SECRET_ACCESS_KEY`: Your AWS secret key
+- `AWS_REGION`: AWS region (default: `us-west-2`)
 
-# Langfuse Configuration (optional)
-LANGFUSE_PUBLIC_KEY=your_langfuse_public_key_here
-LANGFUSE_SECRET_KEY=your_langfuse_secret_key_here
-LANGFUSE_HOST=https://cloud.langfuse.com
+### Langfuse Configuration (optional)
 
-# MCP Tool Configuration
-MCP_THINK_TOOL_REPO=git+https://github.com/ddkang1/mcp-think-tool
-MCP_SEARCH_TOOL_REPO=git+https://github.com/ddkang1/ddg-mcp
-MCP_PYTHON_TOOL_URL=http://localhost:8000/sse
-```
+- `LANGFUSE_PUBLIC_KEY`: Your Langfuse public key
+- `LANGFUSE_SECRET_KEY`: Your Langfuse secret key
+- `LANGFUSE_HOST`: Langfuse host (default: `https://cloud.langfuse.com`)
+
+### MCP Tool Configuration
+
+#### Tool Repositories
+- `MCP_THINK_TOOL_REPO`: Repository for the Think tool (default: `git+https://github.com/ddkang1/mcp-think-tool`)
+- `MCP_SEARCH_TOOL_REPO`: Repository for the Search tool (default: `git+https://github.com/ddkang1/ddg-mcp`)
+- `MCP_PYTHON_TOOL_REPO`: Repository/image for the Python REPL tool (default: `ghcr.io/ddkang1/mcp-py-repl:latest`)
+
+#### Tool URLs
+- `MCP_THINK_TOOL_URL`: URL for the Think tool SSE endpoint (default: `http://localhost:8001/sse`)
+- `MCP_SEARCH_TOOL_URL`: URL for the Search tool SSE endpoint (default: `http://localhost:8002/sse`)
+- `MCP_PYTHON_TOOL_URL`: URL for the Python REPL tool SSE endpoint (default: `http://localhost:8000/sse`)
+
+#### Tool Enable Flags
+- `ENABLE_THINK_TOOL`: Enable the Think tool (default: `true`)
+- `ENABLE_SEARCH_TOOL`: Enable the Search tool (default: `true`)
+- `ENABLE_PYTHON_TOOL`: Enable the Python REPL tool (default: `true`)
 
 ## Usage
 
@@ -119,14 +127,23 @@ The tool services need to stay running while you use Smart Agent. You can stop t
 The launch-tools.sh script supports several options:
 
 ```bash
-# Customize the Python REPL data directory
+# Python REPL Tool options
 ./launch-tools.sh --python-repl-data=my_python_data
-
-# Customize the Python REPL port
 ./launch-tools.sh --python-repl-port=8888
-
-# Disable launching the Python REPL service
 ./launch-tools.sh --no-python-repl
+
+# Think Tool options
+./launch-tools.sh --think-tool-port=8001
+./launch-tools.sh --think-tool-repo=git+https://github.com/custom/think-tool
+./launch-tools.sh --no-think-tool
+
+# Search Tool options
+./launch-tools.sh --search-tool-port=8002
+./launch-tools.sh --search-tool-repo=git+https://github.com/custom/search-tool
+./launch-tools.sh --no-search-tool
+
+# Combine options as needed
+./launch-tools.sh --python-repl-port=8888 --think-tool-port=8889 --search-tool-port=8890
 ```
 
 ### Command Line Interface
