@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-agent"
+version = "0.1.0"
+description = "Smart AI agent with reasoning and tool use capabilities"
+readme = "README.md"
+authors = [
+    {name = "Don Kang", email = "donkang34@gmail.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "colorama",
+    "langfuse",
+    "openai",
+    "asyncio",
+    "click",
+    "python-dotenv",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/ddkang1/smart-agent"
+"Bug Tracker" = "https://github.com/ddkang1/smart-agent/issues"
+
+[project.scripts]
+smart-agent = "smart_agent.cli:main"
+
+[tool.setuptools]
+packages = ["smart_agent"]
