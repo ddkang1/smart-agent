@@ -25,6 +25,9 @@ The combination of these technologies creates an agent that can reason effective
 # Install from PyPI
 pip install smart-agent
 
+# Install with monitoring support
+pip install smart-agent[monitoring]
+
 # Install from source
 git clone https://github.com/ddkang1/smart-agent.git
 cd smart-agent
