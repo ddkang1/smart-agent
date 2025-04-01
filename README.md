@@ -22,47 +22,131 @@ The combination of these technologies creates an agent that can reason effective
 - **Verifiable Problem-Solving**: Tools provide factual grounding that makes solutions more accurate and verifiable
 - **Adaptable Intelligence**: Easily extend capabilities by adding new tools without retraining the model
 
-## Installation
+## Installation & Usage
+
+### Option 1: Using Docker Compose (Easiest)
+
+The simplest way to get started with Smart Agent is using Docker Compose, which handles all the setup for you:
 
 ```bash
+# Clone the repository
+git clone https://github.com/ddkang1/smart-agent.git
+cd smart-agent
+
+# Create and edit the .env file with your API keys
+cp .env.example .env
+nano .env  # Edit with your favorite editor
+
+# Start all services with Docker Compose
+docker-compose up
+
+# To run in detached mode
+docker-compose up -d
+
+# To stop all services
+docker-compose down
+```
+
+This approach starts both the Smart Agent and all required tool services in one command, making it the easiest option for beginners.
+
+### Option 2: Using Docker with Separate Tool Services
+
+If you need more control over the tool services:
+
+```bash
+# Clone the repository
+git clone https://github.com/ddkang1/smart-agent.git
+cd smart-agent
+
+# Create and edit the .env file
+cp .env.example .env
+nano .env  # Edit with your favorite editor
+
+# First terminal: Start the tool services
+./launch-tools.sh
+
+# Second terminal: Run Smart Agent using Docker with environment variables from .env file
+docker run --rm -it --env-file .env --network host ghcr.io/ddkang1/smart-agent:latest
+
+# Run with custom API key
+docker run --rm -it -e CLAUDE_API_KEY=your_api_key --network host ghcr.io/ddkang1/smart-agent:latest
+```
+
+The `--network host` flag is important as it allows the Docker container to connect to the tool services running on your host machine.
+
+A convenience script is also provided to make it easier to run the Docker image:
+
+```bash
+# After starting the tool services in another terminal
+./run-docker.sh
+
+# Pass additional arguments to the smart-agent command
+./run-docker.sh chat --langfuse-host https://custom-langfuse.com
+```
+
+### Option 3: Install from PyPI
+
+For more customization, you can install the package from PyPI:
+
+```bash
+# Install the package
 pip install smart-agent
+
+# Create a directory for your project
+mkdir my-smart-agent
+cd my-smart-agent
+
+# Download the example environment file and launch script
+curl -O https://raw.githubusercontent.com/ddkang1/smart-agent/main/.env.example
+curl -O https://raw.githubusercontent.com/ddkang1/smart-agent/main/launch-tools.sh
+
+# Rename and edit the environment file
+mv .env.example .env
+nano .env  # Edit with your favorite editor
+
+# Make the launch script executable
+chmod +x launch-tools.sh
+
+# Create a directory for Python REPL storage
+mkdir -p python_repl_storage
+
+# First terminal: Start the tool services
+./launch-tools.sh
+
+# Second terminal: Run the Smart Agent CLI
+smart-agent chat
+
+# Run with custom options
+smart-agent chat --api-key your_api_key
+smart-agent chat --api-base-url https://custom-api-url.com
 ```
 
-## Getting Started
+### Option 4: Clone the Repository (Development)
 
-### Quick Setup
-
-The easiest way to get started is to use the provided setup script:
+For development or full customization:
 
 ```bash
-# Make the script executable
-chmod +x setup-env.sh
+# Clone the repository
+git clone https://github.com/ddkang1/smart-agent.git
+cd smart-agent
 
-# Run the setup script
-./setup-env.sh
+# Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install the package in development mode
+pip install -e .
+
+# Create and edit the .env file
+cp .env.example .env
+nano .env  # Edit with your favorite editor
+
+# First terminal: Start the tool services
+./launch-tools.sh
+
+# Second terminal: Run the Smart Agent CLI
+smart-agent chat
 ```
-
-This script will:
-1. Create a `data` directory for the tool
-2. Create a `.env` file from the example template
-3. Prompt you for your OpenAI API key
-4. Guide you on how to run the agent
-
-### Manual Setup
-
-If you prefer to set up manually:
-
-1. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit the `.env` file with your API keys and configuration
-
-3. Create a data directory for the tool:
-   ```bash
-   mkdir -p python_repl_storage
-   ```
 
 ## Environment Configuration
 
@@ -107,25 +191,11 @@ Smart Agent uses environment variables for configuration. These can be set in a 
 - `ENABLE_SEARCH_TOOL`: Enable the Search tool (default: `true`)
 - `ENABLE_PYTHON_TOOL`: Enable the Python REPL tool (default: `true`)
 
-## Usage
+## Advanced Configuration
 
-### Running the Required Tool Services
+### Tool Service Options
 
-Before running Smart Agent, you need to start the MCP tool services which are required for the agent to function properly:
-
-```bash
-# Start the MCP tool services in a terminal
-./launch-tools.sh
-
-# This will keep running in the terminal
-# Leave this terminal open and use a new terminal for the next steps
-```
-
-The tool services need to stay running while you use Smart Agent. You can stop them with Ctrl+C when you're done.
-
-#### Tool Service Options
-
-The launch-tools.sh script supports several options:
+When using the `launch-tools.sh` script, you can customize the tool services with these options:
 
 ```bash
 # Python REPL Tool options
@@ -147,76 +217,11 @@ The launch-tools.sh script supports several options:
 ./launch-tools.sh --python-repl-port=8888 --think-tool-port=8889 --search-tool-port=8890
 ```
 
-### Command Line Interface
-
-Once the tool services are running, open a new terminal and run:
-
-```bash
-# Run the Smart Agent CLI
-smart-agent chat
-
-# Run with custom API key
-smart-agent chat --api-key your_api_key
-
-# Run with custom base URL
-smart-agent chat --api-base-url https://custom-api-url.com
-```
-
-### Using Docker
-
-If you don't want to install the package locally, you can use the Docker image. Note that you still need to run the tool services first:
-
-```bash
-# First terminal: Start the tool services
-./launch-tools.sh
-
-# Second terminal: Run Smart Agent using Docker with environment variables from .env file
-docker run --rm -it --env-file .env --network host ghcr.io/ddkang1/smart-agent:latest
-
-# Run with custom API key
-docker run --rm -it -e CLAUDE_API_KEY=your_api_key --network host ghcr.io/ddkang1/smart-agent:latest
-
-# Run with custom command
-docker run --rm -it -e CLAUDE_API_KEY=your_api_key --network host ghcr.io/ddkang1/smart-agent:latest chat --langfuse-host https://custom-langfuse.com
-```
-
-The `--network host` flag is important as it allows the Docker container to connect to the tool services running on your host machine.
-
-### Using the Convenience Script
-
-A convenience script is provided to make it easier to run the Docker image:
-
-```bash
-# First terminal: Start the tool services
-./launch-tools.sh
-
-# Second terminal: Run the script (will use .env file if it exists)
-./run-docker.sh
-
-# Pass additional arguments to the smart-agent command
-./run-docker.sh chat --langfuse-host https://custom-langfuse.com
-```
-
-### Using Docker Compose (All-in-One Solution)
-
-For a complete setup including both the Smart Agent and all required tool services, you can use Docker Compose:
-
-```bash
-# Start all services
-docker-compose up
-
-# Run in detached mode
-docker-compose up -d
-
-# Stop all services
-docker-compose down
-```
-
-Docker Compose is the simplest option as it handles starting all services for you, but it will restart the tool services each time you run it.
-
 ## Development
 
 ### Setup Development Environment
+
+If you want to contribute to Smart Agent or modify it for your own needs:
 
 ```bash
 # Clone the repository
