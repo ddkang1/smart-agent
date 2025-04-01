@@ -150,142 +150,85 @@ async def chat_loop(
     help="Path to tools YAML configuration file",
 )
 @click.option(
-    "--python-repl-data",
-    default="python_repl_storage",
-    help="Directory to store Python REPL data",
-)
-@click.option(
-    "--python-repl-port",
-    default=8000,
-    type=int,
-    help="Port for Python REPL tool",
-)
-@click.option(
-    "--think-tool-port",
-    default=8001,
-    type=int,
-    help="Port for Think tool",
-)
-@click.option(
-    "--search-tool-port",
-    default=8002,
-    type=int,
-    help="Port for Search tool",
-)
-@click.option(
-    "--no-python-repl",
+    "--disable-tools",
     is_flag=True,
-    help="Disable Python REPL tool",
-)
-@click.option(
-    "--no-think-tool",
-    is_flag=True,
-    help="Disable Think tool",
-)
-@click.option(
-    "--no-search-tool",
-    is_flag=True,
-    help="Disable Search tool",
+    help="Disable all tool services",
 )
 def launch_tools(
     tools_config,
-    python_repl_data,
-    python_repl_port,
-    think_tool_port,
-    search_tool_port,
-    no_python_repl,
-    no_think_tool,
-    no_search_tool,
+    disable_tools,
 ):
     """Launch the tool services required by Smart Agent."""
     # Initialize tool manager
     tool_manager = ToolManager(config_path=tools_config)
     
-    # Process override flags
-    enable_python_repl = not no_python_repl
-    enable_think_tool = not no_think_tool
-    enable_search_tool = not no_search_tool
-    
-    # Get tool configurations
-    python_tool_config = tool_manager.get_tool_config("python_tool")
-    think_tool_config = tool_manager.get_tool_config("think_tool")
-    search_tool_config = tool_manager.get_tool_config("search_tool")
-    
-    # Override enabled status from command line flags
-    if no_python_repl:
-        os.environ["ENABLE_PYTHON_TOOL"] = "false"
-    if no_think_tool:
-        os.environ["ENABLE_THINK_TOOL"] = "false"
-    if no_search_tool:
-        os.environ["ENABLE_SEARCH_TOOL"] = "false"
-    
-    # Create data directory for Python REPL
-    if enable_python_repl and tool_manager.is_tool_enabled("python_tool"):
-        os.makedirs(python_repl_data, exist_ok=True)
+    # If disable_tools is set, exit early
+    if disable_tools:
+        print("All tools disabled. Exiting.")
+        return
     
     # Store process objects
     processes = []
     
     try:
-        # Launch Python REPL tool
-        if enable_python_repl and tool_manager.is_tool_enabled("python_tool"):
-            python_tool_repo = tool_manager.get_tool_repository("python_tool")
-            print(f"Starting Python REPL tool on port {python_repl_port}")
-            
-            # Run Docker container
-            docker_cmd = [
-                "docker", "run", "-d", "--rm", "--name", "mcp-python-repl",
-                "-p", f"{python_repl_port}:8000",
-                "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
-                python_tool_repo
-            ]
-            subprocess.run(docker_cmd, check=True)
-            
-            # Set environment variable for URL
-            os.environ["MCP_PYTHON_TOOL_URL"] = f"http://localhost:{python_repl_port}/sse"
-            print(f"Python REPL tool available at {os.environ['MCP_PYTHON_TOOL_URL']}")
+        # Get all enabled tools from the config
+        all_tools = tool_manager.get_all_tools()
         
-        # Launch Think tool
-        if enable_think_tool and tool_manager.is_tool_enabled("think_tool"):
-            think_tool_repo = tool_manager.get_tool_repository("think_tool")
-            print(f"Starting Think tool on port {think_tool_port}")
-            
-            # Install Think tool if needed
-            try:
-                subprocess.run(["pip", "show", "mcp-think-tool"], check=True, capture_output=True)
-            except subprocess.CalledProcessError:
-                print(f"Installing Think tool from {think_tool_repo}")
-                subprocess.run(["pip", "install", think_tool_repo], check=True)
-            
-            # Start Think tool server
-            think_cmd = ["python", "-m", "mcp_think_tool.server", "--port", str(think_tool_port)]
-            think_process = subprocess.Popen(think_cmd)
-            processes.append(think_process)
-            
-            # Set environment variable for URL
-            os.environ["MCP_THINK_TOOL_URL"] = f"http://localhost:{think_tool_port}/sse"
-            print(f"Think tool available at {os.environ['MCP_THINK_TOOL_URL']}")
-        
-        # Launch Search tool
-        if enable_search_tool and tool_manager.is_tool_enabled("search_tool"):
-            search_tool_repo = tool_manager.get_tool_repository("search_tool")
-            print(f"Starting Search tool on port {search_tool_port}")
-            
-            # Install Search tool if needed
-            try:
-                subprocess.run(["pip", "show", "ddg-mcp"], check=True, capture_output=True)
-            except subprocess.CalledProcessError:
-                print(f"Installing Search tool from {search_tool_repo}")
-                subprocess.run(["pip", "install", search_tool_repo], check=True)
-            
-            # Start Search tool server
-            search_cmd = ["python", "-m", "ddg_mcp.server", "--port", str(search_tool_port)]
-            search_process = subprocess.Popen(search_cmd)
-            processes.append(search_process)
-            
-            # Set environment variable for URL
-            os.environ["MCP_SEARCH_TOOL_URL"] = f"http://localhost:{search_tool_port}/sse"
-            print(f"Search tool available at {os.environ['MCP_SEARCH_TOOL_URL']}")
+        for tool_id, tool_config in all_tools.items():
+            if tool_manager.is_tool_enabled(tool_id):
+                tool_url = tool_manager.get_tool_url(tool_id)
+                tool_repo = tool_manager.get_tool_repository(tool_id)
+                tool_type = tool_config.get("type", "sse")
+                tool_name = tool_config.get("name", tool_id)
+                
+                # Extract port from URL
+                import re
+                port_match = re.search(r":(\d+)/", tool_url)
+                port = int(port_match.group(1)) if port_match else None
+                
+                print(f"Starting {tool_name} on {tool_url}")
+                
+                if tool_config.get("container", False):
+                    # Handle Docker container-based tools
+                    python_repl_data = "python_repl_storage"
+                    os.makedirs(python_repl_data, exist_ok=True)
+                    
+                    # Run Docker container
+                    docker_cmd = [
+                        "docker", "run", "-d", "--rm", "--name", f"mcp-{tool_id}",
+                        "-p", f"{port}:8000",
+                        "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
+                        tool_repo
+                    ]
+                    subprocess.run(docker_cmd, check=True)
+                    
+                    # Set environment variable for URL
+                    os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
+                    print(f"{tool_name} available at {tool_url}")
+                else:
+                    # Generic tool handling
+                    module_name = tool_config.get("module", tool_id.replace("-", "_"))
+                    
+                    # Install tool if needed
+                    try:
+                        subprocess.run(["pip", "show", module_name], check=True, capture_output=True)
+                    except subprocess.CalledProcessError:
+                        print(f"Installing {tool_name} from {tool_repo}")
+                        subprocess.run(["pip", "install", tool_repo], check=True)
+                    
+                    # Start tool server
+                    server_module = tool_config.get("server_module", f"{module_name}.server")
+                    tool_cmd = ["python", "-m", server_module]
+                    
+                    if port:
+                        tool_cmd.extend(["--port", str(port)])
+                    
+                    tool_process = subprocess.Popen(tool_cmd)
+                    processes.append(tool_process)
+                    
+                    # Set environment variable for URL
+                    os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
+                    print(f"{tool_name} available at {tool_url}")
         
         print("\nAll enabled tools are now running.")
         print("Press Ctrl+C to stop all tools and exit.")
@@ -305,12 +248,13 @@ def launch_tools(
             except subprocess.TimeoutExpired:
                 process.kill()
         
-        # Stop Docker container
-        if enable_python_repl and tool_manager.is_tool_enabled("python_tool"):
-            try:
-                subprocess.run(["docker", "stop", "mcp-python-repl"], check=False)
-            except:
-                pass
+        # Stop Docker containers
+        for tool_id, tool_config in all_tools.items():
+            if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
+                try:
+                    subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
+                except:
+                    pass
         
         print("All tools stopped.")
 
@@ -366,22 +310,9 @@ def launch_tools(
     help="Launch required tool services before starting the chat",
 )
 @click.option(
-    "--python-repl-port",
-    default=8000,
-    type=int,
-    help="Port for Python REPL tool (when using --launch-tools)",
-)
-@click.option(
-    "--think-tool-port",
-    default=8001,
-    type=int,
-    help="Port for Think tool (when using --launch-tools)",
-)
-@click.option(
-    "--search-tool-port",
-    default=8002,
-    type=int,
-    help="Port for Search tool (when using --launch-tools)",
+    "--disable-tools",
+    is_flag=True,
+    help="Disable all tool services",
 )
 def chat(
     api_key,
@@ -393,9 +324,7 @@ def chat(
     mcp_config,
     tools_config,
     launch_tools,
-    python_repl_port,
-    think_tool_port,
-    search_tool_port,
+    disable_tools,
 ):
     """Start a chat session with the Smart Agent."""
     # Load MCP config if provided
@@ -406,75 +335,69 @@ def chat(
     
     # Launch tools if requested
     tool_processes = []
-    if launch_tools:
+    if launch_tools and not disable_tools:
         try:
             # Initialize tool manager
             tool_manager = ToolManager(config_path=tools_config)
             python_repl_data = "python_repl_storage"
             
-            # Create data directory for Python REPL
-            if tool_manager.is_tool_enabled("python_tool"):
-                os.makedirs(python_repl_data, exist_ok=True)
+            # Get all enabled tools from the config
+            all_tools = tool_manager.get_all_tools()
             
-            # Launch Python REPL tool
-            if tool_manager.is_tool_enabled("python_tool"):
-                python_tool_repo = tool_manager.get_tool_repository("python_tool")
-                print(f"Starting Python REPL tool on port {python_repl_port}")
-                
-                # Run Docker container
-                docker_cmd = [
-                    "docker", "run", "-d", "--rm", "--name", "mcp-python-repl",
-                    "-p", f"{python_repl_port}:8000",
-                    "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
-                    python_tool_repo
-                ]
-                subprocess.run(docker_cmd, check=True)
-                
-                # Set environment variable for URL
-                os.environ["MCP_PYTHON_TOOL_URL"] = f"http://localhost:{python_repl_port}/sse"
-                print(f"Python REPL tool available at {os.environ['MCP_PYTHON_TOOL_URL']}")
-            
-            # Launch Think tool
-            if tool_manager.is_tool_enabled("think_tool"):
-                think_tool_repo = tool_manager.get_tool_repository("think_tool")
-                print(f"Starting Think tool on port {think_tool_port}")
-                
-                # Install Think tool if needed
-                try:
-                    subprocess.run(["pip", "show", "mcp-think-tool"], check=True, capture_output=True)
-                except subprocess.CalledProcessError:
-                    print(f"Installing Think tool from {think_tool_repo}")
-                    subprocess.run(["pip", "install", think_tool_repo], check=True)
-                
-                # Start Think tool server
-                think_cmd = ["python", "-m", "mcp_think_tool.server", "--port", str(think_tool_port)]
-                think_process = subprocess.Popen(think_cmd)
-                tool_processes.append(think_process)
-                
-                # Set environment variable for URL
-                os.environ["MCP_THINK_TOOL_URL"] = f"http://localhost:{think_tool_port}/sse"
-                print(f"Think tool available at {os.environ['MCP_THINK_TOOL_URL']}")
-            
-            # Launch Search tool
-            if tool_manager.is_tool_enabled("search_tool"):
-                search_tool_repo = tool_manager.get_tool_repository("search_tool")
-                print(f"Starting Search tool on port {search_tool_port}")
-                
-                # Install Search tool if needed
-                try:
-                    subprocess.run(["pip", "show", "ddg-mcp"], check=True, capture_output=True)
-                except subprocess.CalledProcessError:
-                    print(f"Installing Search tool from {search_tool_repo}")
-                    subprocess.run(["pip", "install", search_tool_repo], check=True)
-                
-                # Start Search tool server
-                search_cmd = ["python", "-m", "ddg_mcp.server", "--port", str(search_tool_port)]
-                search_process = subprocess.Popen(search_cmd)
-                tool_processes.append(search_process)
-                
-                # Set environment variable for URL
-                os.environ["MCP_SEARCH_TOOL_URL"] = f"http://localhost:{search_tool_port}/sse"
-                print(f"Search tool available at {os.environ['MCP_SEARCH_TOOL_URL']}")
+            for tool_id, tool_config in all_tools.items():
+                if tool_manager.is_tool_enabled(tool_id):
+                    tool_url = tool_manager.get_tool_url(tool_id)
+                    tool_repo = tool_manager.get_tool_repository(tool_id)
+                    tool_type = tool_config.get("type", "sse")
+                    tool_name = tool_config.get("name", tool_id)
+                    
+                    # Extract port from URL
+                    import re
+                    port_match = re.search(r":(\d+)/", tool_url)
+                    port = int(port_match.group(1)) if port_match else None
+                    
+                    print(f"Starting {tool_name} on {tool_url}")
+                    
+                    if tool_config.get("container", False):
+                        # Handle Docker container-based tools
+                        os.makedirs(python_repl_data, exist_ok=True)
+                        
+                        # Run Docker container
+                        docker_cmd = [
+                            "docker", "run", "-d", "--rm", "--name", f"mcp-{tool_id}",
+                            "-p", f"{port}:8000",
+                            "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
+                            tool_repo
+                        ]
+                        subprocess.run(docker_cmd, check=True)
+                        
+                        # Set environment variable for URL
+                        os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
+                        print(f"{tool_name} available at {tool_url}")
+                    else:
+                        # Generic tool handling
+                        module_name = tool_config.get("module", tool_id.replace("-", "_"))
+                        
+                        # Install tool if needed
+                        try:
+                            subprocess.run(["pip", "show", module_name], check=True, capture_output=True)
+                        except subprocess.CalledProcessError:
+                            print(f"Installing {tool_name} from {tool_repo}")
+                            subprocess.run(["pip", "install", tool_repo], check=True)
+                        
+                        # Start tool server
+                        server_module = tool_config.get("server_module", f"{module_name}.server")
+                        tool_cmd = ["python", "-m", server_module]
+                        
+                        if port:
+                            tool_cmd.extend(["--port", str(port)])
+                        
+                        tool_process = subprocess.Popen(tool_cmd)
+                        tool_processes.append(tool_process)
+                        
+                        # Set environment variable for URL
+                        os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
+                        print(f"{tool_name} available at {tool_url}")
             
             print("\nAll enabled tools are now running.")
             
@@ -484,11 +407,13 @@ def chat(
             for process in tool_processes:
                 process.terminate()
             
-            # Stop Docker container
-            try:
-                subprocess.run(["docker", "stop", "mcp-python-repl"], check=False)
-            except:
-                pass
+            # Stop Docker containers
+            for tool_id, tool_config in all_tools.items():
+                if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
+                    try:
+                        subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
+                    except:
+                        pass
             
             return
     
@@ -508,7 +433,7 @@ def chat(
         )
     finally:
         # Clean up processes if tools were launched
-        if launch_tools:
+        if launch_tools and not disable_tools and tool_processes:
             print("\nStopping all tools...")
             for process in tool_processes:
                 process.terminate()
@@ -517,11 +442,13 @@ def chat(
                 except subprocess.TimeoutExpired:
                     process.kill()
             
-            # Stop Docker container
-            try:
-                subprocess.run(["docker", "stop", "mcp-python-repl"], check=False)
-            except:
-                pass
+            # Stop Docker containers
+            for tool_id, tool_config in all_tools.items():
+                if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
+                    try:
+                        subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
+                    except:
+                        pass
             
             print("All tools stopped.")
 

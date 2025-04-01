@@ -125,14 +125,17 @@ smart-agent launch-tools
 # Launch tools with custom configuration
 smart-agent launch-tools --tools-config /path/to/tools.yaml
 
-# Disable specific tools
-smart-agent launch-tools --no-python-repl --no-search-tool
+# Disable all tools
+smart-agent launch-tools --disable-tools
 
 # Start the chat and automatically launch required tools
 smart-agent chat --launch-tools
 
 # Start the chat with custom tool configuration
 smart-agent chat --launch-tools --tools-config /path/to/tools.yaml
+
+# Start the chat with tools disabled
+smart-agent chat --disable-tools
 ```
 
 #### Using the Launch Script
@@ -145,10 +148,84 @@ Alternatively, you can use the provided shell script:
 
 # Launch with custom configuration
 ./launch-tools.sh --config=/path/to/tools.yaml
-
-# Disable specific tools
-./launch-tools.sh --no-python-repl --no-search-tool
 ```
+
+### Tool Configuration
+
+Smart Agent now supports YAML-based tool configuration, making it easier to manage and customize the tools used by the agent. The configuration file is located at `config/tools.yaml` by default.
+
+```yaml
+# Example tools.yaml configuration
+tools:
+  think_tool:
+    name: "Think Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_THINK_TOOL"
+    repository: "git+https://github.com/ddkang1/mcp-think-tool"
+    url: "http://localhost:8001/sse"
+    description: "Enables the agent to pause, reflect, and ground its reasoning process"
+    module: "mcp_think_tool"
+    server_module: "mcp_think_tool.server"
+  
+  # Docker container-based tool example
+  python_tool:
+    name: "Python REPL Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_PYTHON_TOOL"
+    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
+    url: "http://localhost:8000/sse"
+    description: "Allows execution of Python code in a secure environment"
+    container: true
+```
+
+#### Adding New Tools
+
+To add a new tool to Smart Agent, simply add a new entry to the `tools` section in the YAML file:
+
+```yaml
+tools:
+  # Existing tools...
+  
+  my_custom_tool:
+    name: "My Custom Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_CUSTOM_TOOL"
+    repository: "git+https://github.com/username/my-custom-tool"
+    url: "http://localhost:8003/sse"
+    description: "Description of what my custom tool does"
+    module: "my_custom_tool"
+    server_module: "my_custom_tool.server"
+```
+
+#### Tool Configuration Schema
+
+Each tool in the YAML configuration can have the following properties:
+
+| Property | Description | Required |
+|----------|-------------|----------|
+| `name` | Human-readable name | Yes |
+| `type` | Tool type (e.g., "sse") | Yes |
+| `enabled` | Whether the tool is enabled by default | Yes |
+| `env_prefix` | Environment variable prefix for this tool | Yes |
+| `repository` | Git repository or Docker image for the tool | Yes |
+| `url` | URL for the tool's endpoint | Yes |
+| `description` | Brief description of what the tool does | No |
+| `module` | Python module name (for pip install and import) | For Python tools |
+| `server_module` | Module to run for the server | For Python tools |
+| `container` | Set to true if the tool runs in a Docker container | For container tools |
+
+#### Environment Variable Override
+
+You can override tool configuration using environment variables:
+
+- `ENABLE_TOOL_NAME`: Enable or disable a tool (e.g., `ENABLE_THINK_TOOL=false`)
+- `MCP_TOOL_NAME_REPO`: Override the tool repository (e.g., `MCP_THINK_TOOL_REPO=git+https://github.com/user/repo`)
+- `MCP_TOOL_NAME_URL`: Override the tool URL (e.g., `MCP_THINK_TOOL_URL=http://localhost:9001/sse`)
+
+The environment variables take precedence over the YAML configuration.
 
 ## Environment Configuration
 
@@ -210,6 +287,19 @@ tools:
     repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8001/sse"
     description: "Enables the agent to pause, reflect, and ground its reasoning process"
+    module: "mcp_think_tool"
+    server_module: "mcp_think_tool.server"
+  
+  # Docker container-based tool example
+  python_tool:
+    name: "Python REPL Tool"
+    type: "sse"
+    enabled: true
+    env_prefix: "MCP_PYTHON_TOOL"
+    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
+    url: "http://localhost:8000/sse"
+    description: "Allows execution of Python code in a secure environment"
+    container: true
 ```
 
 #### Using the Tool Configuration
@@ -240,6 +330,8 @@ tools:
     repository: "git+https://github.com/username/my-custom-tool"
     url: "http://localhost:8003/sse"
     description: "Description of what my custom tool does"
+    module: "my_custom_tool"
+    server_module: "my_custom_tool.server"
 ```
 
 #### Environment Variable Override
