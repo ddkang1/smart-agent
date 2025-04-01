@@ -1,18 +1,26 @@
 # Smart Agent
 
-A powerful AI agent framework with reasoning and tool use capabilities.
+A powerful AI agent chatbot that leverages external tools to augment its intelligence rather than being constrained by built-in capabilities, enabling more accurate, verifiable, and adaptable problem-solving capabilities for practical application development.
 
 ## Overview
 
-Smart Agent is built on top of Claude 3.7 Sonnet and integrates with the "Think" Tool and Model Context Protocol (MCP) on top of the OpenAI Agents Framework. The goal is to create intelligent agents capable of handling tools with reasoning.
+Smart Agent represents a breakthrough in AI agent capabilities by combining three key technologies:
+
+1. **Claude 3.7 Sonnet with Think Tool**: The core innovation is the discovery that Claude 3.7 Sonnet's "Think" Tool unlocks powerful reasoning capabilities even without explicit thinking mode. This tool grounds the agent's reasoning process, enabling it to effectively use external tools - a capability that pure reasoning models typically struggle with.
+
+2. **Model Context Protocol (MCP)**: Acting as a standardized "USB-C for tools," MCP provides a consistent interface for integrating and managing external tools. This standardization makes it straightforward to extend the agent's capabilities through new tools.
+
+3. **OpenAI Agents Framework**: This robust framework orchestrates the agent's interactions, managing the flow between reasoning and tool use to create a seamless experience.
+
+The combination of these technologies creates an agent that can reason effectively while using tools to extend its capabilities beyond what's possible with traditional language models alone.
 
 ## Key Features
 
-- **Enhanced Reasoning**: Optimized for tool use to ground the thinking process
-- **Extensible Architecture**: Built on OpenAI Agents Framework
-- **MCP Integration**: Leverages Model Context Protocol for advanced capabilities
-- **Think Tool**: Enables deliberate reflection for better decision making
-- **CLI Interface**: Easy to use command-line interface
+- **Grounded Reasoning**: The Think Tool enables the agent to pause, reflect, and ground its reasoning process
+- **Tool Augmentation**: Extends capabilities through external tools rather than being limited to built-in knowledge
+- **Standardized Tool Integration**: MCP provides a consistent interface for adding new tools
+- **Verifiable Problem-Solving**: Tools provide factual grounding that makes solutions more accurate and verifiable
+- **Adaptable Intelligence**: Easily extend capabilities by adding new tools without retraining the model
 
 ## Installation
 
