@@ -1,0 +1,18 @@
+[flake8]
+# Ignore line length errors (E501)
+# Ignore unused import errors (F401)
+# Ignore unused variable errors (F841)
+ignore = E501, F401, F841
+
+# Maximum line length (ignored due to E501 above, but kept for reference)
+max-line-length = 100
+
+# Exclude patterns
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    venv,
+    .env
