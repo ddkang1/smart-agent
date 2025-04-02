@@ -11,11 +11,14 @@ import subprocess
 import click
 import datetime
 import logging
+import yaml
+import getpass
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import re
 from urllib.parse import urlparse
 import locale
+import shutil
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -214,83 +217,76 @@ def chat_loop(config_manager: ConfigManager):
     print("\nChat session ended")
 
 
-def chat(config_manager: ConfigManager, disable_tools: bool = False):
+def chat(config_manager: ConfigManager):
     """
     Start a chat session with Smart Agent.
     
     Args:
         config_manager: Configuration manager
-        disable_tools: Whether to disable all tools
     """
     # Start chat loop
     chat_loop(config_manager)
 
 
-def launch_tools(config_manager: ConfigManager, disable_tools: bool = False) -> List[subprocess.Popen]:
+def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
     """
     Launch tool services.
     
     Args:
         config_manager: Configuration manager
-        disable_tools: Whether to disable all tools
         
     Returns:
-        List of tool processes
+        List of subprocess objects
     """
-    if disable_tools:
-        print("All tools are disabled")
-        return []
+    print("Launching tool services...")
     
+    # Get tools configuration
+    tool_configs = config_manager.get_tools_config()
+    
+    # Launch enabled tools
     processes = []
-    
-    # Get all enabled tools
-    enabled_tools = []
-    for tool_id, tool_config in config_manager.get_tools_config().items():
-        if config_manager.is_tool_enabled(tool_id):
-            enabled_tools.append((tool_id, tool_config))
-    
-    if not enabled_tools:
-        print("No enabled tools found.")
-        return processes
-    
-    print(f"Launching {len(enabled_tools)} enabled tools...")
-    
-    for tool_id, tool_config in enabled_tools:
-        tool_name = tool_config.get("name", tool_id)
-        tool_repo = config_manager.get_tool_repository(tool_id)
-        tool_url = config_manager.get_tool_url(tool_id)
-        
-        # Extract port from URL
-        url_parts = urlparse(tool_url)
-        port = None
-        if url_parts.port:
-            port = url_parts.port
-        
-        print(f"Launching {tool_name}...")
-        
-        # Get launch command type
-        launch_cmd = tool_config.get("launch_cmd", "uvx")
-        
-        # Check if this is a remote SSE tool (no need to launch locally)
-        if not url_parts.hostname in ["localhost", "127.0.0.1"]:
-            print(f"Tool {tool_name} is a remote SSE tool at {tool_url}, no need to launch locally")
+    for tool_id, tool_config in tool_configs.items():
+        # Skip disabled tools
+        if not tool_config.get("enabled", True):
+            print(f"Tool '{tool_id}' is disabled. Skipping.")
             continue
         
-        # All local tools are treated as stdio tools that need conversion to SSE
+        # Get configuration values
+        tool_name = tool_config.get("name", tool_id)
+        tool_type = tool_config.get("type", "sse")
+        tool_url = tool_config.get("url", "")
+        launch_cmd = tool_config.get("launch_cmd", "")
+        tool_repo = tool_config.get("repository", "")
+        
+        # Skip tools with remote URLs (non-localhost)
+        if (tool_url and 
+            "localhost" not in tool_url and 
+            "127.0.0.1" not in tool_url and 
+            "0.0.0.0" not in tool_url):
+            print(f"Tool '{tool_id}' uses a remote URL. No need to launch locally.")
+            continue
+        
+        # Only launch if we have a launch command
+        if not launch_cmd:
+            print(f"Tool '{tool_id}' has no launch command. Skipping.")
+            continue
+        
+        # Create tool storage directory if specified
+        storage_path = tool_config.get("storage_path", "")
+        storage_dir = storage_path if storage_path else f"{tool_id}_storage"
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Launch tool
         if launch_cmd == "docker":
             # Docker container-based tool
-            storage_path = tool_config.get("storage_path", "tool_storage")
-            storage_dir = os.path.join(os.getcwd(), storage_path)
-            os.makedirs(storage_dir, exist_ok=True)
-            
-            print(f"Converting stdio Docker tool to SSE using supergateway: {tool_name}")
+            print(f"Launching Docker tool: {tool_name}")
             
             # Use supergateway to convert stdio to SSE
             tool_cmd = [
                 "npx", "-y", "supergateway",
                 "--stdio", f"docker run -i --rm --pull=always -v {os.path.abspath(storage_dir)}:/app/data {tool_repo}",
-                "--port", str(port),
-                "--baseUrl", f"http://localhost:{port}",
+                "--port", str(tool_url.split(":")[-1]),
+                "--baseUrl", f"http://localhost:{tool_url.split(':')[-1]}",
                 "--ssePath", "/sse",
                 "--messagePath", "/message"
             ]
@@ -305,14 +301,14 @@ def launch_tools(config_manager: ConfigManager, disable_tools: bool = False) -> 
             # NPX-based tool
             module_name = tool_config.get("module", tool_id)
             
-            print(f"Converting stdio NPX tool to SSE using supergateway: {tool_name}")
+            print(f"Launching NPX tool: {tool_name}")
             
             # Use supergateway to convert stdio to SSE
             tool_cmd = [
                 "npx", "-y", "supergateway",
                 "--stdio", f"npx {module_name}",
-                "--port", str(port),
-                "--baseUrl", f"http://localhost:{port}",
+                "--port", str(tool_url.split(":")[-1]),
+                "--baseUrl", f"http://localhost:{tool_url.split(':')[-1]}",
                 "--ssePath", "/sse",
                 "--messagePath", "/message"
             ]
@@ -327,14 +323,14 @@ def launch_tools(config_manager: ConfigManager, disable_tools: bool = False) -> 
             # UVX-based tool (Python package)
             module_name = tool_config.get("module", tool_id.replace("-", "_"))
             
-            print(f"Converting stdio UVX tool to SSE using supergateway: {tool_name}")
+            print(f"Launching UVX tool: {tool_name}")
             
             # Use supergateway to convert stdio to SSE
             tool_cmd = [
                 "npx", "-y", "supergateway",
                 "--stdio", f"uvx --from {tool_repo} {module_name}",
-                "--port", str(port),
-                "--baseUrl", f"http://localhost:{port}",
+                "--port", str(tool_url.split(":")[-1]),
+                "--baseUrl", f"http://localhost:{tool_url.split(':')[-1]}",
                 "--ssePath", "/sse",
                 "--messagePath", "/message"
             ]
@@ -355,6 +351,219 @@ def launch_tools(config_manager: ConfigManager, disable_tools: bool = False) -> 
 
 @click.command()
 @click.option('--config', help='Path to configuration file')
+@click.option('--tools', is_flag=True, help='Start tool services')
+@click.option('--proxy', is_flag=True, help='Start LiteLLM proxy service')
+@click.option('--all', is_flag=True, help='Start all services (tools and proxy)')
+def start_cmd(config, tools, proxy, all):
+    """Start tool and proxy services."""
+    config_manager = ConfigManager(config)
+    processes = []
+    
+    # If --all is specified, enable both tools and proxy
+    if all:
+        tools = True
+        proxy = True
+    
+    # If neither flag is specified, default to starting all services
+    if not tools and not proxy:
+        tools = True
+        proxy = True
+    
+    try:
+        # Launch tools if requested
+        if tools:
+            tool_processes = launch_tools(config_manager)
+            processes.extend(tool_processes)
+            print("Tool services started successfully.")
+        
+        # Launch LiteLLM proxy if requested and needed
+        if proxy:
+            base_url = config_manager.get_config("api", "base_url")
+            # Only start proxy if we're using a local URL
+            if ("localhost" in base_url or 
+                "127.0.0.1" in base_url or 
+                "0.0.0.0" in base_url):
+                proxy_process = launch_litellm_proxy(config_manager)
+                if proxy_process:
+                    processes.append(proxy_process)
+                    print("LiteLLM proxy started successfully.")
+                else:
+                    print("Failed to start LiteLLM proxy.")
+            else:
+                print(f"Skipping LiteLLM proxy - using remote API at {base_url}")
+        
+        # Keep the process running until interrupted
+        print("\nPress Ctrl+C to stop all services.")
+        for process in processes:
+            process.wait()
+            
+    except KeyboardInterrupt:
+        print("\nStopping all services...")
+    finally:
+        # Clean up processes
+        for process in processes:
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except:
+                process.kill()
+        
+        # Clean up Docker containers
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if tool_config.get("launch_cmd") == "docker":
+                try:
+                    subprocess.run(["docker", "stop", f"smart-agent-{tool_id}"], check=False)
+                except:
+                    pass
+        
+        print("All services stopped.")
+
+
+@click.command()
+@click.option('--config', help='Path to configuration file')
+@click.option('--tools', is_flag=True, help='Stop tool services')
+@click.option('--proxy', is_flag=True, help='Stop LiteLLM proxy service')
+@click.option('--all', is_flag=True, help='Stop all services (tools and proxy)')
+def stop_cmd(config, tools, proxy, all):
+    """Stop running services."""
+    # If --all is specified, enable both tools and proxy
+    if all:
+        tools = True
+        proxy = True
+    
+    # If neither flag is specified, default to stopping all services
+    if not tools and not proxy:
+        tools = True
+        proxy = True
+    
+    # Stop tool services
+    if tools:
+        print("Stopping tool services...")
+        # Find and kill tool processes
+        try:
+            # Find processes with 'supergateway' in command line (our tool wrapper)
+            tool_pids = subprocess.check_output(
+                ["pgrep", "-f", "supergateway"], 
+                universal_newlines=True
+            ).strip().split("\n")
+            
+            for pid in tool_pids:
+                if pid:
+                    os.kill(int(pid), signal.SIGTERM)
+                    print(f"Stopped tool process with PID {pid}")
+        except subprocess.CalledProcessError:
+            print("No tool processes found.")
+    
+    # Stop LiteLLM proxy
+    if proxy:
+        print("Stopping LiteLLM proxy service...")
+        try:
+            # Stop and remove the Docker container
+            subprocess.run(
+                ["docker", "stop", "smart-agent-litellm-proxy"],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            subprocess.run(
+                ["docker", "rm", "-f", "smart-agent-litellm-proxy"],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            print("Stopped LiteLLM proxy Docker container")
+            
+            # Also find any local litellm processes (in case we're not using Docker)
+            proxy_pids = subprocess.check_output(
+                ["pgrep", "-f", "litellm"], 
+                universal_newlines=True
+            ).strip().split("\n")
+            
+            for pid in proxy_pids:
+                if pid:
+                    os.kill(int(pid), signal.SIGTERM)
+                    print(f"Stopped LiteLLM proxy process with PID {pid}")
+        except subprocess.CalledProcessError:
+            print("No LiteLLM proxy process found.")
+        except Exception as e:
+            print(f"Error stopping LiteLLM proxy: {e}")
+    
+    print("All requested services stopped.")
+
+
+@click.command()
+@click.option('--config', help='Path to configuration file')
+@click.option('--tools', is_flag=True, help='Restart tool services')
+@click.option('--proxy', is_flag=True, help='Restart LiteLLM proxy service')
+@click.option('--all', is_flag=True, help='Restart all services (tools and proxy)')
+def restart_cmd(config, tools, proxy, all):
+    """Restart tool and proxy services."""
+    # Use the existing stop and start commands
+    stop_cmd.callback(config=config, tools=tools, proxy=proxy, all=all)
+    start_cmd.callback(config=config, tools=tools, proxy=proxy, all=all)
+    print("Restart complete.")
+
+
+def launch_litellm_proxy(config_manager):
+    """Launch the LiteLLM proxy using Docker."""
+    try:
+        config_path = os.path.join(os.path.abspath("config"), "litellm_config.yaml")
+        if not os.path.exists(config_path):
+            print(f"Error: LiteLLM configuration file not found at {config_path}")
+            return None
+        
+        # Check if Docker is available
+        try:
+            subprocess.run(["docker", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print("Error: Docker is not available. Cannot launch LiteLLM proxy.")
+            return None
+        
+        # First, ensure old containers are removed
+        try:
+            subprocess.run(["docker", "rm", "-f", "smart-agent-litellm-proxy"], 
+                          check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except Exception:
+            pass  # Ignore errors if container doesn't exist
+        
+        # Launch LiteLLM proxy using Docker
+        print("Launching LiteLLM proxy using Docker...")
+        
+        docker_cmd = [
+            "docker", "run", 
+            "--name", "smart-agent-litellm-proxy",
+            "-d",  # Run in detached mode
+            "-p", "4000:4000",  # Map port
+            "-v", f"{os.path.abspath('config')}/litellm_config.yaml:/app/config.yaml",
+            "-e", "PORT=4000",
+            "-e", "HOST=0.0.0.0",
+            "ghcr.io/berriai/litellm:litellm_stable_release_branch-stable",
+            "--config", "/app/config.yaml",
+            "--port", "4000",
+            "--host", "0.0.0.0"
+        ]
+        
+        # Start the Docker container
+        process = subprocess.Popen(
+            docker_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        
+        # Create a background monitoring process
+        monitor_cmd = ["docker", "logs", "-f", "smart-agent-litellm-proxy"]
+        monitor_process = subprocess.Popen(
+            monitor_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        # Return the monitoring process so we can terminate it later
+        return monitor_process
+    except Exception as e:
+        print(f"Error launching LiteLLM proxy: {e}")
+        return None
+
+
+@click.command()
+@click.option('--config', help='Path to configuration file')
 def chat_cmd(config):
     """Start a chat session with Smart Agent."""
     config_manager = ConfigManager(config)
@@ -362,10 +571,11 @@ def chat_cmd(config):
     processes = []
     try:
         # Automatically launch tools based on configuration
-        processes = launch_tools(config_manager, disable_tools=False)
+        # Tools will only be launched if they are enabled in the YAML config
+        processes = launch_tools(config_manager)
         
         # Start chat session
-        chat(config_manager, disable_tools=False)
+        chat(config_manager)
     finally:
         # Clean up processes
         for process in processes:
@@ -383,60 +593,399 @@ def chat_cmd(config):
                 except:
                     pass
         
-        print("All tools stopped.")
+        if processes:
+            print("All tools stopped.")
 
 
 @click.command()
-@click.option('--config', help='Path to configuration file')
-def launch_tools_cmd(config):
-    """Launch tool services."""
-    config_manager = ConfigManager(config)
+@click.option("--quick", is_flag=True, help="Quick setup: just copy example files without interactive prompts")
+@click.option("--config", is_flag=True, help="Only set up config.yaml")
+@click.option("--tools", is_flag=True, help="Only set up tools.yaml")
+@click.option("--litellm", is_flag=True, help="Only set up litellm_config.yaml")
+def setup_cmd(quick, config, tools, litellm):
+    """Set up the environment for Smart Agent through an interactive process."""
+    print("Welcome to Smart Agent Setup!")
     
-    try:
-        # Launch all enabled tools
-        processes = launch_tools(config_manager, disable_tools=False)
-        
-        # Keep the process running until interrupted
-        print("\nPress Ctrl+C to stop all tools.")
-        for process in processes:
-            process.wait()
-    except KeyboardInterrupt:
-        print("\nStopping all tools...")
-    finally:
-        # Clean up processes
-        for process in processes:
-            try:
-                process.terminate()
-                process.wait(timeout=5)
-            except:
-                process.kill()
-        
-        # Clean up Docker containers
-        for tool_id, tool_config in config_manager.get_tools_config().items():
-            if tool_config.get("launch_cmd") == "docker":
-                try:
-                    subprocess.run(["docker", "stop", f"smart-agent-{tool_id}"], check=False)
-                except:
-                    pass
-        
-        print("All tools stopped.")
-
-
-@click.command()
-def setup_cmd():
-    """Set up the environment for Smart Agent."""
-    # Get the directory where the script is located
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    setup_script = os.path.join(script_dir, "setup-env.sh")
+    # Determine which configs to set up
+    setup_all = not (config or tools or litellm)
+    if setup_all:
+        print("This wizard will guide you through configuring your Smart Agent environment.\n")
+    else:
+        configs_to_setup = []
+        if config:
+            configs_to_setup.append("config.yaml")
+        if tools:
+            configs_to_setup.append("tools.yaml")
+        if litellm:
+            configs_to_setup.append("litellm_config.yaml")
+        print(f"Setting up: {', '.join(configs_to_setup)}\n")
     
-    print("Setting up Smart Agent environment...")
+    # Create config directory if it doesn't exist
+    if not os.path.exists("config"):
+        os.makedirs("config")
+        print("Created config directory.")
     
-    # Run the setup script directly
-    try:
-        subprocess.run(["bash", setup_script], check=True)
-    except subprocess.CalledProcessError:
-        print("Error running setup script. Please check the output for details.")
+    # Check for example files
+    config_example = os.path.exists("config/config.yaml.example")
+    tools_example = os.path.exists("config/tools.yaml.example")
+    litellm_example = os.path.exists("config/litellm_config.yaml.example")
+    
+    if not config_example or not tools_example:
+        print("Error: Example configuration files not found.")
+        print("Please ensure the following files exist:")
+        if not config_example:
+            print("- config/config.yaml.example")
+        if not tools_example:
+            print("- config/tools.yaml.example")
         sys.exit(1)
+    
+    # Quick setup option - just copy the example files
+    if quick:
+        print("Performing quick setup (copying example files)...")
+        
+        # Copy config.yaml if needed
+        if (setup_all or config) and not os.path.exists("config/config.yaml"):
+            shutil.copy("config/config.yaml.example", "config/config.yaml")
+            print("✓ Created config/config.yaml from example")
+        elif os.path.exists("config/config.yaml"):
+            print("! config/config.yaml already exists, skipping")
+        
+        # Copy tools.yaml if needed
+        if (setup_all or tools) and not os.path.exists("config/tools.yaml"):
+            shutil.copy("config/tools.yaml.example", "config/tools.yaml")
+            print("✓ Created config/tools.yaml from example")
+        elif os.path.exists("config/tools.yaml"):
+            print("! config/tools.yaml already exists, skipping")
+        
+        # Copy litellm_config.yaml if needed
+        if (setup_all or litellm) and litellm_example and not os.path.exists("config/litellm_config.yaml"):
+            shutil.copy("config/litellm_config.yaml.example", "config/litellm_config.yaml")
+            print("✓ Created config/litellm_config.yaml from example")
+        elif os.path.exists("config/litellm_config.yaml"):
+            print("! config/litellm_config.yaml already exists, skipping")
+        
+        # Create storage directories based on tools.yaml
+        if os.path.exists("config/tools.yaml"):
+            with open("config/tools.yaml", "r") as f:
+                tools_yaml = yaml.safe_load(f)
+                
+            print("\n===== CREATING STORAGE DIRECTORIES =====")
+            for tool_id, tool_config in tools_yaml.get("tools", {}).items():
+                if tool_config.get("enabled", True) and "storage_path" in tool_config:
+                    storage_path = tool_config["storage_path"]
+                    
+                    # Convert relative paths to absolute paths
+                    if not os.path.isabs(storage_path):
+                        abs_storage_path = os.path.abspath(os.path.join(os.getcwd(), "storage", storage_path))
+                        print(f"⚠️ Converting relative path to absolute: {storage_path} -> {abs_storage_path}")
+                        
+                        # Update the file with absolute path
+                        tools_yaml["tools"][tool_id]["storage_path"] = abs_storage_path
+                        storage_path = abs_storage_path
+                        
+                        # Save the updated tools.yaml
+                        with open("config/tools.yaml", "w") as f:
+                            yaml.dump(tools_yaml, f, default_flow_style=False)
+                    
+                    if not os.path.exists(storage_path):
+                        os.makedirs(storage_path, exist_ok=True)
+                        print(f"✓ Created storage directory: {storage_path}")
+        
+        print("\n===== QUICK SETUP COMPLETE =====")
+        print("You can now run Smart Agent using:")
+        print("  smart-agent chat                 # Start chat session")
+        print("  smart-agent start                # Start all services")
+        return
+    
+    # Interactive setup - Step 1: Configure main settings
+    if setup_all or config:
+        print("\n===== MAIN CONFIGURATION =====")
+        
+        # Check if config already exists and use it as base
+        if os.path.exists("config/config.yaml"):
+            print("Found existing config.yaml, using as default...")
+            with open("config/config.yaml", "r") as f:
+                config_yaml = yaml.safe_load(f)
+        else:
+            # Load default config from example
+            with open("config/config.yaml.example", "r") as f:
+                config_yaml = yaml.safe_load(f)
+        
+        # Get model name from config
+        model_name = config_yaml.get("model", {}).get("name")
+        
+        print(f"\nUsing configuration with model: {model_name}")
+        change_model = input("Do you want to change the model? [y/N]: ").strip().lower() == "y"
+        
+        if change_model:
+            model_name = input(f"Enter model name [{model_name}]: ").strip() or model_name
+            config_yaml["model"]["name"] = model_name
+        
+        # Get API key
+        api_key = getpass.getpass(f"Enter API Key [{config_yaml.get('api', {}).get('api_key', '*****')}]: ").strip()
+        if api_key:  # Only update if user entered something
+            config_yaml["api"]["api_key"] = api_key
+        
+        # Write main config
+        with open("config/config.yaml", "w") as f:
+            yaml.dump(config_yaml, f, default_flow_style=False)
+        print("✓ Updated config/config.yaml")
+    
+    # Step 2: Configure tools
+    if setup_all or tools:
+        print("\n===== TOOL CONFIGURATION =====")
+        
+        # Check if tools config already exists and use it as base
+        if os.path.exists("config/tools.yaml"):
+            print("Found existing tools.yaml, using as default...")
+            with open("config/tools.yaml", "r") as f:
+                tools_yaml = yaml.safe_load(f)
+        else:
+            # Load default tools config from example
+            with open("config/tools.yaml.example", "r") as f:
+                tools_yaml = yaml.safe_load(f)
+        
+        print("\nFound the following tools in the configuration:")
+        for tool_id, tool_config in tools_yaml.get("tools", {}).items():
+            enabled = tool_config.get("enabled", True)
+            status = "enabled" if enabled else "disabled"
+            print(f"- {tool_config.get('name', tool_id)} ({status})")
+        
+        customize_tools = input("\nDo you want to customize tool configuration? [y/N]: ").strip().lower() == "y"
+        
+        if customize_tools:
+            for tool_id, tool_config in tools_yaml.get("tools", {}).items():
+                current_state = "enabled" if tool_config.get("enabled", True) else "disabled"
+                tool_name = tool_config.get('name', tool_id)
+                
+                # Ask user if they want to change the default state
+                change_state = input(f"  Change {tool_name} (currently {current_state})? [y/N]: ").strip().lower() == "y"
+                
+                if change_state:
+                    if current_state == "enabled":
+                        enable_tool = input(f"  Disable {tool_name}? [y/N]: ").strip().lower() != "y"
+                    else:
+                        enable_tool = input(f"  Enable {tool_name}? [y/N]: ").strip().lower() == "y"
+                    
+                    tools_yaml["tools"][tool_id]["enabled"] = enable_tool
+                    
+                    # If enabled, ask for customization of URL
+                    if enable_tool and "url" in tool_config:
+                        current_url = tool_config["url"]
+                        custom_url = input(f"  Custom URL for this tool [default: {current_url}]: ").strip()
+                        if custom_url:
+                            tools_yaml["tools"][tool_id]["url"] = custom_url
+        
+        # Write tools config
+        with open("config/tools.yaml", "w") as f:
+            yaml.dump(tools_yaml, f, default_flow_style=False)
+        print("✓ Updated config/tools.yaml")
+    
+    # Step 3: Configure LiteLLM if using proxy
+    if setup_all or litellm:
+        # Determine if we're using LiteLLM proxy
+        if setup_all:
+            # Read from config.yaml to check if we're using proxy
+            if os.path.exists("config/config.yaml"):
+                with open("config/config.yaml", "r") as f:
+                    config_data = yaml.safe_load(f)
+                    base_url = config_data.get("api", {}).get("base_url", "")
+                    use_litellm = "localhost:4000" in base_url or "127.0.0.1:4000" in base_url
+            else:
+                # Default to assuming we use proxy if setting up everything
+                use_litellm = True
+        else:
+            # If explicitly asked to set up LiteLLM, don't ask again
+            use_litellm = True
+        
+        if use_litellm:
+            print("\n===== LITELLM PROXY CONFIGURATION =====")
+            
+            # Check if LiteLLM config already exists and use it as base
+            if os.path.exists("config/litellm_config.yaml"):
+                print("Found existing litellm_config.yaml, using as default...")
+                with open("config/litellm_config.yaml", "r") as f:
+                    litellm_config = yaml.safe_load(f)
+            elif litellm_example:
+                # Load default LiteLLM config from example
+                with open("config/litellm_config.yaml.example", "r") as f:
+                    litellm_config = yaml.safe_load(f)
+                    print("Loaded default LiteLLM configuration from example file.")
+            else:
+                # Generate basic LiteLLM config with the model
+                # Get model name from config.yaml if it exists
+                if os.path.exists("config/config.yaml"):
+                    with open("config/config.yaml", "r") as f:
+                        config_data = yaml.safe_load(f)
+                        model_name = config_data.get("model", {}).get("name", "claude-3-sonnet-20240229")
+                else:
+                    model_name = "claude-3-sonnet-20240229"  # Default if no config.yaml
+                
+                provider_prefix = "anthropic" if "claude" in model_name.lower() else "openai"
+                env_var = f"${provider_prefix.upper()}_API_KEY"
+                
+                litellm_config = {
+                    "model_list": [
+                        {
+                            "model_name": model_name,
+                            "litellm_params": {
+                                "model": f"{provider_prefix}/{model_name}",
+                                "api_key": env_var
+                            }
+                        }
+                    ],
+                    "server": {
+                        "port": 4000,
+                        "host": "0.0.0.0"
+                    },
+                    "router": {
+                        "timeout": 30,
+                        "routing_strategy": "simple-shuffle"
+                    }
+                }
+                print("Generated basic LiteLLM configuration based on the selected model.")
+            
+            # Ask user if they want to customize LiteLLM config
+            customize_litellm = input("\nDo you want to add or remove models from LiteLLM configuration? [y/N]: ").strip().lower() == "y"
+            
+            if customize_litellm:
+                # Show current models
+                print("\nCurrent models in configuration:")
+                for idx, model_entry in enumerate(litellm_config.get("model_list", [])):
+                    print(f"{idx+1}. {model_entry.get('model_name')}")
+                
+                # Add models option
+                add_models = input("\nAdd fallback models? [y/N]: ").strip().lower() == "y"
+                if add_models:
+                    # Check if there are other models in the example file
+                    if litellm_example:
+                        with open("config/litellm_config.yaml.example", "r") as f:
+                            example_config = yaml.safe_load(f)
+                            
+                            # Find models in example that aren't in current config
+                            current_models = [m.get("model_name") for m in litellm_config.get("model_list", [])]
+                            example_models = []
+                            
+                            for model_entry in example_config.get("model_list", []):
+                                model_name = model_entry.get("model_name")
+                                if model_name and model_name not in current_models:
+                                    example_models.append(model_entry)
+                            
+                            # Offer these as options to add
+                            if example_models:
+                                print("\nAdditional models available from example config:")
+                                for idx, model_entry in enumerate(example_models):
+                                    print(f"{idx+1}. {model_entry.get('model_name')}")
+                                
+                                for model_entry in example_models:
+                                    model_name = model_entry.get("model_name")
+                                    add_model = input(f"Add {model_name}? [y/N]: ").strip().lower() == "y"
+                                    if add_model:
+                                        litellm_config["model_list"].append(model_entry)
+                                        print(f"✓ Added {model_name}")
+                    
+                    # Generic fallback model options
+                    current_models = [m.get("model_name") for m in litellm_config.get("model_list", [])]
+                    
+                    if "gpt-4" not in current_models and "claude" in " ".join(current_models).lower():
+                        add_gpt4 = input("Add GPT-4 as a fallback model? [y/N]: ").strip().lower() == "y"
+                        if add_gpt4:
+                            litellm_config["model_list"].append({
+                                "model_name": "gpt-4",
+                                "litellm_params": {
+                                    "model": "openai/gpt-4",
+                                    "api_key": "${OPENAI_API_KEY}"
+                                }
+                            })
+                            print("✓ Added GPT-4 (requires OPENAI_API_KEY)")
+                    
+                    if "gpt-3.5-turbo" not in current_models and "claude" in " ".join(current_models).lower():
+                        add_gpt35 = input("Add GPT-3.5 Turbo as a fallback model? [y/N]: ").strip().lower() == "y"
+                        if add_gpt35:
+                            litellm_config["model_list"].append({
+                                "model_name": "gpt-3.5-turbo",
+                                "litellm_params": {
+                                    "model": "openai/gpt-3.5-turbo",
+                                    "api_key": "${OPENAI_API_KEY}"
+                                }
+                            })
+                            print("✓ Added GPT-3.5 Turbo (requires OPENAI_API_KEY)")
+                    
+                    if "claude-3-sonnet-20240229" not in current_models and "gpt" in " ".join(current_models).lower():
+                        add_claude = input("Add Claude as a fallback model? [y/N]: ").strip().lower() == "y"
+                        if add_claude:
+                            litellm_config["model_list"].append({
+                                "model_name": "claude-3-sonnet-20240229",
+                                "litellm_params": {
+                                    "model": "anthropic/claude-3-sonnet-20240229",
+                                    "api_key": "${ANTHROPIC_API_KEY}"
+                                }
+                            })
+                            print("✓ Added Claude (requires ANTHROPIC_API_KEY)")
+                
+                # Remove models option
+                remove_models = input("\nRemove any models? [y/N]: ").strip().lower() == "y"
+                if remove_models and litellm_config.get("model_list"):
+                    # Only allow removal if there would be at least one model left
+                    if len(litellm_config["model_list"]) > 1:
+                        print("\nSelect models to remove:")
+                        models_to_remove = []
+                        
+                        for idx, model_entry in enumerate(litellm_config["model_list"]):
+                            model_name = model_entry.get("model_name")
+                            remove = input(f"Remove {model_name}? [y/N]: ").strip().lower() == "y"
+                            if remove:
+                                models_to_remove.append(idx)
+                        
+                        # Remove models in reverse order to avoid index issues
+                        for idx in sorted(models_to_remove, reverse=True):
+                            if len(litellm_config["model_list"]) > 1:  # Ensure at least one model remains
+                                removed_model = litellm_config["model_list"].pop(idx)
+                                print(f"✓ Removed {removed_model.get('model_name')}")
+                    else:
+                        print("Cannot remove the only model in configuration.")
+            
+            # Write LiteLLM config
+            with open("config/litellm_config.yaml", "w") as f:
+                yaml.dump(litellm_config, f, default_flow_style=False)
+            print("✓ Updated config/litellm_config.yaml")
+    
+    # Create storage directories
+    if setup_all or tools:
+        print("\n===== CREATING STORAGE DIRECTORIES =====")
+        
+        # Load tools configuration if it exists
+        if os.path.exists("config/tools.yaml"):
+            with open("config/tools.yaml", "r") as f:
+                tools_yaml = yaml.safe_load(f)
+            
+            # Extract storage paths from tools.yaml and create them
+            for tool_id, tool_config in tools_yaml.get("tools", {}).items():
+                if tool_config.get("enabled", True) and "storage_path" in tool_config:
+                    storage_path = tool_config["storage_path"]
+                    
+                    # Convert relative paths to absolute paths
+                    if not os.path.isabs(storage_path):
+                        # Use a storage directory in the current working directory
+                        abs_storage_path = os.path.abspath(os.path.join(os.getcwd(), "storage", storage_path))
+                        tools_yaml["tools"][tool_id]["storage_path"] = abs_storage_path
+                        storage_path = abs_storage_path
+                        print(f"⚠️ Converting relative path to absolute: {storage_path}")
+                        
+                        # Save the updated tools.yaml
+                        with open("config/tools.yaml", "w") as f:
+                            yaml.dump(tools_yaml, f, default_flow_style=False)
+                    
+                    if not os.path.exists(storage_path):
+                        os.makedirs(storage_path, exist_ok=True)
+                        print(f"✓ Created storage directory: {storage_path}")
+    
+    print("\n===== SETUP COMPLETE =====")
+    print("You can now run Smart Agent using:")
+    print("  smart-agent chat                 # Start chat session")
+    print("  smart-agent start                # Start all services")
+    print("  smart-agent start --tools        # Start only tool services")
+    print("  smart-agent start --proxy        # Start only the LiteLLM proxy")
 
 
 @click.group()
@@ -446,12 +995,14 @@ def cli():
 
 
 cli.add_command(chat_cmd)
-cli.add_command(launch_tools_cmd, name="launch-tools")
+cli.add_command(start_cmd)
+cli.add_command(stop_cmd)
+cli.add_command(restart_cmd)
 cli.add_command(setup_cmd)
 
 
 def main():
-    """Entry point for the CLI."""
+    """Main entry point for the CLI."""
     cli()
 
 
