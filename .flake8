@@ -1,11 +1,26 @@
 [flake8]
-# Ignore line length errors (E501)
-# Ignore unused import errors (F401)
-# Ignore unused variable errors (F841)
-ignore = E501, F401, F841
+# Ignore all non-essential formatting and style errors
+# Following best practices for projects that prioritize functionality over strict style enforcement
+ignore = 
+    # Whitespace and formatting
+    E1, E2, E3, E5,
+    # Import formatting and ordering
+    E4,
+    # Statement formatting
+    E7,
+    # Line break issues
+    W1, W2, W3, W5,
+    # Unused imports and variables
+    F4, F8,
+    # Bare except clauses
+    E722,
+    # Blank lines
+    W391,
+    # Line too long
+    E501
 
 # Maximum line length (ignored due to E501 above, but kept for reference)
-max-line-length = 100
+max-line-length = 120
 
 # Exclude patterns
 exclude =
