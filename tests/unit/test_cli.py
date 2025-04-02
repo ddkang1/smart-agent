@@ -5,9 +5,7 @@ Unit tests for the CLI module.
 from unittest.mock import patch, MagicMock, call
 import sys
 
-from smart_agent.cli import (
-    launch_litellm_proxy
-)
+from smart_agent.cli import launch_litellm_proxy
 
 
 class TestCliCommands:
@@ -19,17 +17,18 @@ class TestCliCommands:
         """Test the functionality of start_cmd without calling the Click command."""
         # Import here to avoid circular imports
         from smart_agent.cli import start_cmd
-        
+
         # Create a mock config manager
         mock_config_manager = MagicMock()
-        
+
         # Mock get_config to return a localhost URL for api.base_url to ensure litellm_proxy is called
         def get_config_side_effect(section=None, key=None, default=None):
             if section == "api" and key == "base_url":
                 return "http://localhost:8000"
             return default
+
         mock_config_manager.get_config.side_effect = get_config_side_effect
-        
+
         # Call the internal functionality directly
         with patch("smart_agent.cli.ConfigManager", return_value=mock_config_manager):
             # We need to patch sys.exit to prevent the test from exiting
@@ -46,10 +45,10 @@ class TestCliCommands:
         """Test the functionality of stop_cmd without calling the Click command."""
         # Import here to avoid circular imports
         from smart_agent.cli import stop_cmd
-        
+
         # Call the internal functionality directly
         stop_cmd.callback(config=None, tools=True, proxy=True, all=True)
-        
+
         # Verify subprocess.run was called to stop services
         assert mock_run.called
 
@@ -58,23 +57,28 @@ class TestCliCommands:
     @patch("os.makedirs")
     @patch("builtins.open", new_callable=MagicMock)
     @patch("shutil.copy")
-    def test_setup_cmd_functionality(self, mock_copy, mock_open, mock_makedirs, mock_exists, mock_input):
+    def test_setup_cmd_functionality(
+        self, mock_copy, mock_open, mock_makedirs, mock_exists, mock_input
+    ):
         """Test the functionality of setup_cmd without calling the Click command."""
         # Import here to avoid circular imports
         from smart_agent.cli import setup_cmd
-        
+
         # Configure mock_exists to return True for example files
         def exists_side_effect(path):
             if "example" in str(path):
                 return True
             return False
+
         mock_exists.side_effect = exists_side_effect
-        
+
         # We need to patch sys.exit to prevent the test from exiting
         with patch("sys.exit"):
             # Call the internal functionality directly
-            setup_cmd.callback(quick=True, config=None, tools=True, litellm=True, all=True)
-            
+            setup_cmd.callback(
+                quick=True, config=None, tools=True, litellm=True, all=True
+            )
+
             # Verify directories were created
             assert mock_makedirs.called
             # Verify files were written or copied
@@ -86,10 +90,10 @@ class TestCliCommands:
         """Test the functionality of launch_tools without directly calling it."""
         # Import here to avoid circular imports
         from smart_agent.cli import launch_tools
-        
+
         # Create a mock config manager
         mock_config_manager = MagicMock()
-        
+
         # Mock get_all_tools to return our tool config
         mock_config_manager.get_all_tools.return_value = {
             "search_tool": {
@@ -98,25 +102,27 @@ class TestCliCommands:
                 "enabled": True,
                 "type": "stdio",
                 "launch_cmd": "npx",
-                "repository": "search-tool"
+                "repository": "search-tool",
             }
         }
-        
+
         # Mock get_tools_config to return our tool config
-        mock_config_manager.get_tools_config = MagicMock(return_value={
-            "search_tool": {
-                "name": "Search Tool",
-                "url": "http://localhost:8001/sse",
-                "enabled": True,
-                "type": "stdio",
-                "launch_cmd": "npx",
-                "repository": "search-tool"
+        mock_config_manager.get_tools_config = MagicMock(
+            return_value={
+                "search_tool": {
+                    "name": "Search Tool",
+                    "url": "http://localhost:8001/sse",
+                    "enabled": True,
+                    "type": "stdio",
+                    "launch_cmd": "npx",
+                    "repository": "search-tool",
+                }
             }
-        })
-        
+        )
+
         # Mock is_tool_enabled to return True for our test tool
         mock_config_manager.is_tool_enabled.return_value = True
-        
+
         # Mock get_tool_config to return our tool config
         mock_config_manager.get_tool_config.return_value = {
             "name": "Search Tool",
@@ -124,18 +130,18 @@ class TestCliCommands:
             "enabled": True,
             "type": "stdio",
             "launch_cmd": "npx",
-            "repository": "search-tool"
+            "repository": "search-tool",
         }
-        
+
         # Mock get_env_prefix to return a valid string
         mock_config_manager.get_env_prefix.return_value = "SEARCH_TOOL"
-        
+
         # Mock os.path.exists and shutil.which to return True
         with patch("os.path.exists", return_value=True):
             with patch("shutil.which", return_value="/usr/bin/npx"):
                 # Call the function with our mock
                 processes = launch_tools(mock_config_manager)
-                
+
                 # Verify subprocess.Popen was called to launch tools
                 assert mock_popen.called
 
@@ -145,9 +151,9 @@ class TestCliCommands:
         """Test launch_litellm_proxy function."""
         # Create a mock config manager
         mock_config_manager = MagicMock()
-        
+
         # Call the function
         process = launch_litellm_proxy(mock_config_manager)
-        
+
         # Verify subprocess.Popen was called to launch the proxy
         assert mock_popen.called
