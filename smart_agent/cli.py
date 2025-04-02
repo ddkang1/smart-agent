@@ -540,8 +540,8 @@ def stop(config, tools, proxy, all):
 def restart(config, tools, proxy, all):
     """Restart tool and proxy services."""
     # Use the existing stop and start commands
-    stop_cmd.callback(config=config, tools=tools, proxy=proxy, all=all)
-    start_cmd.callback(config=config, tools=tools, proxy=proxy, all=all)
+    stop.callback(config=config, tools=tools, proxy=proxy, all=all)
+    start.callback(config=config, tools=tools, proxy=proxy, all=all)
     print("Restart complete.")
 
 
@@ -1136,8 +1136,6 @@ def setup(quick, config, tools, litellm, all):
                             ):  # Ensure at least one model remains
                                 removed_model = litellm_config["model_list"].pop(idx)
                                 print(f"✓ Removed {removed_model.get('model_name')}")
-                    else:
-                        print("Cannot remove the only model in configuration.")
 
             # Write LiteLLM config
             with open("config/litellm_config.yaml", "w") as f:

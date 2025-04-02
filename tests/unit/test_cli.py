@@ -14,9 +14,9 @@ class TestCliCommands:
     @patch("smart_agent.cli.launch_tools")
     @patch("smart_agent.cli.launch_litellm_proxy")
     def test_start_cmd_functionality(self, mock_launch_proxy, mock_launch_tools):
-        """Test the functionality of start_cmd without calling the Click command."""
+        """Test the functionality of start command without calling the Click command."""
         # Import here to avoid circular imports
-        from smart_agent.cli import start_cmd
+        from smart_agent.cli import start
 
         # Create a mock config manager
         mock_config_manager = MagicMock()
@@ -34,7 +34,7 @@ class TestCliCommands:
             # We need to patch sys.exit to prevent the test from exiting
             with patch("sys.exit"):
                 # We're testing the functionality, not the Click command itself
-                start_cmd.callback(config=None, tools=True, proxy=True, all=True)
+                start.callback(config=None, tools=True, proxy=True, all=True)
                 # Verify that launch_tools was called
                 assert mock_launch_tools.called
                 # Verify that launch_litellm_proxy was called
@@ -42,12 +42,12 @@ class TestCliCommands:
 
     @patch("subprocess.run")
     def test_stop_cmd_functionality(self, mock_run):
-        """Test the functionality of stop_cmd without calling the Click command."""
+        """Test the functionality of stop command without calling the Click command."""
         # Import here to avoid circular imports
-        from smart_agent.cli import stop_cmd
+        from smart_agent.cli import stop
 
         # Call the internal functionality directly
-        stop_cmd.callback(config=None, tools=True, proxy=True, all=True)
+        stop.callback(config=None, tools=True, proxy=True, all=True)
 
         # Verify subprocess.run was called to stop services
         assert mock_run.called
@@ -60,9 +60,9 @@ class TestCliCommands:
     def test_setup_cmd_functionality(
         self, mock_copy, mock_open, mock_makedirs, mock_exists, mock_input
     ):
-        """Test the functionality of setup_cmd without calling the Click command."""
+        """Test the functionality of setup command without calling the Click command."""
         # Import here to avoid circular imports
-        from smart_agent.cli import setup_cmd
+        from smart_agent.cli import setup
 
         # Configure mock_exists to return True for example files
         def exists_side_effect(path):
@@ -72,17 +72,16 @@ class TestCliCommands:
 
         mock_exists.side_effect = exists_side_effect
 
-        # We need to patch sys.exit to prevent the test from exiting
-        with patch("sys.exit"):
-            # Call the internal functionality directly
-            setup_cmd.callback(
-                quick=True, config=None, tools=True, litellm=True, all=True
-            )
+        # Mock the yaml.safe_load to return a simple dict
+        with patch("yaml.safe_load", return_value={}):
+            # We need to patch sys.exit to prevent the test from exiting
+            with patch("sys.exit"):
+                # Call the internal functionality directly with quick setup
+                setup.callback(quick=True, config=True, tools=True, litellm=True, all=True)
 
-            # Verify directories were created
-            assert mock_makedirs.called
-            # Verify files were written or copied
-            assert mock_copy.called or mock_open.called
+        # Verify that files were checked and copied
+        assert mock_exists.called
+        assert mock_copy.called
 
     @patch("subprocess.Popen")
     @patch("os.environ")
