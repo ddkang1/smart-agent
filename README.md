@@ -55,7 +55,7 @@ For development or quick testing, run Smart Agent with tools managed automatical
 pip install smart-agent
 
 # Run the interactive setup wizard
-smart-agent setup  # Walks you through configuration options
+smart-agent setup [--quick]  # Setup with optional quick mode
 
 # Start chat (will automatically launch required tools)
 smart-agent chat
@@ -69,11 +69,7 @@ For development when you need tools to stay running between chat sessions:
 
 ```bash
 # Terminal 1: First setup your configuration 
-smart-agent setup               # Interactive wizard for configuration
-smart-agent setup --quick       # Quick setup: copy example files without prompts
-smart-agent setup --config      # Configure only config.yaml
-smart-agent setup --tools       # Configure only tools.yaml
-smart-agent setup --litellm     # Configure only litellm_config.yaml
+smart-agent setup [--quick|--config|--tools|--litellm]  # Setup with various options
 
 # Then launch tools and proxy services that keep running
 smart-agent start --all    # Use --tools or --proxy to start specific services
@@ -94,7 +90,7 @@ Connect to remote tool services running elsewhere (e.g., in production):
 
 ```bash
 # Create configuration through the interactive wizard
-smart-agent setup  # Walks you through configuration options
+smart-agent setup [--quick]  # Setup with optional quick mode
 
 # Edit config/tools.yaml to use remote URLs
 # Example: url: "https://production-server.example.com/tool-name/sse"
@@ -282,7 +278,7 @@ The Smart Agent CLI provides commands to help manage these configuration files:
 
 ```bash
 # Run the setup wizard to create configuration files
-smart-agent setup
+smart-agent setup [--quick|--config|--tools|--litellm]
 ```
 
 The setup wizard will guide you through creating configuration files based on examples.
@@ -304,6 +300,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install development dependencies
 pip install -e ".[dev]"
+
+# Run the setup wizard to create configuration files
+smart-agent setup [--quick]  # Setup with optional quick mode
 ```
 
 ### Running Tests
