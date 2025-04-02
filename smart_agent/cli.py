@@ -385,7 +385,7 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
 @click.option("--tools", is_flag=True, help="Start tool services")
 @click.option("--proxy", is_flag=True, help="Start LiteLLM proxy service")
 @click.option("--all", is_flag=True, help="Start all services (tools and proxy)")
-def start_cmd(config, tools, proxy, all):
+def start(config, tools, proxy, all):
     """Start tool and proxy services."""
     config_manager = ConfigManager(config)
     processes = []
@@ -459,7 +459,7 @@ def start_cmd(config, tools, proxy, all):
 @click.option("--tools", is_flag=True, help="Stop tool services")
 @click.option("--proxy", is_flag=True, help="Stop LiteLLM proxy service")
 @click.option("--all", is_flag=True, help="Stop all services (tools and proxy)")
-def stop_cmd(config, tools, proxy, all):
+def stop(config, tools, proxy, all):
     """Stop running services."""
     # If --all is specified, enable both tools and proxy
     if all:
@@ -537,7 +537,7 @@ def stop_cmd(config, tools, proxy, all):
 @click.option("--tools", is_flag=True, help="Restart tool services")
 @click.option("--proxy", is_flag=True, help="Restart LiteLLM proxy service")
 @click.option("--all", is_flag=True, help="Restart all services (tools and proxy)")
-def restart_cmd(config, tools, proxy, all):
+def restart(config, tools, proxy, all):
     """Restart tool and proxy services."""
     # Use the existing stop and start commands
     stop_cmd.callback(config=config, tools=tools, proxy=proxy, all=all)
@@ -625,7 +625,7 @@ def launch_litellm_proxy(config_manager):
 
 @click.command()
 @click.option("--config", help="Path to configuration file")
-def chat_cmd(config):
+def chat(config):
     """Start a chat session with Smart Agent."""
     config_manager = ConfigManager(config)
 
@@ -674,7 +674,7 @@ def chat_cmd(config):
     is_flag=True,
     help="Set up all configuration files (equivalent to default behavior)",
 )
-def setup_cmd(quick, config, tools, litellm, all):
+def setup(quick, config, tools, litellm, all):
     """Set up the environment for Smart Agent through an interactive process."""
     print("Welcome to Smart Agent Setup!")
 
@@ -699,18 +699,43 @@ def setup_cmd(quick, config, tools, litellm, all):
         os.makedirs("config")
         print("Created config directory.")
 
-    # Check for example files
-    config_example = os.path.exists("config/config.yaml.example")
-    tools_example = os.path.exists("config/tools.yaml.example")
-    litellm_example = os.path.exists("config/litellm_config.yaml.example")
+    # Check for example files in current directory first
+    config_example_path = "config/config.yaml.example"
+    tools_example_path = "config/tools.yaml.example"
+    litellm_example_path = "config/litellm_config.yaml.example"
+    
+    # If not found in current directory, try to find them in the package installation
+    if not os.path.exists(config_example_path) or not os.path.exists(tools_example_path):
+        import importlib.resources as pkg_resources
+        try:
+            # Try to get the package installation path
+            from smart_agent import __path__ as package_path
+            package_config_dir = os.path.join(package_path[0], "config")
+            
+            # Update paths to use package installation
+            if os.path.exists(package_config_dir):
+                if not os.path.exists(config_example_path) and os.path.exists(os.path.join(package_config_dir, "config.yaml.example")):
+                    config_example_path = os.path.join(package_config_dir, "config.yaml.example")
+                if not os.path.exists(tools_example_path) and os.path.exists(os.path.join(package_config_dir, "tools.yaml.example")):
+                    tools_example_path = os.path.join(package_config_dir, "tools.yaml.example")
+                if not os.path.exists(litellm_example_path) and os.path.exists(os.path.join(package_config_dir, "litellm_config.yaml.example")):
+                    litellm_example_path = os.path.join(package_config_dir, "litellm_config.yaml.example")
+        except (ImportError, ModuleNotFoundError):
+            # If we can't find the package, continue with local paths
+            pass
+
+    # Check if example files exist at the determined paths
+    config_example = os.path.exists(config_example_path)
+    tools_example = os.path.exists(tools_example_path)
+    litellm_example = os.path.exists(litellm_example_path)
 
     if not config_example or not tools_example:
         print("Error: Example configuration files not found.")
         print("Please ensure the following files exist:")
         if not config_example:
-            print("- config/config.yaml.example")
+            print(f"- {config_example_path}")
         if not tools_example:
-            print("- config/tools.yaml.example")
+            print(f"- {tools_example_path}")
         sys.exit(1)
 
     # Quick setup option - just copy the example files
@@ -719,14 +744,14 @@ def setup_cmd(quick, config, tools, litellm, all):
 
         # Copy config.yaml if needed
         if (setup_all or config) and not os.path.exists("config/config.yaml"):
-            shutil.copy("config/config.yaml.example", "config/config.yaml")
+            shutil.copy(config_example_path, "config/config.yaml")
             print("✓ Created config/config.yaml from example")
         elif os.path.exists("config/config.yaml"):
             print("! config/config.yaml already exists, skipping")
 
         # Copy tools.yaml if needed
         if (setup_all or tools) and not os.path.exists("config/tools.yaml"):
-            shutil.copy("config/tools.yaml.example", "config/tools.yaml")
+            shutil.copy(tools_example_path, "config/tools.yaml")
             print("✓ Created config/tools.yaml from example")
         elif os.path.exists("config/tools.yaml"):
             print("! config/tools.yaml already exists, skipping")
@@ -737,9 +762,7 @@ def setup_cmd(quick, config, tools, litellm, all):
             and litellm_example
             and not os.path.exists("config/litellm_config.yaml")
         ):
-            shutil.copy(
-                "config/litellm_config.yaml.example", "config/litellm_config.yaml"
-            )
+            shutil.copy(litellm_example_path, "config/litellm_config.yaml")
             print("✓ Created config/litellm_config.yaml from example")
         elif os.path.exists("config/litellm_config.yaml"):
             print("! config/litellm_config.yaml already exists, skipping")
@@ -792,7 +815,7 @@ def setup_cmd(quick, config, tools, litellm, all):
                 config_yaml = yaml.safe_load(f)
         else:
             # Load default config from example
-            with open("config/config.yaml.example", "r") as f:
+            with open(config_example_path, "r") as f:
                 config_yaml = yaml.safe_load(f)
 
         # Get model name from config
@@ -832,7 +855,7 @@ def setup_cmd(quick, config, tools, litellm, all):
                 tools_yaml = yaml.safe_load(f)
         else:
             # Load default tools config from example
-            with open("config/tools.yaml.example", "r") as f:
+            with open(tools_example_path, "r") as f:
                 tools_yaml = yaml.safe_load(f)
 
         print("\nFound the following tools in the configuration:")
@@ -920,7 +943,7 @@ def setup_cmd(quick, config, tools, litellm, all):
                     litellm_config = yaml.safe_load(f)
             elif litellm_example:
                 # Load default LiteLLM config from example
-                with open("config/litellm_config.yaml.example", "r") as f:
+                with open(litellm_example_path, "r") as f:
                     litellm_config = yaml.safe_load(f)
                     print("Loaded default LiteLLM configuration from example file.")
             else:
@@ -980,7 +1003,7 @@ def setup_cmd(quick, config, tools, litellm, all):
                 if add_models:
                     # Check if there are other models in the example file
                     if litellm_example:
-                        with open("config/litellm_config.yaml.example", "r") as f:
+                        with open(litellm_example_path, "r") as f:
                             example_config = yaml.safe_load(f)
 
                             # Find models in example that aren't in current config
@@ -1167,11 +1190,11 @@ def cli():
     pass
 
 
-cli.add_command(chat_cmd)
-cli.add_command(start_cmd)
-cli.add_command(stop_cmd)
-cli.add_command(restart_cmd)
-cli.add_command(setup_cmd)
+cli.add_command(chat)
+cli.add_command(start)
+cli.add_command(stop)
+cli.add_command(restart)
+cli.add_command(setup)
 
 
 def main():

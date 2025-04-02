@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+include smart_agent/config/*.example
+recursive-include config *.example
