@@ -17,15 +17,15 @@ class TestSmartAgent:
         mock_mcp_servers = [MagicMock()]
         model_name = "gpt-4"
         system_prompt = "You are a helpful assistant."
-        
+
         # Initialize the agent
         agent = SmartAgent(
             model_name=model_name,
             openai_client=mock_openai_client,
             mcp_servers=mock_mcp_servers,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
         )
-        
+
         # Verify that the agent was initialized correctly
         assert agent.model_name == model_name
         assert agent.openai_client == mock_openai_client
@@ -37,7 +37,7 @@ class TestSmartAgent:
         """Test agent creation without initialization parameters."""
         # Initialize the agent without required parameters
         agent = SmartAgent()
-        
+
         # Verify that the agent properties are set correctly but agent is not initialized
         assert agent.model_name is None
         assert agent.openai_client is None
@@ -54,25 +54,24 @@ class TestSmartAgent:
         mock_mcp_servers = [MagicMock()]
         model_name = "gpt-4"
         system_prompt = "You are a helpful assistant."
-        
+
         # Initialize the agent
         agent = SmartAgent(
             model_name=model_name,
             openai_client=mock_openai_client,
             mcp_servers=mock_mcp_servers,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
         )
-        
+
         # Verify that the agent methods were called correctly
         mock_model_class.assert_called_once_with(
-            model=model_name,
-            openai_client=mock_openai_client
+            model=model_name, openai_client=mock_openai_client
         )
         mock_agent_class.assert_called_once_with(
             name="Assistant",
             instructions=system_prompt,
             model=mock_model_class.return_value,
-            mcp_servers=mock_mcp_servers
+            mcp_servers=mock_mcp_servers,
         )
 
     @patch("smart_agent.agent.Runner")
@@ -84,30 +83,31 @@ class TestSmartAgent:
         agent = SmartAgent(
             model_name="gpt-4",
             openai_client=mock_openai_client,
-            mcp_servers=mock_mcp_servers
+            mcp_servers=mock_mcp_servers,
         )
-        
+
         # Create test data
         history = [
             {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there!"}
+            {"role": "assistant", "content": "Hi there!"},
         ]
-        
+
         # Call the method (need to use async test framework)
         # For now, we'll just test that the method exists and has the right signature
         assert hasattr(agent, "process_message")
-        
+
     def test_process_message_without_agent(self):
         """Test process_message raises error when agent is not initialized."""
         # Setup
         agent = SmartAgent()  # No initialization parameters
-        
+
         # Create test data
         history = [{"role": "user", "content": "Hello"}]
-        
+
         # Test that calling process_message raises ValueError
         try:
             import asyncio
+
             asyncio.run(agent.process_message(history))
             assert False, "Expected ValueError was not raised"
         except ValueError:
