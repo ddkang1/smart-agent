@@ -3,32 +3,38 @@ version: '3.8'
 services:
   smart-agent:
     image: ghcr.io/ddkang1/smart-agent:latest
-    environment:
-      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
-      - CLAUDE_BASE_URL=${CLAUDE_BASE_URL:-http://0.0.0.0:4000}
-      - API_PROVIDER=${API_PROVIDER:-proxy}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_REGION=${AWS_REGION:-us-west-2}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
-      - MCP_THINK_TOOL_REPO=${MCP_THINK_TOOL_REPO:-git+https://github.com/ddkang1/mcp-think-tool}
-      - MCP_SEARCH_TOOL_REPO=${MCP_SEARCH_TOOL_REPO:-git+https://github.com/ddkang1/ddg-mcp}
-      - MCP_PYTHON_TOOL_URL=http://python-tool:8000/sse
+    volumes:
+      - ./config:/app/config
     depends_on:
       - python-tool
     stdin_open: true
     tty: true
 
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:litellm_stable_release_branch-stable
+    volumes:
+      - ./config/litellm_config.yaml:/app/config.yaml
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - HOST=0.0.0.0
+    command: >
+      --config /app/config.yaml
+      --port 4000
+      --host 0.0.0.0
+    profiles:
+      - litellm
+
   python-tool:
     image: ghcr.io/ddkang1/mcp-py-repl:latest
     volumes:
-      - ./python_repl_storage:/mnt/data/
+      - ./python_repl_storage:/app/data/
     ports:
       - "8000:8000"
     command: >
       sh -c "npx -y supergateway \
-        --stdio 'docker run -i --rm --pull=always -v /mnt/data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest' \
-        --port 8000 --baseUrl http://localhost:8000 \
-        --ssePath /sse --messagePath /message"
+             --port 8000 \
+             --stdio 'python -m mcp_py_repl.server' \
+             --ssePath /sse \
+             --messagePath /message"

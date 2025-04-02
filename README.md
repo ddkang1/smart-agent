@@ -36,84 +36,125 @@ pip install -e .
 
 ## Usage
 
-### Basic Usage
+### Getting Started
 
+After installation, follow these steps to set up and use Smart Agent:
+
+1. **Initial Setup**:
+   ```bash
+   # Create and configure the necessary YAML files (API keys, etc.)
+   smart-agent setup
+   ```
+   This will:
+   - Create configuration files (`config.yaml` and `tools.yaml`)
+   - Prompt for your API key
+   - Create necessary directories
+
+2. **Launch Tool Services**:
+   ```bash
+   # Start the required tool services in the background
+   smart-agent launch-tools
+   ```
+   Keep this terminal open. The tools will continue running and be available for the agent to use.
+
+3. **Start Smart Agent**:
+   ```bash
+   # In a new terminal, start a chat session
+   smart-agent chat
+   ```
+   Now you can chat with Smart Agent, which will use the tools you launched in step 2.
+
+**Docker Alternative** (all-in-one solution):
 ```bash
-# Start a chat with the Smart Agent
-smart-agent chat
+# Clone the repository
+git clone https://github.com/ddkang1/smart-agent.git
+cd smart-agent
 
-# Start with a specific OpenAI model
-smart-agent chat --model gpt-4
+# Run the setup script and start all services
+./run.sh
 ```
 
 ### Tool Management
 
-Smart Agent provides two ways to launch and manage the required tool services:
+Smart Agent provides a simple way to manage tools through YAML configuration:
 
-#### Using the CLI (Recommended)
-
-The Smart Agent CLI includes commands to manage tool services directly:
-
-```bash
-# Launch all tool services and keep them running
-smart-agent launch-tools
-
-# Launch tools with custom configuration
-smart-agent launch-tools --tools-config /path/to/tools.yaml
-
-# Disable all tools
-smart-agent launch-tools --disable-tools
-
-# Start the chat and automatically launch required tools
-smart-agent chat --launch-tools
-
-# Start the chat with custom tool configuration
-smart-agent chat --launch-tools --tools-config /path/to/tools.yaml
-
-# Start the chat with tools disabled
-smart-agent chat --disable-tools
+```yaml
+# Example tools.yaml configuration
+tools:
+  think_tool:
+    name: "Think Tool"
+    type: "sse"
+    enabled: true  # Set to false to disable this tool
+    url: "http://localhost:8001/sse"
+    # ... other configuration options
 ```
 
-#### Using the Launch Script
+All tool management is done through the configuration files in the `config` directory:
 
-Alternatively, you can use the provided shell script:
+1. **Enable/Disable Tools**: Set `enabled: true` or `enabled: false` in your `tools.yaml` file
+2. **Configure URLs**: Set the appropriate URLs for each tool in `tools.yaml`
+3. **Storage Paths**: Configure where tool data is stored with the `storage_path` property
 
-```bash
-# Launch all tool services
-./launch-tools.sh
-
-# Launch with custom configuration
-./launch-tools.sh --config=/path/to/tools.yaml
-```
+No command-line flags are needed - simply edit your configuration files and run the commands.
 
 ## Environment Configuration
 
-Smart Agent uses environment variables for configuration. These can be set in a `.env` file or passed directly to the CLI.
+Smart Agent uses a YAML-based configuration system. Configuration can be provided in the following ways:
 
-### API Keys
+1. **YAML Configuration Files**:
+   - `config/config.yaml`: Main configuration file
+   - `config/tools.yaml`: Tool-specific configuration (referenced from main config)
 
-- `CLAUDE_API_KEY`: Your Anthropic Claude API key
-- `OPENAI_API_KEY`: Your OpenAI API key (required for OpenAI models)
+2. **Environment Variables**:
+   - Environment variables can override YAML configuration
+   - Can be set in a `.env` file or passed directly to the CLI
 
-### Model Configuration
+3. **Command Line Arguments**:
+   - `--config`: Specify a custom configuration file path
+   - `--disable-tools`: Disable all tools
 
-- `SMART_AGENT_MODEL`: Default model to use (default: `claude-3-7-sonnet-20240229`)
-- `SMART_AGENT_TEMPERATURE`: Temperature for model generation (default: `0.0`)
+### Configuration Structure
 
-### Logging and Monitoring
+The main configuration file (`config/config.yaml`) has the following structure:
 
-- `SMART_AGENT_LOG_LEVEL`: Log level (default: `INFO`)
-- `SMART_AGENT_LOG_FILE`: Log file path (default: None, logs to stdout)
+```yaml
+# API Configuration
+api:
+  provider: "proxy"  # Options: anthropic, bedrock, proxy
+  base_url: "http://0.0.0.0:4000"
 
-### Langfuse Integration
+# Model Configuration
+model:
+  name: "claude-3-7-sonnet-20240229"
+  temperature: 0.0
 
-- `LANGFUSE_PUBLIC_KEY`: Your Langfuse public key
-- `LANGFUSE_SECRET_KEY`: Your Langfuse secret key
-- `LANGFUSE_HOST`: Langfuse host (default: `https://cloud.langfuse.com`)
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: null  # Set to a path to log to a file
+
+# Monitoring Configuration
+monitoring:
+  langfuse:
+    enabled: false
+    host: "https://cloud.langfuse.com"
+
+# Include tools configuration
+tools_config: "config/tools.yaml"
+```
+
+### Environment Variables
+
+Smart Agent primarily uses YAML-based configuration files, but the following environment variables can be used to override specific settings in Docker environments:
+
+- `OPENAI_API_KEY`: Your OpenAI API key (required for API access)
+- `OPENAI_API_BASE`: Base URL for the API (optional)
+
+For most use cases, you should configure the agent through the YAML configuration files rather than environment variables.
 
 ### Tool Configuration
 
-Smart Agent uses a YAML-based tool configuration system. The configuration file is located at `config/tools.yaml` by default.
+Tools are configured in `config/tools.yaml` with the following structure:
 
 ```yaml
 # Example tools.yaml configuration
@@ -122,7 +163,7 @@ tools:
     name: "Think Tool"
     type: "sse"
     enabled: true
-    env_prefix: "MCP_THINK_TOOL"
+    env_prefix: "SMART_AGENT_TOOL_THINK"
     repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8001/sse"
     description: "Enables the agent to pause, reflect, and ground its reasoning process"
@@ -134,7 +175,7 @@ tools:
     name: "Python REPL Tool"
     type: "sse"
     enabled: true
-    env_prefix: "MCP_PYTHON_TOOL"
+    env_prefix: "SMART_AGENT_TOOL_PYTHON"
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8000/sse"
     description: "Allows execution of Python code in a secure environment"
@@ -148,25 +189,80 @@ Each tool in the YAML configuration can have the following properties:
 | Property | Description | Required |
 |----------|-------------|----------|
 | `name` | Human-readable name | Yes |
-| `type` | Tool type (e.g., "sse") | Yes |
+| `type` | Tool type (e.g., "sse" or "stdio") | Yes |
 | `enabled` | Whether the tool is enabled by default | Yes |
-| `env_prefix` | Environment variable prefix for this tool | Yes |
 | `repository` | Git repository or Docker image for the tool | Yes |
 | `url` | URL for the tool's endpoint | Yes |
 | `description` | Brief description of what the tool does | No |
 | `module` | Python module name (for pip install and import) | For Python tools |
 | `server_module` | Module to run for the server | For Python tools |
 | `container` | Set to true if the tool runs in a Docker container | For container tools |
+| `env_prefix` | Environment variable prefix | No (defaults to SMART_AGENT_TOOL_{TOOL_ID_UPPERCASE}) |
+| `launch_cmd` | Command to launch the tool | Yes (one of: "docker", "uvx", "npx") |
+| `storage_path` | Path for tool data storage | No (used for Docker container tools) |
+
+#### Tool Types and Launch Commands
+
+Smart Agent supports two types of tools:
+- **Remote SSE Tools**: Tools that are already running and accessible via a remote URL
+- **Local stdio Tools**: Tools that need to be launched locally and converted to SSE
+
+For local stdio tools, Smart Agent uses [supergateway](https://github.com/supercorp-ai/supergateway) to automatically convert them to SSE. This approach allows for seamless integration with various MCP tools without requiring them to natively support SSE.
+
+The `launch_cmd` field specifies how the tool should be launched:
+- **docker**: For container-based tools (e.g., Python REPL)
+- **uvx**: For Python packages that use the uvx launcher
+- **npx**: For Node.js-based tools
+
+All local tools are treated as stdio tools and converted to SSE using supergateway, regardless of their type setting in the configuration.
 
 #### Environment Variable Override
 
-You can override tool configuration using environment variables:
+While the YAML configuration is the preferred method, you can override tool configuration using environment variables in specific scenarios (like Docker environments):
 
 - `ENABLE_TOOL_NAME`: Enable or disable a tool (e.g., `ENABLE_THINK_TOOL=false`)
-- `MCP_TOOL_NAME_REPO`: Override the tool repository (e.g., `MCP_THINK_TOOL_REPO=git+https://github.com/user/repo`)
-- `MCP_TOOL_NAME_URL`: Override the tool URL (e.g., `MCP_THINK_TOOL_URL=http://localhost:9001/sse`)
+- `SMART_AGENT_TOOL_NAME_URL`: Override the tool URL (e.g., `SMART_AGENT_TOOL_THINK_URL=http://localhost:9001/sse`)
 
-The environment variables take precedence over the YAML configuration.
+The environment variables take precedence over the YAML configuration, but for most use cases, you should configure tools through the YAML files.
+
+## Configuration Management
+
+Smart Agent uses YAML configuration files to manage settings and tools. The configuration is split into two main files:
+
+1. **config.yaml**: Contains general settings like API configuration, model settings, and logging options
+2. **tools.yaml**: Contains tool-specific configurations
+
+### Managing Configuration Files
+
+For security and privacy, the actual configuration files are not included in the repository. Instead, example templates are provided:
+
+- `config/config.yaml.example`
+- `config/tools.yaml.example`
+
+When you run the `setup-env.sh` script, it will:
+
+1. Create `config.yaml` and `tools.yaml` from the example templates if they don't exist
+2. Prompt for necessary API keys and update the configuration files
+3. Create any required storage directories based on the tool configuration
+
+The actual configuration files (`config.yaml` and `tools.yaml`) are excluded from Git via `.gitignore` to prevent accidentally committing sensitive information.
+
+### Local Development
+
+For local development:
+
+1. Run `./setup-env.sh` to create your configuration files
+2. Edit the generated files to match your environment
+3. Your changes will remain local and won't be committed to the repository
+
+### Deployment
+
+For deployment environments:
+
+1. Create the configuration files manually or use the setup script
+2. Set environment variables to override specific settings as needed
+3. Use Docker for easy deployment: `./run.sh`
+4. Use secrets management appropriate for your deployment platform
 
 ## Development
 
