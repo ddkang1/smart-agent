@@ -18,7 +18,7 @@ class SmartAgent:
     """
     Smart Agent with reasoning and tool use capabilities.
     """
-    
+
     def __init__(
         self,
         model_name: str = None,
@@ -28,7 +28,7 @@ class SmartAgent:
     ):
         """
         Initialize a new Smart Agent.
-        
+
         Args:
             model_name: The name of the model to use
             openai_client: An initialized OpenAI client
@@ -40,10 +40,10 @@ class SmartAgent:
         self.mcp_servers = mcp_servers or []
         self.system_prompt = system_prompt
         self.agent = None
-        
+
         if self.mcp_servers and self.openai_client:
             self._initialize_agent()
-    
+
     def _initialize_agent(self):
         """Initialize the agent with the provided configuration."""
         self.agent = Agent(
@@ -55,39 +55,43 @@ class SmartAgent:
             ),
             mcp_servers=self.mcp_servers,
         )
-    
-    async def process_message(self, history: List[Dict[str, str]], max_turns: int = 100):
+
+    async def process_message(
+        self, history: List[Dict[str, str]], max_turns: int = 100
+    ):
         """
         Process a message with the agent.
-        
+
         Args:
             history: A list of message dictionaries with 'role' and 'content' keys
             max_turns: Maximum number of turns for the agent
-            
+
         Returns:
             The agent's response
         """
         if not self.agent:
-            raise ValueError("Agent not initialized. Make sure to provide openai_client and mcp_servers.")
-        
+            raise ValueError(
+                "Agent not initialized. Make sure to provide openai_client and mcp_servers."
+            )
+
         result = Runner.run_streamed(self.agent, history, max_turns=max_turns)
         return result
-    
+
     @staticmethod
     async def process_stream_events(result, callback=None):
         """
         Process stream events from the agent.
-        
+
         Args:
             result: The result from process_message
             callback: Optional callback function to handle events
-            
+
         Returns:
             The assistant's reply
         """
         assistant_reply = ""
         is_thought = False
-        
+
         async for event in result.stream_events():
             if event.type == "raw_response_event":
                 continue
@@ -109,9 +113,9 @@ class SmartAgent:
                     text_message = ItemHelpers.text_message_output(event.item)
                     if role == "assistant":
                         assistant_reply += "\n[response]: " + text_message
-                
+
                 # Call the callback if provided
                 if callback:
                     await callback(event)
-                    
+
         return assistant_reply.strip()

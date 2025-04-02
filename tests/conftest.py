@@ -1,6 +1,7 @@
 """
 Global pytest fixtures and configuration for Smart Agent tests.
 """
+
 import os
 import pytest
 import yaml
@@ -24,60 +25,60 @@ def mock_config_dir(temp_dir):
     """Create a mock configuration directory with example configs."""
     config_dir = os.path.join(temp_dir, "config")
     os.makedirs(config_dir, exist_ok=True)
-    
+
     # Create example config files
     with open(os.path.join(config_dir, "config.yaml"), "w") as f:
-        yaml.dump({
-            "model": {
-                "name": "gpt-4",
-                "temperature": 1.0,
-                "max_tokens": 4000
+        yaml.dump(
+            {
+                "model": {"name": "gpt-4", "temperature": 1.0, "max_tokens": 4000},
+                "logging": {"level": "INFO"},
             },
-            "logging": {
-                "level": "INFO"
-            }
-        }, f)
-    
+            f,
+        )
+
     with open(os.path.join(config_dir, "tools.yaml"), "w") as f:
-        yaml.dump({
-            "tools": {
-                "search_tool": {
-                    "name": "search_tool",
-                    "type": "search",
-                    "enabled": True,
-                    "url": "http://localhost:8001/sse",
-                    "description": "A tool for web search",
-                    "launch_cmd": "uvx"
-                },
-                "python_repl": {
-                    "name": "python_repl",
-                    "type": "repl",
-                    "enabled": True,
-                    "url": "http://localhost:8002/sse",
-                    "description": "Python REPL for code execution",
-                    "launch_cmd": "docker",
-                    "repository": "python-repl-image"
+        yaml.dump(
+            {
+                "tools": {
+                    "search_tool": {
+                        "name": "search_tool",
+                        "type": "search",
+                        "enabled": True,
+                        "url": "http://localhost:8001/sse",
+                        "description": "A tool for web search",
+                        "launch_cmd": "uvx",
+                    },
+                    "python_repl": {
+                        "name": "python_repl",
+                        "type": "repl",
+                        "enabled": True,
+                        "url": "http://localhost:8002/sse",
+                        "description": "Python REPL for code execution",
+                        "launch_cmd": "docker",
+                        "repository": "python-repl-image",
+                    },
                 }
-            }
-        }, f)
-    
+            },
+            f,
+        )
+
     with open(os.path.join(config_dir, "litellm_config.yaml"), "w") as f:
-        yaml.dump({
-            "model_list": [
-                {
-                    "model_name": "gpt-4",
-                    "litellm_params": {
-                        "model": "openai/gpt-4",
-                        "api_key": "${OPENAI_API_KEY}"
+        yaml.dump(
+            {
+                "model_list": [
+                    {
+                        "model_name": "gpt-4",
+                        "litellm_params": {
+                            "model": "openai/gpt-4",
+                            "api_key": "${OPENAI_API_KEY}",
+                        },
                     }
-                }
-            ],
-            "server": {
-                "port": 4000,
-                "host": "0.0.0.0"
-            }
-        }, f)
-    
+                ],
+                "server": {"port": 4000, "host": "0.0.0.0"},
+            },
+            f,
+        )
+
     return config_dir
 
 
