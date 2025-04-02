@@ -601,12 +601,13 @@ def chat_cmd(config):
 @click.option("--config", is_flag=True, help="Only set up config.yaml")
 @click.option("--tools", is_flag=True, help="Only set up tools.yaml")
 @click.option("--litellm", is_flag=True, help="Only set up litellm_config.yaml")
-def setup_cmd(quick, config, tools, litellm):
+@click.option("--all", is_flag=True, help="Set up all configuration files (equivalent to default behavior)")
+def setup_cmd(quick, config, tools, litellm, all):
     """Set up the environment for Smart Agent through an interactive process."""
     print("Welcome to Smart Agent Setup!")
     
     # Determine which configs to set up
-    setup_all = not (config or tools or litellm)
+    setup_all = all or not (config or tools or litellm)
     if setup_all:
         print("This wizard will guide you through configuring your Smart Agent environment.\n")
     else:
