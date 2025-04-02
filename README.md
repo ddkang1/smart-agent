@@ -27,6 +27,30 @@ The combination of these technologies creates an agent that can reason effective
 - **Verifiable Problem-Solving**: Tools provide factual grounding that makes solutions more accurate and verifiable
 - **Adaptable Intelligence**: Easily extend capabilities by adding new tools without retraining the model
 
+## Model Context Protocol (MCP) Integration
+
+Smart Agent is an AI assistant that integrates with the Model Context Protocol (MCP) to provide a unified interface for AI-powered tools and services.
+
+### Key Features
+
+- **Unified Tool Architecture**: All tools follow the Model Context Protocol for consistent integration
+- **Flexible Deployment Options**: Run locally or connect to remote tools
+- **Secure Tool Execution**: Docker isolation for tools that require it
+- **Standardized Communication**: Server-Sent Events (SSE) for all tool interactions
+
+### How Smart Agent Uses MCP
+
+Smart Agent implements the MCP client-server architecture:
+
+1. **Smart Agent (MCP Client)**: Acts as the client that connects to various tool servers
+2. **Tool Servers (MCP Servers)**: Each tool exposes capabilities through the standardized protocol
+3. **Supergateway**: Converts stdio-based tools to SSE endpoints following the MCP specification
+
+This architecture allows Smart Agent to:
+- Dynamically discover and use tools through the `tools/list` endpoint
+- Invoke tool actions via the `tools/call` endpoint
+- Maintain a consistent interface regardless of whether tools are local or remote
+
 ## Installation
 
 ```bash
@@ -55,7 +79,7 @@ For development or quick testing, run Smart Agent with tools managed automatical
 pip install smart-agent
 
 # Run the interactive setup wizard
-smart-agent setup [--quick]  # Setup with optional quick mode
+smart-agent setup  # Quick setup (default)
 
 # Start chat (will automatically launch required tools)
 smart-agent chat
@@ -69,10 +93,10 @@ For development when you need tools to stay running between chat sessions:
 
 ```bash
 # Terminal 1: First setup your configuration 
-smart-agent setup [--quick|--config|--tools|--litellm]  # Setup with various options
+smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
 
 # Then launch tools and proxy services that keep running
-smart-agent start --all    # Use --tools or --proxy to start specific services
+smart-agent start [--all|--tools|--proxy]  # Use --tools or --proxy to start specific services
 
 # Terminal 2: Start chat client that connects to running tools
 smart-agent chat
@@ -90,7 +114,7 @@ Connect to remote tool services running elsewhere (e.g., in production):
 
 ```bash
 # Create configuration through the interactive wizard
-smart-agent setup [--quick]  # Setup with optional quick mode
+smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
 
 # Edit config/tools.yaml to use remote URLs
 # Example: url: "https://production-server.example.com/tool-name/sse"
@@ -108,22 +132,20 @@ Smart Agent provides a simple way to manage tools through YAML configuration:
 ```yaml
 # Example tools.yaml configuration
 tools:
-  think_tool:
+  mcp_think_tool:
     enabled: true
     repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8000/sse"
-    module: "mcp_think_tool"
     launch_cmd: "uvx"
   
-  search_tool:
+  ddg_mcp:
     enabled: true
     repository: "git+https://github.com/ddkang1/ddg-mcp"
     url: "http://localhost:8001/sse"
-    module: "ddg_mcp"
     launch_cmd: "uvx"
   
   # Docker container-based tool example
-  python_tool:
+  python_repl:
     enabled: true
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8002/sse"
@@ -195,22 +217,20 @@ Tools are configured in `config/tools.yaml` with the following structure:
 ```yaml
 # Example tools.yaml configuration
 tools:
-  think_tool:
+  mcp_think_tool:
     enabled: true
     repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8000/sse"
-    module: "mcp_think_tool"
     launch_cmd: "uvx"
   
-  search_tool:
+  ddg_mcp:
     enabled: true
     repository: "git+https://github.com/ddkang1/ddg-mcp"
     url: "http://localhost:8001/sse"
-    module: "ddg_mcp"
     launch_cmd: "uvx"
   
   # Docker container-based tool example
-  python_tool:
+  python_repl:
     enabled: true
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8002/sse"
@@ -231,10 +251,9 @@ Each tool in the YAML configuration can have the following properties:
 |----------|-------------|----------|
 | `enabled` | Whether the tool is enabled by default | Yes |
 | `url` | URL for the tool's endpoint | Yes |
-| `repository` | Git repository or Docker image for the tool | **Required** for local tools with launch_cmd |
+| `repository` | Git repository or Docker image for the tool | **Required** for local tools, optional for remote SSE tools |
 | `launch_cmd` | Command to launch the tool | **Required** for local tools ("docker", "uvx", "npx") |
 | `name` | Human-readable name | No (defaults to tool ID) |
-| `module` | Python module name (for pip install and import) | No (only for uvx/npx tools) |
 | `storage_path` | Path for tool data storage | No (only for Docker container tools) |
 | `env_prefix` | Environment variable prefix | No (defaults to SMART_AGENT_TOOL_{TOOL_ID_UPPERCASE}) |
 
@@ -264,7 +283,7 @@ The Smart Agent CLI provides commands to help manage these configuration files:
 
 ```bash
 # Run the setup wizard to create configuration files
-smart-agent setup [--quick|--config|--tools|--litellm]
+smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
 ```
 
 The setup wizard will guide you through creating configuration files based on examples.
@@ -288,7 +307,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 
 # Run the setup wizard to create configuration files
-smart-agent setup [--quick]  # Setup with optional quick mode
+smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
 ```
 
 ### Running Tests
