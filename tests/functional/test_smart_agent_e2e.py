@@ -7,7 +7,7 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 
-from smart_agent.cli import start_cmd, stop_cmd
+from smart_agent.cli import start, stop
 from smart_agent.agent import SmartAgent
 
 
@@ -45,11 +45,11 @@ class TestSmartAgentE2E:
         mock_config_manager.get_model_name.return_value = "gpt-4"
         mock_config_manager.get_model_temperature.return_value = 0.7
 
-        # Setup for start_cmd
+        # Setup for start command
         with patch("smart_agent.cli.ConfigManager", return_value=mock_config_manager):
             with patch("sys.exit"):
-                # Call start_cmd with all=True to start all services
-                start_cmd.callback(config=None, tools=True, proxy=True, all=True)
+                # Call start with all=True to start all services
+                start.callback(config=None, tools=True, proxy=True, all=True)
 
         # Verify that launch_tools and launch_litellm_proxy were called
         assert mock_launch_tools.called
@@ -76,7 +76,7 @@ class TestSmartAgentE2E:
 
         # Test stopping services
         with patch("subprocess.run") as mock_run:
-            stop_cmd.callback(config=None, tools=True, proxy=True, all=True)
+            stop.callback(config=None, tools=True, proxy=True, all=True)
 
             # Verify subprocess.run was called to stop services
             assert mock_run.called
