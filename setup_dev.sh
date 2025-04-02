@@ -10,7 +10,7 @@ pip install -e .
 
 # Install development dependencies
 echo "Installing development dependencies..."
-pip install pytest pytest-cov black flake8 mypy
+pip install pytest pytest-cov pytest-asyncio black flake8 mypy
 
 # Display success message
 echo "Development environment setup complete!"
