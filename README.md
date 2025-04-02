@@ -109,35 +109,31 @@ Smart Agent provides a simple way to manage tools through YAML configuration:
 # Example tools.yaml configuration
 tools:
   think_tool:
-    name: "Think Tool"
-    type: "sse"
-    enabled: true  # Set to false to disable this tool
+    enabled: true
+    repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8000/sse"
-    description: "Enables the agent to pause, reflect, and ground its reasoning process"
     module: "mcp_think_tool"
-    server_module: "mcp_think_tool.server"
+    launch_cmd: "uvx"
   
   search_tool:
-    name: "Search Tool"
-    type: "sse"
     enabled: true
-    env_prefix: "SMART_AGENT_TOOL_SEARCH"
     repository: "git+https://github.com/ddkang1/ddg-mcp"
     url: "http://localhost:8001/sse"
-    description: "Provides web search capabilities to find information online"
     module: "ddg_mcp"
-    server_module: "ddg_mcp.server"
+    launch_cmd: "uvx"
   
   # Docker container-based tool example
   python_tool:
-    name: "Python REPL Tool"
-    type: "sse"
     enabled: true
-    env_prefix: "SMART_AGENT_TOOL_PYTHON"
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8002/sse"
-    description: "Allows execution of Python code in a secure environment"
-    container: true
+    storage_path: "/path/to/storage"
+    launch_cmd: "docker"
+    
+  # Remote tool example (no need for repository or launch_cmd)
+  remote_tool:
+    enabled: true
+    url: "https://api.remote-tool.com/sse"
 ```
 
 All tool management is done through the configuration files in the `config` directory:
@@ -200,37 +196,31 @@ Tools are configured in `config/tools.yaml` with the following structure:
 # Example tools.yaml configuration
 tools:
   think_tool:
-    name: "Think Tool"
-    type: "sse"
     enabled: true
-    env_prefix: "SMART_AGENT_TOOL_THINK"
     repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8000/sse"
-    description: "Enables the agent to pause, reflect, and ground its reasoning process"
     module: "mcp_think_tool"
-    server_module: "mcp_think_tool.server"
+    launch_cmd: "uvx"
   
   search_tool:
-    name: "Search Tool"
-    type: "sse"
     enabled: true
-    env_prefix: "SMART_AGENT_TOOL_SEARCH"
     repository: "git+https://github.com/ddkang1/ddg-mcp"
     url: "http://localhost:8001/sse"
-    description: "Provides web search capabilities to find information online"
     module: "ddg_mcp"
-    server_module: "ddg_mcp.server"
+    launch_cmd: "uvx"
   
   # Docker container-based tool example
   python_tool:
-    name: "Python REPL Tool"
-    type: "sse"
     enabled: true
-    env_prefix: "SMART_AGENT_TOOL_PYTHON"
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8002/sse"
-    description: "Allows execution of Python code in a secure environment"
-    container: true
+    storage_path: "/path/to/storage"
+    launch_cmd: "docker"
+    
+  # Remote tool example (no need for repository or launch_cmd)
+  remote_tool:
+    enabled: true
+    url: "https://api.remote-tool.com/sse"
 ```
 
 #### Tool Configuration Schema
@@ -239,18 +229,14 @@ Each tool in the YAML configuration can have the following properties:
 
 | Property | Description | Required |
 |----------|-------------|----------|
-| `name` | Human-readable name | Yes |
-| `type` | Tool type (e.g., "sse" or "stdio") | Yes |
 | `enabled` | Whether the tool is enabled by default | Yes |
-| `repository` | Git repository or Docker image for the tool | Yes |
 | `url` | URL for the tool's endpoint | Yes |
-| `description` | Brief description of what the tool does | No |
-| `module` | Python module name (for pip install and import) | For Python tools |
-| `server_module` | Module to run for the server | For Python tools |
-| `container` | Set to true if the tool runs in a Docker container | For container tools |
+| `repository` | Git repository or Docker image for the tool | **Required** for local tools with launch_cmd |
+| `launch_cmd` | Command to launch the tool | **Required** for local tools ("docker", "uvx", "npx") |
+| `name` | Human-readable name | No (defaults to tool ID) |
+| `module` | Python module name (for pip install and import) | No (only for uvx/npx tools) |
+| `storage_path` | Path for tool data storage | No (only for Docker container tools) |
 | `env_prefix` | Environment variable prefix | No (defaults to SMART_AGENT_TOOL_{TOOL_ID_UPPERCASE}) |
-| `launch_cmd` | Command to launch the tool | Yes (one of: "docker", "uvx", "npx") |
-| `storage_path` | Path for tool data storage | No (used for Docker container tools) |
 
 #### Tool Types and Launch Commands
 

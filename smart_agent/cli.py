@@ -253,7 +253,6 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
         
         # Get configuration values
         tool_name = tool_config.get("name", tool_id)
-        tool_type = tool_config.get("type", "sse")
         tool_url = tool_config.get("url", "")
         launch_cmd = tool_config.get("launch_cmd", "")
         tool_repo = tool_config.get("repository", "")
