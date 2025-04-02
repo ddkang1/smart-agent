@@ -7,7 +7,7 @@ tools:
     type: "sse"
     enabled: true
     repository: "git+https://github.com/ddkang1/mcp-think-tool"  # Replace with your repository
-    url: "http://localhost:8001/sse"
+    url: "http://localhost:8000/sse"
     description: "Enables the agent to pause, reflect, and ground its reasoning process"
     module: "mcp_think_tool"
     server_module: "mcp_think_tool.server"
@@ -18,7 +18,7 @@ tools:
     type: "sse"
     enabled: true
     repository: "git+https://github.com/ddkang1/ddg-mcp"  # Replace with your repository
-    url: "http://localhost:8002/sse"
+    url: "http://localhost:8001/sse"
     description: "Provides web search capabilities to find information online"
     module: "ddg_mcp"
     server_module: "ddg_mcp.server"
@@ -29,11 +29,11 @@ tools:
     type: "sse"
     enabled: true
     repository: "ghcr.io/ddkang1/mcp-py-repl:latest"  # Replace with your Docker image
-    url: "http://python-tool:8000/sse"  # Use the service name in docker-compose
+    url: "http://localhost:8002/sse"
     description: "Allows execution of Python code in a secure environment"
     container: true
     launch_cmd: "docker"
-    storage_path: "python_repl_storage"  # Local storage path for the tool
+    storage_path: "/Users/dkang1/smart-agent/storage/python_repl"
 
 # Tool configuration schema
 # Each tool should have:

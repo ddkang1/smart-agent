@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-agent"
-version = "0.1.1"
+version = "0.3.0"
 description = "Smart AI agent with reasoning and tool use capabilities"
 readme = "README.md"
 authors = [
@@ -19,15 +19,20 @@ classifiers = [
 requires-python = ">=3.8"
 dependencies = [
     "colorama",
-    "openai",
+    "openai>=1.0.0",
+    "anthropic>=0.5.0",
     "asyncio",
     "click",
     "python-dotenv",
-    "pyyaml",
+    "pyyaml>=6.0",
+    "agent>=0.1.0",
+    "uvx",
 ]
 
 [project.optional-dependencies]
-monitoring = ["langfuse"]
+monitoring = [
+    "langfuse>=2.0.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/ddkang1/smart-agent"
