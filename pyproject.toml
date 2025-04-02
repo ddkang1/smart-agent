@@ -16,15 +16,15 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "colorama",
-    "openai>=1.0.0",
+    "openai",
     "asyncio",
     "click",
     "python-dotenv",
     "pyyaml>=6.0",
-    "uvx",
+    "uv",
     "openai-agents"
 ]
 
