@@ -4,32 +4,36 @@ CLI interface for Smart Agent.
 """
 
 import os
-import json
-import asyncio
-import subprocess
+import sys
 import time
 import signal
+import subprocess
 import click
-from typing import Dict, Any, Optional, List
-import openai
-from dotenv import load_dotenv
+import datetime
+import logging
+from typing import Optional, List, Dict, Any
+from pathlib import Path
+import re
+from urllib.parse import urlparse
+import locale
 
-from agents import (
-    set_tracing_disabled,
-    MCPServerSse,
-)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("smart_agent")
 
-from .agent import SmartAgent
-from .tool_manager import ToolManager
+# Try to import dotenv for environment variable loading
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-
-# Load environment variables from .env file if it exists
-load_dotenv()
+from smart_agent.tool_manager import ConfigManager
 
 
 class PromptGenerator:
     @staticmethod
-    def create_system_prompt() -> str:
+    def create_system_prompt():
         """
         Generates the system prompt guidelines with a dynamically updated datetime.
         """
@@ -38,6 +42,7 @@ class PromptGenerator:
             if hasattr(locale, "nl_langinfo")
             else "%c"
         )
+        
         return f"""## Guidelines for Using the Think Tool
 The think tool is designed to help you "take a break and think"—a deliberate pause for reflection—both before initiating any action (like calling a tool) and after processing any new evidence. Use it as your internal scratchpad for careful analysis, ensuring that each step logically informs the next. Follow these steps:
 
@@ -71,187 +76,310 @@ For each part of your answer, indicate which sources most support it via valid c
 """
 
 
-async def chat_loop(
-    api_provider: str,
-    claude_api_key: str,
-    base_url: str,
-    langfuse_public_key: Optional[str] = None,
-    langfuse_secret_key: Optional[str] = None,
-    langfuse_host: Optional[str] = None,
-    tools_config_path: Optional[str] = None,
-):
+def chat_loop(config_manager: ConfigManager):
     """
     Run the chat loop.
+    
+    Args:
+        config_manager: Configuration manager instance
     """
-    # Disable tracing
-    set_tracing_disabled(disabled=True)
+    # Get API configuration
+    api_key = config_manager.get_api_key()
+    base_url = config_manager.get_api_base_url()
     
-    # Initialize an async OpenAI client
-    client = openai.AsyncOpenAI(
-        base_url=base_url,
-        api_key=claude_api_key,
-    )
-
-    # Configure AWS credentials if using Bedrock
-    if api_provider == "bedrock":
-        # Set AWS environment variables for Bedrock
-        os.environ["AWS_ACCESS_KEY_ID"] = os.getenv("AWS_ACCESS_KEY_ID", "")
-        os.environ["AWS_SECRET_ACCESS_KEY"] = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-        os.environ["AWS_REGION"] = os.getenv("AWS_REGION", "us-west-2")
-
-    # Initialize tool manager and MCP servers
-    tool_manager = ToolManager(config_path=tools_config_path)
-    mcp_servers = tool_manager.initialize_tools()
+    # Get model configuration
+    model_name = config_manager.get_model_name()
+    temperature = config_manager.get_model_temperature()
     
-    # Create context manager for all MCP servers
-    class MCPServersManager:
-        def __init__(self, servers):
-            self.servers = servers
+    # Get Langfuse configuration
+    langfuse_config = config_manager.get_langfuse_config()
+    langfuse_enabled = langfuse_config.get("enabled", False)
+    
+    # Initialize Langfuse if enabled
+    if langfuse_enabled:
+        try:
+            from langfuse import Langfuse
+            langfuse = Langfuse(
+                public_key=langfuse_config.get("public_key", ""),
+                secret_key=langfuse_config.get("secret_key", ""),
+                host=langfuse_config.get("host", "https://cloud.langfuse.com")
+            )
+            print("Langfuse monitoring enabled")
+        except ImportError:
+            print("Langfuse package not installed. Run 'pip install langfuse' to enable monitoring.")
+            langfuse_enabled = False
+    
+    try:
+        # Import required libraries
+        from openai import AsyncOpenAI
+        from agent import Agent, OpenAIChatCompletionsModel
         
-        async def __aenter__(self):
-            for server in self.servers:
-                await server.__aenter__()
-            return self.servers
-        
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            for server in self.servers:
-                await server.__aexit__(exc_type, exc_val, exc_tb)
-    
-    # Initialize the agent with MCP servers
-    async with MCPServersManager(mcp_servers) as servers:
-        agent = SmartAgent(
-            openai_client=client,
-            mcp_servers=servers,
+        # Initialize AsyncOpenAI client
+        client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
         )
         
-        # Start the chat loop
-        print("\nSmart Agent initialized. Type 'exit' to quit.\n")
+        # Get enabled tools
+        enabled_tools = []
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if config_manager.is_tool_enabled(tool_id):
+                tool_url = config_manager.get_tool_url(tool_id)
+                tool_name = tool_config.get("name", tool_id)
+                enabled_tools.append((tool_id, tool_name, tool_url))
         
-        while True:
-            # Get user input
-            user_input = input("You: ")
+        # Create MCP server list for the agent
+        mcp_servers = []
+        for tool_id, tool_name, tool_url in enabled_tools:
+            print(f"Adding {tool_name} at {tool_url} to agent")
+            mcp_servers.append(tool_url)
+        
+        # Create the agent
+        agent = Agent(
+            name="Assistant",
+            instructions=PromptGenerator.create_system_prompt(),
+            model=OpenAIChatCompletionsModel(
+                model=model_name,
+                openai_client=client,
+            ),
+            mcp_servers=mcp_servers,
+        )
+        
+        print(f"Agent initialized with {len(mcp_servers)} tools")
+        
+    except ImportError:
+        print("Required packages not installed. Run 'pip install openai agent' to use the agent.")
+        return
+    
+    print("\nSmart Agent Chat")
+    print("Type 'exit' or 'quit' to end the conversation")
+    print("Type 'clear' to clear the conversation history")
+    
+    # Chat loop
+    while True:
+        # Get user input
+        user_input = input("\nYou: ")
+        
+        # Check for exit command
+        if user_input.lower() in ["exit", "quit"]:
+            print("Exiting chat...")
+            break
+        
+        # Check for clear command
+        if user_input.lower() == "clear":
+            # Reset the agent
+            agent = Agent(
+                name="Assistant",
+                instructions=PromptGenerator.create_system_prompt(),
+                model=OpenAIChatCompletionsModel(
+                    model=model_name,
+                    openai_client=client,
+                ),
+                mcp_servers=mcp_servers,
+            )
+            print("Conversation history cleared")
+            continue
+        
+        # Get assistant response
+        print("\nAssistant: ", end="", flush=True)
+        
+        try:
+            # Use the agent for streaming response
+            async def run_agent():
+                async for chunk in agent.chat(user_input=user_input):
+                    if chunk.content:
+                        print(chunk.content, end="", flush=True)
+                print()  # Add a newline at the end
             
-            # Check if the user wants to exit
-            if user_input.lower() in ["exit", "quit", "q"]:
-                break
+            # Run the agent in an event loop
+            import asyncio
+            asyncio.run(run_agent())
             
-            # Process the user input and get a response
-            response = await agent.process_message(user_input)
+            # Log to Langfuse if enabled
+            if langfuse_enabled:
+                trace = langfuse.trace(
+                    name="chat_session",
+                    metadata={"model": model_name, "temperature": temperature}
+                )
+                trace.generation(
+                    name="assistant_response",
+                    model=model_name,
+                    prompt=user_input,
+                    completion="Agent response (not captured)",
+                )
+                
+        except Exception as e:
+            print(f"Error: {e}")
+    
+    print("\nChat session ended")
+
+
+def chat(config_manager: ConfigManager, disable_tools: bool = False):
+    """
+    Start a chat session with Smart Agent.
+    
+    Args:
+        config_manager: Configuration manager
+        disable_tools: Whether to disable all tools
+    """
+    # Start chat loop
+    chat_loop(config_manager)
+
+
+def launch_tools(config_manager: ConfigManager, disable_tools: bool = False) -> List[subprocess.Popen]:
+    """
+    Launch tool services.
+    
+    Args:
+        config_manager: Configuration manager
+        disable_tools: Whether to disable all tools
+        
+    Returns:
+        List of tool processes
+    """
+    if disable_tools:
+        print("All tools are disabled")
+        return []
+    
+    processes = []
+    
+    # Get all enabled tools
+    enabled_tools = []
+    for tool_id, tool_config in config_manager.get_tools_config().items():
+        if config_manager.is_tool_enabled(tool_id):
+            enabled_tools.append((tool_id, tool_config))
+    
+    if not enabled_tools:
+        print("No enabled tools found.")
+        return processes
+    
+    print(f"Launching {len(enabled_tools)} enabled tools...")
+    
+    for tool_id, tool_config in enabled_tools:
+        tool_name = tool_config.get("name", tool_id)
+        tool_repo = config_manager.get_tool_repository(tool_id)
+        tool_url = config_manager.get_tool_url(tool_id)
+        
+        # Extract port from URL
+        url_parts = urlparse(tool_url)
+        port = None
+        if url_parts.port:
+            port = url_parts.port
+        
+        print(f"Launching {tool_name}...")
+        
+        # Get launch command type
+        launch_cmd = tool_config.get("launch_cmd", "uvx")
+        
+        # Check if this is a remote SSE tool (no need to launch locally)
+        if not url_parts.hostname in ["localhost", "127.0.0.1"]:
+            print(f"Tool {tool_name} is a remote SSE tool at {tool_url}, no need to launch locally")
+            continue
+        
+        # All local tools are treated as stdio tools that need conversion to SSE
+        if launch_cmd == "docker":
+            # Docker container-based tool
+            storage_path = tool_config.get("storage_path", "tool_storage")
+            storage_dir = os.path.join(os.getcwd(), storage_path)
+            os.makedirs(storage_dir, exist_ok=True)
             
-            # Print the response
-            print(f"\nAI: {response}\n")
+            print(f"Converting stdio Docker tool to SSE using supergateway: {tool_name}")
+            
+            # Use supergateway to convert stdio to SSE
+            tool_cmd = [
+                "npx", "-y", "supergateway",
+                "--stdio", f"docker run -i --rm --pull=always -v {os.path.abspath(storage_dir)}:/app/data {tool_repo}",
+                "--port", str(port),
+                "--baseUrl", f"http://localhost:{port}",
+                "--ssePath", "/sse",
+                "--messagePath", "/message"
+            ]
+            
+            tool_process = subprocess.Popen(tool_cmd)
+            processes.append(tool_process)
+            
+            # Set environment variable for URL
+            os.environ[f"{config_manager.get_env_prefix(tool_id)}_URL"] = tool_url
+            print(f"{tool_name} available at {tool_url}")
+        elif launch_cmd == "npx":
+            # NPX-based tool
+            module_name = tool_config.get("module", tool_id)
+            
+            print(f"Converting stdio NPX tool to SSE using supergateway: {tool_name}")
+            
+            # Use supergateway to convert stdio to SSE
+            tool_cmd = [
+                "npx", "-y", "supergateway",
+                "--stdio", f"npx {module_name}",
+                "--port", str(port),
+                "--baseUrl", f"http://localhost:{port}",
+                "--ssePath", "/sse",
+                "--messagePath", "/message"
+            ]
+            
+            tool_process = subprocess.Popen(tool_cmd)
+            processes.append(tool_process)
+            
+            # Set environment variable for URL
+            os.environ[f"{config_manager.get_env_prefix(tool_id)}_URL"] = tool_url
+            print(f"{tool_name} available at {tool_url}")
+        elif launch_cmd == "uvx":
+            # UVX-based tool (Python package)
+            module_name = tool_config.get("module", tool_id.replace("-", "_"))
+            
+            print(f"Converting stdio UVX tool to SSE using supergateway: {tool_name}")
+            
+            # Use supergateway to convert stdio to SSE
+            tool_cmd = [
+                "npx", "-y", "supergateway",
+                "--stdio", f"uvx --from {tool_repo} {module_name}",
+                "--port", str(port),
+                "--baseUrl", f"http://localhost:{port}",
+                "--ssePath", "/sse",
+                "--messagePath", "/message"
+            ]
+            
+            tool_process = subprocess.Popen(tool_cmd)
+            processes.append(tool_process)
+            
+            # Set environment variable for URL
+            os.environ[f"{config_manager.get_env_prefix(tool_id)}_URL"] = tool_url
+            print(f"{tool_name} available at {tool_url}")
+        else:
+            print(f"Unknown launch command '{launch_cmd}' for {tool_name}. Skipping.")
+            continue
+    
+    print("\nAll enabled tools are now running.")
+    return processes
 
 
 @click.command()
-@click.option(
-    "--tools-config",
-    type=click.Path(exists=False),
-    help="Path to tools YAML configuration file",
-)
-@click.option(
-    "--disable-tools",
-    is_flag=True,
-    help="Disable all tool services",
-)
-def launch_tools(
-    tools_config,
-    disable_tools,
-):
-    """Launch the tool services required by Smart Agent."""
-    # Initialize tool manager
-    tool_manager = ToolManager(config_path=tools_config)
+@click.option('--config', help='Path to configuration file')
+def chat_cmd(config):
+    """Start a chat session with Smart Agent."""
+    config_manager = ConfigManager(config)
     
-    # If disable_tools is set, exit early
-    if disable_tools:
-        print("All tools disabled. Exiting.")
-        return
-    
-    # Store process objects
     processes = []
-    
     try:
-        # Get all enabled tools from the config
-        all_tools = tool_manager.get_all_tools()
+        # Automatically launch tools based on configuration
+        processes = launch_tools(config_manager, disable_tools=False)
         
-        for tool_id, tool_config in all_tools.items():
-            if tool_manager.is_tool_enabled(tool_id):
-                tool_url = tool_manager.get_tool_url(tool_id)
-                tool_repo = tool_manager.get_tool_repository(tool_id)
-                tool_type = tool_config.get("type", "sse")
-                tool_name = tool_config.get("name", tool_id)
-                
-                # Extract port from URL
-                import re
-                port_match = re.search(r":(\d+)/", tool_url)
-                port = int(port_match.group(1)) if port_match else None
-                
-                print(f"Starting {tool_name} on {tool_url}")
-                
-                if tool_config.get("container", False):
-                    # Handle Docker container-based tools
-                    python_repl_data = "python_repl_storage"
-                    os.makedirs(python_repl_data, exist_ok=True)
-                    
-                    # Run Docker container
-                    docker_cmd = [
-                        "docker", "run", "-d", "--rm", "--name", f"mcp-{tool_id}",
-                        "-p", f"{port}:8000",
-                        "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
-                        tool_repo
-                    ]
-                    subprocess.run(docker_cmd, check=True)
-                    
-                    # Set environment variable for URL
-                    os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
-                    print(f"{tool_name} available at {tool_url}")
-                else:
-                    # Generic tool handling
-                    module_name = tool_config.get("module", tool_id.replace("-", "_"))
-                    
-                    # Install tool if needed
-                    try:
-                        subprocess.run(["pip", "show", module_name], check=True, capture_output=True)
-                    except subprocess.CalledProcessError:
-                        print(f"Installing {tool_name} from {tool_repo}")
-                        subprocess.run(["pip", "install", tool_repo], check=True)
-                    
-                    # Start tool server
-                    server_module = tool_config.get("server_module", f"{module_name}.server")
-                    tool_cmd = ["python", "-m", server_module]
-                    
-                    if port:
-                        tool_cmd.extend(["--port", str(port)])
-                    
-                    tool_process = subprocess.Popen(tool_cmd)
-                    processes.append(tool_process)
-                    
-                    # Set environment variable for URL
-                    os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
-                    print(f"{tool_name} available at {tool_url}")
-        
-        print("\nAll enabled tools are now running.")
-        print("Press Ctrl+C to stop all tools and exit.")
-        
-        # Keep the process running until interrupted
-        while True:
-            time.sleep(1)
-            
-    except KeyboardInterrupt:
-        print("\nStopping all tools...")
+        # Start chat session
+        chat(config_manager, disable_tools=False)
     finally:
         # Clean up processes
         for process in processes:
-            process.terminate()
             try:
+                process.terminate()
                 process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+            except:
                 process.kill()
         
-        # Stop Docker containers
-        for tool_id, tool_config in all_tools.items():
-            if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
+        # Clean up Docker containers
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if tool_config.get("launch_cmd") == "docker":
                 try:
-                    subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
+                    subprocess.run(["docker", "stop", f"smart-agent-{tool_id}"], check=False)
                 except:
                     pass
         
@@ -259,191 +387,56 @@ def launch_tools(
 
 
 @click.command()
-@click.option(
-    "--api-key",
-    envvar="CLAUDE_API_KEY",
-    help="Claude API key",
-)
-@click.option(
-    "--api-base-url",
-    envvar="CLAUDE_BASE_URL",
-    default="http://0.0.0.0:4000",
-    help="Base URL for Claude API",
-)
-@click.option(
-    "--api-provider",
-    envvar="API_PROVIDER",
-    type=click.Choice(["anthropic", "bedrock", "proxy"]),
-    default="proxy",
-    help="API provider to use",
-)
-@click.option(
-    "--langfuse-public-key",
-    envvar="LANGFUSE_PUBLIC_KEY",
-    help="Langfuse public key",
-)
-@click.option(
-    "--langfuse-secret-key",
-    envvar="LANGFUSE_SECRET_KEY",
-    help="Langfuse secret key",
-)
-@click.option(
-    "--langfuse-host",
-    envvar="LANGFUSE_HOST",
-    default="https://cloud.langfuse.com",
-    help="Langfuse host",
-)
-@click.option(
-    "--model",
-    default=None,
-    help="OpenAI model to use",
-)
-@click.option(
-    "--tools-config",
-    default=None,
-    type=click.Path(exists=False),
-    help="Path to tools YAML configuration file",
-)
-@click.option(
-    "--disable-tools",
-    is_flag=True,
-    help="Disable all tool services",
-)
-@click.option(
-    "--launch-tools",
-    is_flag=True,
-    help="Launch tool services before starting chat",
-)
-def chat(
-    api_key,
-    api_base_url,
-    api_provider,
-    langfuse_public_key,
-    langfuse_secret_key,
-    langfuse_host,
-    model,
-    tools_config,
-    disable_tools,
-    launch_tools,
-):
-    """Start a chat session with the Smart Agent."""
-    # Launch tools if requested
-    tool_processes = []
-    if launch_tools and not disable_tools:
-        try:
-            # Initialize tool manager
-            tool_manager = ToolManager(config_path=tools_config)
-            python_repl_data = "python_repl_storage"
-            
-            # Get all enabled tools from the config
-            all_tools = tool_manager.get_all_tools()
-            
-            for tool_id, tool_config in all_tools.items():
-                if tool_manager.is_tool_enabled(tool_id):
-                    tool_url = tool_manager.get_tool_url(tool_id)
-                    tool_repo = tool_manager.get_tool_repository(tool_id)
-                    tool_type = tool_config.get("type", "sse")
-                    tool_name = tool_config.get("name", tool_id)
-                    
-                    # Extract port from URL
-                    import re
-                    port_match = re.search(r":(\d+)/", tool_url)
-                    port = int(port_match.group(1)) if port_match else None
-                    
-                    print(f"Starting {tool_name} on {tool_url}")
-                    
-                    if tool_config.get("container", False):
-                        # Handle Docker container-based tools
-                        os.makedirs(python_repl_data, exist_ok=True)
-                        
-                        # Run Docker container
-                        docker_cmd = [
-                            "docker", "run", "-d", "--rm", "--name", f"mcp-{tool_id}",
-                            "-p", f"{port}:8000",
-                            "-v", f"{os.path.abspath(python_repl_data)}:/app/data",
-                            tool_repo
-                        ]
-                        subprocess.run(docker_cmd, check=True)
-                        
-                        # Set environment variable for URL
-                        os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
-                        print(f"{tool_name} available at {tool_url}")
-                    else:
-                        # Generic tool handling
-                        module_name = tool_config.get("module", tool_id.replace("-", "_"))
-                        
-                        # Install tool if needed
-                        try:
-                            subprocess.run(["pip", "show", module_name], check=True, capture_output=True)
-                        except subprocess.CalledProcessError:
-                            print(f"Installing {tool_name} from {tool_repo}")
-                            subprocess.run(["pip", "install", tool_repo], check=True)
-                        
-                        # Start tool server
-                        server_module = tool_config.get("server_module", f"{module_name}.server")
-                        tool_cmd = ["python", "-m", server_module]
-                        
-                        if port:
-                            tool_cmd.extend(["--port", str(port)])
-                        
-                        tool_process = subprocess.Popen(tool_cmd)
-                        tool_processes.append(tool_process)
-                        
-                        # Set environment variable for URL
-                        os.environ[f"{tool_config.get('env_prefix', 'MCP_' + tool_id.upper())}_URL"] = tool_url
-                        print(f"{tool_name} available at {tool_url}")
-            
-            print("\nAll enabled tools are now running.")
-            
-        except Exception as e:
-            print(f"Error launching tools: {e}")
-            # Clean up any started processes
-            for process in tool_processes:
-                process.terminate()
-            
-            # Stop Docker containers
-            for tool_id, tool_config in all_tools.items():
-                if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
-                    try:
-                        subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
-                    except:
-                        pass
-            
-            return
+@click.option('--config', help='Path to configuration file')
+def launch_tools_cmd(config):
+    """Launch tool services."""
+    config_manager = ConfigManager(config)
     
     try:
-        # Run the chat loop
-        asyncio.run(
-            chat_loop(
-                api_provider=api_provider,
-                claude_api_key=api_key,
-                base_url=api_base_url,
-                langfuse_public_key=langfuse_public_key,
-                langfuse_secret_key=langfuse_secret_key,
-                langfuse_host=langfuse_host,
-                tools_config_path=tools_config,
-            )
-        )
+        # Launch all enabled tools
+        processes = launch_tools(config_manager, disable_tools=False)
+        
+        # Keep the process running until interrupted
+        print("\nPress Ctrl+C to stop all tools.")
+        for process in processes:
+            process.wait()
+    except KeyboardInterrupt:
+        print("\nStopping all tools...")
     finally:
-        # Clean up processes if tools were launched
-        if launch_tools and not disable_tools and tool_processes:
-            print("\nStopping all tools...")
-            for process in tool_processes:
+        # Clean up processes
+        for process in processes:
+            try:
                 process.terminate()
+                process.wait(timeout=5)
+            except:
+                process.kill()
+        
+        # Clean up Docker containers
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if tool_config.get("launch_cmd") == "docker":
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-            
-            # Stop Docker containers
-            for tool_id, tool_config in all_tools.items():
-                if tool_manager.is_tool_enabled(tool_id) and tool_config.get("container", False):
-                    try:
-                        subprocess.run(["docker", "stop", f"mcp-{tool_id}"], check=False)
-                    except:
-                        pass
-            
-            print("All tools stopped.")
+                    subprocess.run(["docker", "stop", f"smart-agent-{tool_id}"], check=False)
+                except:
+                    pass
+        
+        print("All tools stopped.")
+
+
+@click.command()
+def setup_cmd():
+    """Set up the environment for Smart Agent."""
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    setup_script = os.path.join(script_dir, "setup-env.sh")
+    
+    print("Setting up Smart Agent environment...")
+    
+    # Run the setup script directly
+    try:
+        subprocess.run(["bash", setup_script], check=True)
+    except subprocess.CalledProcessError:
+        print("Error running setup script. Please check the output for details.")
+        sys.exit(1)
 
 
 @click.group()
@@ -452,10 +445,13 @@ def cli():
     pass
 
 
+cli.add_command(chat_cmd)
+cli.add_command(launch_tools_cmd, name="launch-tools")
+cli.add_command(setup_cmd)
+
+
 def main():
     """Entry point for the CLI."""
-    cli.add_command(chat)
-    cli.add_command(launch_tools)
     cli()
 
 

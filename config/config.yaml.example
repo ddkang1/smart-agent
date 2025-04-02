@@ -1,0 +1,28 @@
+# Smart Agent Configuration Example
+# Copy this file to config.yaml and update with your values
+
+# API Configuration
+api:
+  base_url: "http://litellm-proxy:4000"  # Base URL for LiteLLM proxy
+  api_key: "sk-any-key"                  # Any string starting with sk- will work with LiteLLM
+
+# Model Configuration
+model:
+  name: "claude-3-7-sonnet-20240229"     # Model name to use (must match a model in litellm_config.yaml)
+  temperature: 0.0                       # Temperature for generation (0.0-1.0)
+
+# Logging Configuration
+logging:
+  level: "INFO"                          # Logging level (DEBUG, INFO, WARNING, ERROR)
+  file: null                             # Set to a path to log to a file
+
+# Monitoring Configuration
+monitoring:
+  langfuse:
+    enabled: false                       # Set to true to enable Langfuse monitoring
+    host: "https://cloud.langfuse.com"   # Langfuse host URL
+    public_key: ""                       # Your Langfuse public key
+    secret_key: ""                       # Your Langfuse secret key
+
+# Include tools configuration
+tools_config: "config/tools.yaml"        # Path to tools configuration file
