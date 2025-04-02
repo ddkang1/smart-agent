@@ -103,5 +103,7 @@ fi
 
 echo "Environment setup complete. You can now run Smart Agent using:"
 echo "  - smart-agent chat                      # Start chat session"
-echo "  - smart-agent launch-tools              # Launch tool services"
-echo "  - ./run.sh                              # Run using Docker"
+echo "  - smart-agent start                     # Start all services"
+echo "  - smart-agent start --tools             # Start only tool services"
+echo "  - smart-agent start --proxy             # Start only the LiteLLM proxy"
+echo "  - smart-agent stop                      # Stop all services"
