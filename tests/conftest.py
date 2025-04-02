@@ -9,7 +9,7 @@ import tempfile
 import shutil
 from unittest.mock import Mock, patch
 
-from smart_agent.config import Config
+from smart_agent.tool_manager import ConfigManager
 
 
 @pytest.fixture
@@ -84,11 +84,9 @@ def mock_config_dir(temp_dir):
 
 @pytest.fixture
 def mock_config(mock_config_dir):
-    """Create a mock Config object with test configuration."""
-    with patch("smart_agent.config.CONFIG_DIR", mock_config_dir):
-        config = Config()
-        config.load()
-        return config
+    """Create a mock ConfigManager object with test configuration."""
+    config_manager = ConfigManager(os.path.join(mock_config_dir, "config.yaml"))
+    return config_manager
 
 
 @pytest.fixture
