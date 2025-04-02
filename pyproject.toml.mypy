@@ -1,6 +1,5 @@
-[mypy]
-# Global options
-python_version = 3.10
+[tool.mypy]
+python_version = "3.10"
 warn_return_any = false
 warn_unused_configs = false
 disallow_untyped_defs = false
@@ -13,32 +12,23 @@ warn_redundant_casts = false
 warn_unused_ignores = false
 warn_no_return = false
 warn_unreachable = false
-
-# Ignore missing imports
 ignore_missing_imports = true
-
-# Ignore errors about missing type annotations
 disallow_untyped_calls = false
+follow_imports = "skip"
 
-# Completely disable type checking for all files
-follow_imports = skip
-
-# Ignore errors in specific modules
-[mypy.plugins.numpy.*]
+# Completely disable type checking for all modules
+[[tool.mypy.overrides]]
+module = "*"
 ignore_errors = true
 
-[mypy.plugins.pandas.*]
+[[tool.mypy.overrides]]
+module = "mcp.*"
 ignore_errors = true
 
-# Ignore specific files or directories
-[mypy-smart_agent.*]
+[[tool.mypy.overrides]]
+module = "smart_agent.*"
 ignore_errors = true
 
-[mypy-tests.*]
-ignore_errors = true
-
-[mypy-mcp.*]
-ignore_errors = true
-
-[mypy-*]
+[[tool.mypy.overrides]]
+module = "tests.*"
 ignore_errors = true
