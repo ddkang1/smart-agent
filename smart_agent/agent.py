@@ -30,12 +30,12 @@ class SmartAgent:
         Initialize a new Smart Agent.
         
         Args:
-            model_name: The name of the model to use. Defaults to MODEL_NAME env variable or "claude-3-7-sonnet-20250219"
+            model_name: The name of the model to use
             openai_client: An initialized OpenAI client
             mcp_servers: A list of MCP servers to use
             system_prompt: Optional system prompt to use
         """
-        self.model_name = model_name or os.environ.get("MODEL_NAME", "claude-3-7-sonnet-20250219")
+        self.model_name = model_name
         self.openai_client = openai_client
         self.mcp_servers = mcp_servers or []
         self.system_prompt = system_prompt
