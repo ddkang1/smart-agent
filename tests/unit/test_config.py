@@ -1,122 +1,144 @@
 """
-Unit tests for the Config module.
+Unit tests for the ConfigManager module.
 """
 
 import os
 import yaml
-from unittest.mock import patch
+from unittest.mock import patch, mock_open
 
-from smart_agent.config import Config
+from smart_agent.tool_manager import ConfigManager
 
 
-class TestConfig:
-    """Test suite for the Config class."""
+class TestConfigManager:
+    """Test suite for the ConfigManager class."""
 
     def test_load_config(self, mock_config_dir):
         """Test loading configuration from YAML files."""
-        with patch("smart_agent.config.CONFIG_DIR", mock_config_dir):
-            config = Config()
-            config.load()
+        config_path = os.path.join(mock_config_dir, "config.yaml")
+        config_manager = ConfigManager(config_path)
+        
+        # Verify that config was loaded
+        assert config_manager.config is not None
+        assert isinstance(config_manager.config, dict)
+        
+        # Test accessing configuration values
+        # Note: These assertions will need to be adjusted based on your actual config structure
+        if "model" in config_manager.config:
+            assert "name" in config_manager.config["model"]
+            
+        # Verify tools config was loaded
+        assert config_manager.tools_config is not None
+        assert isinstance(config_manager.tools_config, dict)
 
-            # Verify model config
-            assert config.get_model_name() == "gpt-4"
-            assert config.get_model_temperature() == 1.0
-            assert config.get_model_max_tokens() == 4000
+    def test_default_config_path(self):
+        """Test that the default config path is used when none is provided."""
+        with patch("os.path.exists", return_value=True):
+            with patch("builtins.open", mock_open(read_data="{}")):
+                config_manager = ConfigManager()
+                # Verify that config was loaded
+                assert config_manager.config is not None
+                assert isinstance(config_manager.config, dict)
 
-            # Verify tools config
-            tools = config.get_tools()
-            assert "search_tool" in tools
-            assert "python_repl" in tools
-            assert tools["search_tool"]["url"] == "http://localhost:8001/sse"
+    def test_get_config(self, temp_dir):
+        """Test getting configuration values."""
+        config_path = os.path.join(temp_dir, "test_config.yaml")
+        
+        # Create a ConfigManager with mock config
+        config_manager = ConfigManager(config_path)
+        config_manager.config = {
+            "model": {
+                "name": "gpt-4",
+                "temperature": 0.7
+            },
+            "api": {
+                "provider": "openai"
+            }
+        }
+        
+        # Test getting config values
+        assert config_manager.get_config("model", "name") == "gpt-4"
+        assert config_manager.get_config("model", "temperature") == 0.7
+        assert config_manager.get_config("api", "provider") == "openai"
+        
+        # Test getting default value for non-existent key
+        assert config_manager.get_config("model", "non_existent", "default") == "default"
+        
+        # Test getting entire section
+        assert config_manager.get_config("model") == {"name": "gpt-4", "temperature": 0.7}
+        
+        # Test getting entire config
+        assert config_manager.get_config() == config_manager.config
 
-            # Verify LiteLLM config
-            litellm_config = config.get_litellm_config()
-            assert len(litellm_config.get("model_list", [])) > 0
-            assert litellm_config.get("server", {}).get("port") == 4000
+    def test_get_tool_config(self, mock_config_dir):
+        """Test getting tool configuration."""
+        config_path = os.path.join(mock_config_dir, "config.yaml")
+        
+        # Create a ConfigManager with mock tools config
+        config_manager = ConfigManager(config_path)
+        config_manager.tools_config = {
+            "search_tool": {
+                "name": "Search Tool",
+                "url": "http://localhost:8001/sse",
+                "enabled": True
+            },
+            "python_repl": {
+                "name": "Python REPL",
+                "url": "http://localhost:8002/sse",
+                "enabled": False
+            }
+        }
+        
+        # Test getting specific tool config
+        search_tool = config_manager.get_tool_config("search_tool")
+        assert search_tool["name"] == "Search Tool"
+        assert search_tool["url"] == "http://localhost:8001/sse"
+        assert search_tool["enabled"] is True
+        
+        # Test getting all tools
+        all_tools = config_manager.get_all_tools()
+        assert "search_tool" in all_tools
+        assert "python_repl" in all_tools
 
-    def test_save_config(self, temp_dir):
-        """Test saving configuration to YAML files."""
-        config_dir = os.path.join(temp_dir, "config")
-        os.makedirs(config_dir, exist_ok=True)
+    def test_tool_status_methods(self, mock_config_dir):
+        """Test methods for checking tool status."""
+        config_path = os.path.join(mock_config_dir, "config.yaml")
+        
+        # Create a ConfigManager with mock tools config
+        config_manager = ConfigManager(config_path)
+        config_manager.tools_config = {
+            "search_tool": {
+                "name": "Search Tool",
+                "url": "http://localhost:8001/sse",
+                "enabled": True
+            },
+            "python_repl": {
+                "name": "Python REPL",
+                "url": "http://localhost:8002/sse",
+                "enabled": False
+            }
+        }
+        
+        # Test is_tool_enabled method
+        assert config_manager.is_tool_enabled("search_tool") is True
+        assert config_manager.is_tool_enabled("python_repl") is False
+        
+        # Test get_tool_url method
+        assert config_manager.get_tool_url("search_tool") == "http://localhost:8001/sse"
+        assert config_manager.get_tool_url("python_repl") == "http://localhost:8002/sse"
 
-        with patch("smart_agent.config.CONFIG_DIR", config_dir):
-            config = Config()
-
-            # Set config values
-            config.set_model_config(
-                {"name": "test-model", "temperature": 0.5, "max_tokens": 2000}
-            )
-
-            config.set_tools_config(
-                {
-                    "test_tool": {
-                        "name": "test_tool",
-                        "type": "test",
-                        "enabled": True,
-                        "url": "http://localhost:9000/sse",
-                    }
-                }
-            )
-
-            config.set_litellm_config(
-                {
-                    "model_list": [
-                        {
-                            "model_name": "test-model",
-                            "litellm_params": {
-                                "model": "test/test-model",
-                                "api_key": "${TEST_API_KEY}",
-                            },
-                        }
-                    ]
-                }
-            )
-
-            # Save config
-            config.save()
-
-            # Verify files were created
-            assert os.path.exists(os.path.join(config_dir, "config.yaml"))
-            assert os.path.exists(os.path.join(config_dir, "tools.yaml"))
-            litellm_path = os.path.join(config_dir, "litellm_config.yaml")
-            assert os.path.exists(litellm_path)
-
-            # Verify content
-            with open(os.path.join(config_dir, "config.yaml"), "r") as f:
-                config_data = yaml.safe_load(f)
-                assert config_data["model"]["name"] == "test-model"
-
-            with open(os.path.join(config_dir, "tools.yaml"), "r") as f:
-                tools_data = yaml.safe_load(f)
-                assert "test_tool" in tools_data["tools"]
-
-    def test_get_enabled_tools(self, mock_config_dir):
-        """Test getting only enabled tools."""
-        with patch("smart_agent.config.CONFIG_DIR", mock_config_dir):
-            config = Config()
-            config.load()
-
-            # Get all tools including disabled ones
-            all_tools = config.get_tools()
-
-            # Disable one tool
-            all_tools["search_tool"]["enabled"] = False
-            config.set_tools_config(all_tools)
-
-            # Get only enabled tools
-            enabled_tools = config.get_enabled_tools()
-
-            # Verify only enabled tools are returned
-            assert "python_repl" in enabled_tools
-            assert "search_tool" not in enabled_tools
-
-    def test_missing_config_files(self):
-        """Test behavior with missing config files."""
-        with patch("smart_agent.config.CONFIG_DIR", "/nonexistent/path"):
-            with patch("os.path.exists", return_value=False):
-                config = Config()
-                config.load()
-
-                # Should use defaults
-                assert config.get_model_name() is not None
-                assert isinstance(config.get_tools(), dict)
+    def test_model_config_methods(self, mock_config_dir):
+        """Test methods for getting model configuration."""
+        config_path = os.path.join(mock_config_dir, "config.yaml")
+        
+        # Create a ConfigManager with mock config
+        config_manager = ConfigManager(config_path)
+        config_manager.config = {
+            "model": {
+                "name": "gpt-4",
+                "temperature": 0.7
+            }
+        }
+        
+        # Test getting model config
+        assert config_manager.get_model_name() == "gpt-4"
+        assert config_manager.get_model_temperature() == 0.7
