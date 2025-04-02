@@ -20,13 +20,12 @@ requires-python = ">=3.8"
 dependencies = [
     "colorama",
     "openai>=1.0.0",
-    "anthropic>=0.5.0",
     "asyncio",
     "click",
     "python-dotenv",
     "pyyaml>=6.0",
-    "agent>=0.1.0",
     "uvx",
+    "openai-agents"
 ]
 
 [project.optional-dependencies]

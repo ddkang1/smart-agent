@@ -12,6 +12,7 @@ from agents import (
     Runner,
     ItemHelpers,
 )
+from openai import AsyncOpenAI
 
 
 class SmartAgent:
@@ -22,7 +23,7 @@ class SmartAgent:
     def __init__(
         self,
         model_name: str = None,
-        openai_client: Any = None,
+        openai_client: AsyncOpenAI = None,
         mcp_servers: List[Any] = None,
         system_prompt: Optional[str] = None,
     ):
