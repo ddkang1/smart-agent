@@ -2,14 +2,11 @@
 Unit tests for the CLI module.
 """
 
-import os
-import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 from smart_agent.cli import (
     start_cmd,
     stop_cmd,
-    chat_cmd,
     setup_cmd,
     launch_tools,
     stop_tools,
@@ -68,7 +65,7 @@ class TestCliCommands:
 
     @patch("smart_agent.cli.subprocess.Popen")
     @patch("smart_agent.cli.ToolManager")
-    def test_launch_tools(self, mock_tool_manager, mock_popen, mock_config):
+    def test_launch_tools(self, mock_tool_manager, mock_popen):
         """Test launching tools."""
         mock_tool_instance = MagicMock()
         mock_tool_manager.return_value = mock_tool_instance
@@ -95,7 +92,7 @@ class TestCliCommands:
         assert mock_popen.call_count == 2
 
     @patch("smart_agent.cli.subprocess.run")
-    def test_stop_tools(self, mock_run, mock_config):
+    def test_stop_tools(self, mock_run):
         """Test stopping tools."""
         stop_tools()
 
@@ -104,7 +101,7 @@ class TestCliCommands:
 
     @patch("smart_agent.cli.subprocess.run")
     @patch("smart_agent.cli.os.path.exists")
-    def test_launch_litellm_proxy(self, mock_exists, mock_run, mock_config):
+    def test_launch_litellm_proxy(self, mock_exists, mock_run):
         """Test launching LiteLLM proxy."""
         mock_exists.return_value = True  # Config file exists
 
@@ -115,8 +112,8 @@ class TestCliCommands:
 
         # Find the docker run command
         docker_calls = [
-            call
-            for call in mock_run.call_args_list
-            if call[0][0][0] == "docker" and call[0][0][1] == "run"
+            call_args
+            for call_args in mock_run.call_args_list
+            if call_args[0][0][0] == "docker" and call_args[0][0][1] == "run"
         ]
         assert len(docker_calls) == 1

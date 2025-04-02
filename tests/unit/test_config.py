@@ -3,9 +3,8 @@ Unit tests for the Config module.
 """
 
 import os
-import pytest
 import yaml
-from unittest.mock import patch, mock_open
+from unittest.mock import patch
 
 from smart_agent.config import Config
 
@@ -79,7 +78,8 @@ class TestConfig:
             # Verify files were created
             assert os.path.exists(os.path.join(config_dir, "config.yaml"))
             assert os.path.exists(os.path.join(config_dir, "tools.yaml"))
-            assert os.path.exists(os.path.join(config_dir, "litellm_config.yaml"))
+            litellm_path = os.path.join(config_dir, "litellm_config.yaml")
+            assert os.path.exists(litellm_path)
 
             # Verify content
             with open(os.path.join(config_dir, "config.yaml"), "r") as f:

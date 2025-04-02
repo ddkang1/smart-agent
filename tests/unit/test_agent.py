@@ -2,7 +2,6 @@
 Unit tests for the Agent module.
 """
 
-import pytest
 from unittest.mock import patch, MagicMock
 
 from smart_agent.agent import SmartAgent
@@ -22,7 +21,12 @@ class TestSmartAgent:
 
     @patch("smart_agent.agent.AsyncOpenAI")
     @patch("smart_agent.agent.get_tool_client")
-    def test_agent_load_tools(self, mock_get_tool_client, mock_openai, mock_config):
+    def test_agent_load_tools(
+        self,
+        mock_get_tool_client,
+        mock_openai,
+        mock_config
+    ):
         """Test loading tools into the agent."""
         # Setup mock tool client
         mock_tool_client = MagicMock()
@@ -39,7 +43,10 @@ class TestSmartAgent:
     @patch("smart_agent.agent.AsyncOpenAI")
     @patch("smart_agent.agent.get_tool_client")
     async def test_agent_chat_completion(
-        self, mock_get_tool_client, mock_openai, mock_config
+        self,
+        mock_get_tool_client,
+        mock_openai,
+        mock_config
     ):
         """Test chat completion with the agent."""
         # Setup mock OpenAI client
@@ -64,7 +71,10 @@ class TestSmartAgent:
     @patch("smart_agent.agent.AsyncOpenAI")
     @patch("smart_agent.agent.get_tool_client")
     async def test_agent_tool_call(
-        self, mock_get_tool_client, mock_openai, mock_config
+        self,
+        mock_get_tool_client,
+        mock_openai,
+        mock_config
     ):
         """Test tool calling with the agent."""
         # Setup mock OpenAI client
