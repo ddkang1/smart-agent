@@ -27,6 +27,7 @@ class ConfigManager:
         self.config = {}
         self.config_path = config_path
         self.tools_config = {}
+        self.litellm_config = {}
         self._load_config()
 
     def _load_config(self):
@@ -72,6 +73,9 @@ class ConfigManager:
                             print(
                                 f"Warning: Tools configuration file not found: {tools_config_path}"
                             )
+                            
+                    # Load LiteLLM configuration if available
+                    self.litellm_config = self._load_litellm_config()
 
                     return
                 except Exception as e:
@@ -79,6 +83,32 @@ class ConfigManager:
 
         print("Warning: No configuration file found. Using default settings.")
         self.config = {}
+
+    def _load_litellm_config(self):
+        """
+        Load LiteLLM configuration from the path specified in the config.
+        
+        Returns:
+            Dictionary containing LiteLLM configuration
+        """
+        litellm_config_path = self.config.get("llm", {}).get("config_file")
+        if not litellm_config_path:
+            return {}
+            
+        # Handle relative paths
+        if not os.path.isabs(litellm_config_path):
+            litellm_config_path = os.path.join(os.path.dirname(self.config_path), litellm_config_path)
+            
+        if not os.path.exists(litellm_config_path):
+            print(f"Warning: LiteLLM config file not found at {litellm_config_path}")
+            return {}
+            
+        try:
+            with open(litellm_config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            print(f"Error loading LiteLLM config: {e}")
+            return {}
 
     def get_config(
         self,
@@ -346,6 +376,107 @@ class ConfigManager:
             config["enabled"] = True
 
         return config
+
+    def get_llm_config(self) -> Dict:
+        """
+        Get the LLM configuration combining info from both config.yaml and litellm_config.yaml.
+        
+        Returns:
+            Dictionary with complete LLM configuration
+        """
+        # First check for legacy model configuration
+        if "model" in self.config and "name" in self.config.get("model", {}):
+            return {
+                "name": self.config.get("model", {}).get("name"),
+                "temperature": self.config.get("model", {}).get("temperature", 1.0),
+                "base_url": self.config.get("api", {}).get("base_url"),
+                "api_key": self.config.get("api", {}).get("api_key"),
+            }
+            
+        # Handle new style configuration referencing litellm_config.yaml
+        llm_config = self.config.get("llm", {})
+        preferred_model = llm_config.get("preferred_model")
+        temperature = llm_config.get("temperature", 1.0)
+        
+        # Get all unique model names from the model_list
+        all_models = set()
+        for model in self.litellm_config.get("model_list", []):
+            if model.get("model_name"):
+                all_models.add(model.get("model_name"))
+        
+        # Find the model in litellm_config.yaml
+        model_config = {}
+        model_variant_configs = []
+        
+        # Find all variants of the preferred model
+        for model in self.litellm_config.get("model_list", []):
+            if model.get("model_name") == preferred_model:
+                model_variant_configs.append(model)
+                
+        # Pick the first variant as the default
+        if model_variant_configs:
+            model_config = model_variant_configs[0]
+                
+        # If preferred model not found but we have models, use the first one
+        if not model_config and self.litellm_config.get("model_list"):
+            model_config = self.litellm_config.get("model_list")[0]
+            
+        # Get server config for base_url
+        server_config = self.litellm_config.get("server", {})
+        host = server_config.get("host", "0.0.0.0") 
+        port = server_config.get("port", 4000)
+        base_url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
+            
+        return {
+            "name": model_config.get("model_name"),
+            "temperature": temperature,
+            "base_url": base_url,
+            "api_key": "sk-any-key",  # Default for local LiteLLM proxy
+            "model_config": model_config,
+            "all_models": list(all_models),
+            "model_variants": model_variant_configs,
+        }
+        
+    # Compatibility methods for existing code
+    def get_api_key(self) -> str:
+        """Get the API key for the LLM provider."""
+        # Legacy method
+        legacy_api_key = self.config.get("api", {}).get("api_key")
+        if legacy_api_key:
+            return legacy_api_key
+            
+        # New method using get_llm_config()
+        return self.get_llm_config().get("api_key")
+        
+    def get_api_base_url(self) -> str:
+        """Get the base URL for the LLM API."""
+        # Legacy method
+        legacy_base_url = self.config.get("api", {}).get("base_url")
+        if legacy_base_url:
+            return legacy_base_url
+            
+        # New method using get_llm_config()
+        return self.get_llm_config().get("base_url")
+        
+    def get_model_name(self) -> str:
+        """Get the name of the LLM model."""
+        # Legacy method
+        legacy_model_name = self.config.get("model", {}).get("name")
+        if legacy_model_name:
+            return legacy_model_name
+            
+        # New method using get_llm_config()
+        return self.get_llm_config().get("name")
+        
+    def get_model_temperature(self) -> float:
+        """Get the temperature setting for the LLM model."""
+        # Legacy method
+        legacy_temperature = self.config.get("model", {}).get("temperature")
+        if legacy_temperature is not None:
+            return legacy_temperature
+            
+        # New method using get_llm_config()
+        return self.get_llm_config().get("temperature", 1.0)
 
 
 # For backward compatibility

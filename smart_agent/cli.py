@@ -121,7 +121,7 @@ def chat_loop(config_manager: ConfigManager):
     try:
         # Import required libraries
         from openai import AsyncOpenAI
-        from agent import Agent, OpenAIChatCompletionsModel
+        from smart_agent.agent import SmartAgent, Agent, OpenAIChatCompletionsModel
 
         # Initialize AsyncOpenAI client
         client = AsyncOpenAI(
@@ -143,15 +143,12 @@ def chat_loop(config_manager: ConfigManager):
             print(f"Adding {tool_name} at {tool_url} to agent")
             mcp_servers.append(tool_url)
 
-        # Create the agent
-        agent = Agent(
-            name="Assistant",
-            instructions=PromptGenerator.create_system_prompt(),
-            model=OpenAIChatCompletionsModel(
-                model=model_name,
-                openai_client=client,
-            ),
+        # Create the agent - using SmartAgent wrapper class
+        smart_agent = SmartAgent(
+            model_name=model_name,
+            openai_client=client,
             mcp_servers=mcp_servers,
+            system_prompt=PromptGenerator.create_system_prompt(),
         )
 
         print(f"Agent initialized with {len(mcp_servers)} tools")
@@ -178,15 +175,12 @@ def chat_loop(config_manager: ConfigManager):
 
         # Check for clear command
         if user_input.lower() == "clear":
-            # Reset the agent
-            agent = Agent(
-                name="Assistant",
-                instructions=PromptGenerator.create_system_prompt(),
-                model=OpenAIChatCompletionsModel(
-                    model=model_name,
-                    openai_client=client,
-                ),
+            # Reset the agent - using SmartAgent wrapper class
+            smart_agent = SmartAgent(
+                model_name=model_name,
+                openai_client=client,
                 mcp_servers=mcp_servers,
+                system_prompt=PromptGenerator.create_system_prompt(),
             )
             print("Conversation history cleared")
             continue
@@ -197,9 +191,11 @@ def chat_loop(config_manager: ConfigManager):
         try:
             # Use the agent for streaming response
             async def run_agent():
-                async for chunk in agent.chat(user_input=user_input):
-                    if chunk.content:
-                        print(chunk.content, end="", flush=True)
+                history = [{"role": "user", "content": user_input}]
+                result = await smart_agent.process_message(history)
+                async for chunk in result.stream():
+                    if chunk.delta and chunk.delta.content:
+                        print(chunk.delta.content, end="", flush=True)
                 print()  # Add a newline at the end
 
             # Run the agent in an event loop
@@ -455,7 +451,9 @@ def start(config, tools, proxy, all):
 
 
 @click.command()
-@click.option("--config", help="Path to configuration file")
+@click.option(
+    "--config", help="Path to configuration file"
+)
 @click.option("--tools", is_flag=True, help="Stop tool services")
 @click.option("--proxy", is_flag=True, help="Stop LiteLLM proxy service")
 @click.option("--all", is_flag=True, help="Stop all services (tools and proxy)")
@@ -533,7 +531,9 @@ def stop(config, tools, proxy, all):
 
 
 @click.command()
-@click.option("--config", help="Path to configuration file")
+@click.option(
+    "--config", help="Path to configuration file"
+)
 @click.option("--tools", is_flag=True, help="Restart tool services")
 @click.option("--proxy", is_flag=True, help="Restart LiteLLM proxy service")
 @click.option("--all", is_flag=True, help="Restart all services (tools and proxy)")
@@ -548,22 +548,24 @@ def restart(config, tools, proxy, all):
 def launch_litellm_proxy(config_manager):
     """Launch the LiteLLM proxy using Docker."""
     try:
-        config_path = os.path.join(os.path.abspath("config"), "litellm_config.yaml")
-        if not os.path.exists(config_path):
-            print(f"Error: LiteLLM configuration file not found at {config_path}")
-            return None
+        # Load litellm_config.yaml to get server settings
+        with open(os.path.abspath('config/litellm_config.yaml'), 'r') as f:
+            litellm_config = yaml.safe_load(f)
+        
+        server_port = litellm_config.get('server', {}).get('port', 4000)
+        server_host = litellm_config.get('server', {}).get('host', '0.0.0.0')
 
-        # Check if Docker is available
-        try:
-            subprocess.run(
-                ["docker", "--version"],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except (subprocess.SubprocessError, FileNotFoundError):
-            print("Error: Docker is not available. Cannot launch LiteLLM proxy.")
-            return None
+        docker_cmd = [
+            "docker", "run",
+            "--name", "smart-agent-litellm-proxy",
+            "-d",
+            "-p", f"{server_port}:{server_port}",
+            "-v", f"{os.path.abspath('config')}/litellm_config.yaml:/app/config.yaml",
+            "ghcr.io/berriai/litellm:litellm_stable_release_branch-stable",
+            "--config", "/app/config.yaml",
+            "--port", str(server_port),
+            "--host", server_host
+        ]
 
         # First, ensure old containers are removed
         try:
@@ -578,29 +580,6 @@ def launch_litellm_proxy(config_manager):
 
         # Launch LiteLLM proxy using Docker
         print("Launching LiteLLM proxy using Docker...")
-
-        docker_cmd = [
-            "docker",
-            "run",
-            "--name",
-            "smart-agent-litellm-proxy",
-            "-d",  # Run in detached mode
-            "-p",
-            "4000:4000",  # Map port
-            "-v",
-            f"{os.path.abspath('config')}/litellm_config.yaml:/app/config.yaml",
-            "-e",
-            "PORT=4000",
-            "-e",
-            "HOST=0.0.0.0",
-            "ghcr.io/berriai/litellm:litellm_stable_release_branch-stable",
-            "--config",
-            "/app/config.yaml",
-            "--port",
-            "4000",
-            "--host",
-            "0.0.0.0",
-        ]
 
         # Start the Docker container
         process = subprocess.Popen(
@@ -780,7 +759,7 @@ def setup(quick, config, tools, litellm, all):
                     # Convert relative paths to absolute paths
                     if not os.path.isabs(storage_path):
                         abs_storage_path = os.path.abspath(
-                            os.path.join(os.getcwd(), "storage", storage_path)
+                            os.path.join(os.getcwd(), storage_path)
                         )
                         print(
                             f"⚠️ Converting relative path to absolute: {storage_path} -> {abs_storage_path}"
@@ -804,47 +783,296 @@ def setup(quick, config, tools, litellm, all):
         print("  smart-agent start                # Start all services")
         return
 
-    # Interactive setup - Step 1: Configure main settings
+    # Get existing models from current config if it exists
+    existing_models = []
+    if os.path.exists("config/litellm_config.yaml"):
+        with open("config/litellm_config.yaml", "r") as f:
+            litellm_data = yaml.safe_load(f)
+            existing_models = [
+                model["model_name"] 
+                for model in litellm_data.get("model_list", [])
+            ]
+    
+    # Extract example models from the example file
+    example_models = []
+    if os.path.exists(litellm_example_path):
+        try:
+            with open(litellm_example_path, 'r') as f:
+                litellm_example = yaml.safe_load(f) or {}
+                # Extract unique model names from example file
+                for model in litellm_example.get("model_list", []):
+                    model_name = model.get("model_name")
+                    if model_name and model_name not in example_models:
+                        example_models.append(model_name)
+        except Exception as e:
+            print(f"Warning: Error parsing litellm_config.yaml.example: {e}")
+    
+    # If we have existing models, use those
+    if existing_models:
+        available_models = existing_models
+    # Otherwise, if we have models from example, prompt user to select from those
+    elif not existing_models and example_models:
+        # Present numbered options to the user
+        print("\nNo models configured. Select a model to use (you can change this later):")
+        
+        for idx, model in enumerate(example_models):
+            print(f"{idx + 1}. {model}")
+        print(f"{len(example_models) + 1}. Custom (enter your own)")
+        
+        print("\nYou'll need to edit config/litellm_config.yaml later to add your API keys.")
+        
+        while True:
+            selection = input("\nSelect model [1]: ").strip()
+            
+            # Default to first option if nothing entered
+            if not selection:
+                selection = "1"
+                
+            # Check if selection is a valid number
+            if selection.isdigit():
+                option = int(selection)
+                if 1 <= option <= len(example_models):
+                    available_models = [example_models[option - 1]]
+                    break
+                elif option == len(example_models) + 1:
+                    custom_model = input("Enter model name: ").strip()
+                    if custom_model:
+                        available_models = [custom_model]
+                        break
+            
+            print("Invalid selection. Please try again.")
+    # Fallback if no models at all
+    else:
+        print("Warning: Could not find any model options. Using a placeholder.")
+        available_models = ["model-placeholder"]
+
+    # Start by setting up LiteLLM first as it's a dependency for config.yaml
+    if setup_all or litellm:
+        print("\n===== LITELLM PROXY CONFIGURATION =====")
+
+        # Check if LiteLLM config already exists and use it as base
+        if os.path.exists("config/litellm_config.yaml"):
+            print("Found existing litellm_config.yaml, using as default...")
+            with open("config/litellm_config.yaml", "r") as f:
+                litellm_config = yaml.safe_load(f)
+        elif litellm_example:
+            # Load default LiteLLM config from example
+            with open(litellm_example_path, "r") as f:
+                litellm_config = yaml.safe_load(f)
+                print("Loaded default LiteLLM configuration from example file.")
+        else:
+            # Generate basic LiteLLM config
+            litellm_config = {
+                "model_list": [],
+                "server": {"port": 4000, "host": "0.0.0.0"},
+                "litellm_settings": {
+                    "drop_params": True,
+                    "modify_params": True,
+                    "num_retries": 3,
+                },
+            }
+            print("Created basic LiteLLM configuration.")
+
+        # Ask user if they want to customize LiteLLM config
+        customize_litellm = (
+            input(
+                "\nDo you want to customize the LiteLLM configuration? [y/N]: "
+            )
+            .strip()
+            .lower()
+            == "y"
+        )
+
+        if customize_litellm:
+            # Show current models
+            print("\nCurrent models in configuration:")
+            for idx, model_entry in enumerate(litellm_config.get("model_list", [])):
+                model_name = model_entry.get("model_name")
+                provider = model_entry.get("litellm_params", {}).get("model", "").split("/")[0] if "/" in model_entry.get("litellm_params", {}).get("model", "") else "unknown"
+                print(f"{idx+1}. {model_name} ({provider})")
+
+            # Add models option
+            add_models = (
+                input("\nWould you like to add a new model? [y/N]: ").strip().lower() == "y"
+            )
+            
+            while add_models:
+                # Show provider options
+                provider_options = [
+                    ("openai", "OpenAI (requires API key)"),
+                    ("anthropic", "Anthropic (requires API key)"),
+                    ("azure", "Azure OpenAI (requires API key, endpoint, and deployment)"),
+                    ("bedrock", "AWS Bedrock (requires AWS credentials)"),
+                ]
+                
+                print("\nSelect API provider:")
+                for idx, (provider_id, provider_name) in enumerate(provider_options):
+                    print(f"{idx+1}. {provider_name}")
+                
+                # Get provider selection
+                while True:
+                    provider_selection = input("Provider [1]: ").strip() or "1"
+                    if provider_selection.isdigit() and 1 <= int(provider_selection) <= len(provider_options):
+                        selected_provider = provider_options[int(provider_selection)-1][0]
+                        break
+                    print("Invalid selection. Please try again.")
+                
+                # Get model name
+                model_name = input(f"\nEnter model name (e.g., gpt-4o for OpenAI): ").strip()
+                if not model_name:
+                    print("No model name provided, skipping model addition.")
+                else:
+                    # Create model config based on provider
+                    new_model = {"model_name": model_name, "litellm_params": {}}
+                    
+                    if selected_provider == "openai":
+                        new_model["litellm_params"]["model"] = f"openai/{model_name}"
+                        api_key = input("Enter OpenAI API key (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["api_key"] = api_key or "api_key"
+                        
+                    elif selected_provider == "anthropic":
+                        new_model["litellm_params"]["model"] = f"anthropic/{model_name}"
+                        api_key = input("Enter Anthropic API key (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["api_key"] = api_key or "api_key"
+                        
+                    elif selected_provider == "azure":
+                        deployment_name = input("Enter Azure deployment name (leave empty to use model name): ").strip() or model_name
+                        new_model["litellm_params"]["model"] = f"azure/{deployment_name}"
+                        
+                        api_base = input("Enter Azure endpoint URL (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["api_base"] = api_base or "api_base"
+                        
+                        api_key = input("Enter Azure API key (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["api_key"] = api_key or "api_key"
+                        
+                        api_version = input("Enter Azure API version (leave empty for default): ").strip()
+                        if api_version:
+                            new_model["litellm_params"]["api_version"] = api_version
+                        
+                    elif selected_provider == "bedrock":
+                        new_model["litellm_params"]["model"] = f"bedrock/{model_name}"
+                        
+                        aws_access_key = input("Enter AWS access key ID (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["aws_access_key_id"] = aws_access_key or "aws_access_key_id"
+                        
+                        aws_secret_key = input("Enter AWS secret access key (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["aws_secret_access_key"] = aws_secret_key or "aws_secret_access_key"
+                        
+                        aws_region = input("Enter AWS region (leave empty to set later): ").strip()
+                        new_model["litellm_params"]["aws_region_name"] = aws_region or "aws_region"
+                    
+                    # Add the model to the config
+                    if "model_list" not in litellm_config:
+                        litellm_config["model_list"] = []
+                    
+                    litellm_config["model_list"].append(new_model)
+                    print(f"✓ Added {model_name} ({selected_provider}) to configuration")
+                
+                # Ask if user wants to add another model
+                add_models = input("\nAdd another model? [y/N]: ").strip().lower() == "y"
+            
+            # Remove models option
+            remove_models = (
+                input("\nRemove any models? [y/N]: ").strip().lower() == "y"
+            )
+            if remove_models and litellm_config.get("model_list"):
+                # Only allow removal if there would be at least one model left
+                if len(litellm_config["model_list"]) > 1:
+                    print("\nSelect models to remove:")
+                    models_to_remove = []
+
+                    for idx, model_entry in enumerate(litellm_config["model_list"]):
+                        model_name = model_entry.get("model_name")
+                        remove = (
+                            input(f"Remove {model_name}? [y/N]: ").strip().lower()
+                            == "y"
+                        )
+                        if remove:
+                            models_to_remove.append(idx)
+
+                    # Remove models in reverse order to avoid index issues
+                    for idx in sorted(models_to_remove, reverse=True):
+                        if (
+                            len(litellm_config["model_list"]) > 1
+                        ):  # Ensure at least one model remains
+                            removed_model = litellm_config["model_list"].pop(idx)
+                            print(f"✓ Removed {removed_model.get('model_name')}")
+
+        # Write LiteLLM config
+        with open("config/litellm_config.yaml", "w") as f:
+            yaml.dump(litellm_config, f, default_flow_style=False)
+        print("✓ Updated config/litellm_config.yaml")
+        
+        # Now we have litellm_config.yaml, continue with main config
+
+    # Create config.yaml if needed
     if setup_all or config:
         print("\n===== MAIN CONFIGURATION =====")
-
-        # Check if config already exists and use it as base
+        
+        # Load existing config or create new one
         if os.path.exists("config/config.yaml"):
             print("Found existing config.yaml, using as default...")
             with open("config/config.yaml", "r") as f:
-                config_yaml = yaml.safe_load(f)
-        else:
-            # Load default config from example
+                config_data = yaml.safe_load(f)
+        elif config_example:
             with open(config_example_path, "r") as f:
-                config_yaml = yaml.safe_load(f)
-
-        # Get model name from config
-        model_name = config_yaml.get("model", {}).get("name")
-
-        print(f"\nUsing configuration with model: {model_name}")
-        change_model = (
-            input("Do you want to change the model? [y/N]: ").strip().lower() == "y"
-        )
-
-        if change_model:
-            model_name = (
-                input(f"Enter model name [{model_name}]: ").strip() or model_name
-            )
-            config_yaml["model"]["name"] = model_name
-
-        # Get API key
-        api_key = getpass.getpass(
-            f"Enter API Key [{config_yaml.get('api', {}).get('api_key', '*****')}]: "
-        ).strip()
-        if api_key:  # Only update if user entered something
-            config_yaml["api"]["api_key"] = api_key
-
-        # Write main config
+                config_data = yaml.safe_load(f)
+                print("Loaded default configuration from example file.")
+        else:
+            # Start with minimal config 
+            config_data = {
+                "llm": {
+                    "config_file": "config/litellm_config.yaml",
+                    "preferred_model": None,  # Will be set based on user selection
+                    "temperature": 0.7,
+                },
+                "langfuse": {
+                    "enabled": False,
+                    "public_key": "",
+                    "secret_key": "",
+                    "host": "https://cloud.langfuse.com",
+                },
+                "tools_config": "config/tools.yaml",
+            }
+            
+        # Select preferred model
+        print("\nSelect preferred model:")
+        for idx, model in enumerate(available_models):
+            print(f"{idx + 1}. {model}")
+            
+        default_idx = 0
+        
+        # Check if there's already a preferred model
+        current_preferred = config_data.get("llm", {}).get("preferred_model")
+        if current_preferred and current_preferred in available_models:
+            default_idx = available_models.index(current_preferred)
+            
+        selected_idx = input(f"\nSelect model [default={default_idx+1}]: ").strip()
+        
+        # Handle model selection
+        if selected_idx and selected_idx.isdigit():
+            selected_idx = int(selected_idx) - 1
+            if 0 <= selected_idx < len(available_models):
+                selected_model = available_models[selected_idx]
+            else:
+                print(f"Invalid selection, using default model.")
+                selected_model = available_models[default_idx]
+        else:
+            selected_model = available_models[default_idx]
+                
+        print(f"✓ Using {selected_model} as preferred model")
+        
+        # Update config with the selected model
+        if "llm" not in config_data:
+            config_data["llm"] = {}
+        config_data["llm"]["preferred_model"] = selected_model
+        
+        # Write config
         with open("config/config.yaml", "w") as f:
-            yaml.dump(config_yaml, f, default_flow_style=False)
+            yaml.dump(config_data, f, default_flow_style=False)
         print("✓ Updated config/config.yaml")
 
-    # Step 2: Configure tools
+    # Interactive setup - Step 2: Configure tools
     if setup_all or tools:
         print("\n===== TOOL CONFIGURATION =====")
 
@@ -914,234 +1142,6 @@ def setup(quick, config, tools, litellm, all):
             yaml.dump(tools_yaml, f, default_flow_style=False)
         print("✓ Updated config/tools.yaml")
 
-    # Step 3: Configure LiteLLM if using proxy
-    if setup_all or litellm:
-        # Determine if we're using LiteLLM proxy
-        if setup_all:
-            # Read from config.yaml to check if we're using proxy
-            if os.path.exists("config/config.yaml"):
-                with open("config/config.yaml", "r") as f:
-                    config_data = yaml.safe_load(f)
-                    base_url = config_data.get("api", {}).get("base_url", "")
-                    use_litellm = (
-                        "localhost:4000" in base_url or "127.0.0.1:4000" in base_url
-                    )
-            else:
-                # Default to assuming we use proxy if setting up everything
-                use_litellm = True
-        else:
-            # If explicitly asked to set up LiteLLM, don't ask again
-            use_litellm = True
-
-        if use_litellm:
-            print("\n===== LITELLM PROXY CONFIGURATION =====")
-
-            # Check if LiteLLM config already exists and use it as base
-            if os.path.exists("config/litellm_config.yaml"):
-                print("Found existing litellm_config.yaml, using as default...")
-                with open("config/litellm_config.yaml", "r") as f:
-                    litellm_config = yaml.safe_load(f)
-            elif litellm_example:
-                # Load default LiteLLM config from example
-                with open(litellm_example_path, "r") as f:
-                    litellm_config = yaml.safe_load(f)
-                    print("Loaded default LiteLLM configuration from example file.")
-            else:
-                # Generate basic LiteLLM config with the model
-                # Get model name from config.yaml if it exists
-                if os.path.exists("config/config.yaml"):
-                    with open("config/config.yaml", "r") as f:
-                        config_data = yaml.safe_load(f)
-                        model_name = config_data.get("model", {}).get(
-                            "name", "claude-3-sonnet-20240229"
-                        )
-                else:
-                    model_name = "claude-3-sonnet-20240229"  # Default if no config.yaml
-
-                provider_prefix = (
-                    "anthropic" if "claude" in model_name.lower() else "openai"
-                )
-                env_var = f"${provider_prefix.upper()}_API_KEY"
-
-                litellm_config = {
-                    "model_list": [
-                        {
-                            "model_name": model_name,
-                            "litellm_params": {
-                                "model": f"{provider_prefix}/{model_name}",
-                                "api_key": env_var,
-                            },
-                        }
-                    ],
-                    "server": {"port": 4000, "host": "0.0.0.0"},
-                    "router": {"timeout": 30, "routing_strategy": "simple-shuffle"},
-                }
-                print(
-                    "Generated basic LiteLLM configuration based on the selected model."
-                )
-
-            # Ask user if they want to customize LiteLLM config
-            customize_litellm = (
-                input(
-                    "\nDo you want to add or remove models from LiteLLM configuration? [y/N]: "
-                )
-                .strip()
-                .lower()
-                == "y"
-            )
-
-            if customize_litellm:
-                # Show current models
-                print("\nCurrent models in configuration:")
-                for idx, model_entry in enumerate(litellm_config.get("model_list", [])):
-                    print(f"{idx+1}. {model_entry.get('model_name')}")
-
-                # Add models option
-                add_models = (
-                    input("\nAdd fallback models? [y/N]: ").strip().lower() == "y"
-                )
-                if add_models:
-                    # Check if there are other models in the example file
-                    if litellm_example:
-                        with open(litellm_example_path, "r") as f:
-                            example_config = yaml.safe_load(f)
-
-                            # Find models in example that aren't in current config
-                            current_models = [
-                                m.get("model_name")
-                                for m in litellm_config.get("model_list", [])
-                            ]
-                            example_models = []
-
-                            for model_entry in example_config.get("model_list", []):
-                                model_name = model_entry.get("model_name")
-                                if model_name and model_name not in current_models:
-                                    example_models.append(model_entry)
-
-                            # Offer these as options to add
-                            if example_models:
-                                print(
-                                    "\nAdditional models available from example config:"
-                                )
-                                for idx, model_entry in enumerate(example_models):
-                                    print(f"{idx+1}. {model_entry.get('model_name')}")
-
-                                for model_entry in example_models:
-                                    model_name = model_entry.get("model_name")
-                                    add_model = (
-                                        input(f"Add {model_name}? [y/N]: ")
-                                        .strip()
-                                        .lower()
-                                        == "y"
-                                    )
-                                    if add_model:
-                                        litellm_config["model_list"].append(model_entry)
-                                        print(f"✓ Added {model_name}")
-
-                    # Generic fallback model options
-                    current_models = [
-                        m.get("model_name")
-                        for m in litellm_config.get("model_list", [])
-                    ]
-
-                    if (
-                        "gpt-4" not in current_models
-                        and "claude" in " ".join(current_models).lower()
-                    ):
-                        add_gpt4 = (
-                            input("Add GPT-4 as a fallback model? [y/N]: ")
-                            .strip()
-                            .lower()
-                            == "y"
-                        )
-                        if add_gpt4:
-                            litellm_config["model_list"].append(
-                                {
-                                    "model_name": "gpt-4",
-                                    "litellm_params": {
-                                        "model": "openai/gpt-4",
-                                        "api_key": "${OPENAI_API_KEY}",
-                                    },
-                                }
-                            )
-                            print("✓ Added GPT-4 (requires OPENAI_API_KEY)")
-
-                    if (
-                        "gpt-3.5-turbo" not in current_models
-                        and "claude" in " ".join(current_models).lower()
-                    ):
-                        add_gpt35 = (
-                            input("Add GPT-3.5 Turbo as a fallback model? [y/N]: ")
-                            .strip()
-                            .lower()
-                            == "y"
-                        )
-                        if add_gpt35:
-                            litellm_config["model_list"].append(
-                                {
-                                    "model_name": "gpt-3.5-turbo",
-                                    "litellm_params": {
-                                        "model": "openai/gpt-3.5-turbo",
-                                        "api_key": "${OPENAI_API_KEY}",
-                                    },
-                                }
-                            )
-                            print("✓ Added GPT-3.5 Turbo (requires OPENAI_API_KEY)")
-
-                    if (
-                        "claude-3-sonnet-20240229" not in current_models
-                        and "gpt" in " ".join(current_models).lower()
-                    ):
-                        add_claude = (
-                            input("Add Claude as a fallback model? [y/N]: ")
-                            .strip()
-                            .lower()
-                            == "y"
-                        )
-                        if add_claude:
-                            litellm_config["model_list"].append(
-                                {
-                                    "model_name": "claude-3-sonnet-20240229",
-                                    "litellm_params": {
-                                        "model": "anthropic/claude-3-sonnet-20240229",
-                                        "api_key": "${ANTHROPIC_API_KEY}",
-                                    },
-                                }
-                            )
-                            print("✓ Added Claude (requires ANTHROPIC_API_KEY)")
-
-                # Remove models option
-                remove_models = (
-                    input("\nRemove any models? [y/N]: ").strip().lower() == "y"
-                )
-                if remove_models and litellm_config.get("model_list"):
-                    # Only allow removal if there would be at least one model left
-                    if len(litellm_config["model_list"]) > 1:
-                        print("\nSelect models to remove:")
-                        models_to_remove = []
-
-                        for idx, model_entry in enumerate(litellm_config["model_list"]):
-                            model_name = model_entry.get("model_name")
-                            remove = (
-                                input(f"Remove {model_name}? [y/N]: ").strip().lower()
-                                == "y"
-                            )
-                            if remove:
-                                models_to_remove.append(idx)
-
-                        # Remove models in reverse order to avoid index issues
-                        for idx in sorted(models_to_remove, reverse=True):
-                            if (
-                                len(litellm_config["model_list"]) > 1
-                            ):  # Ensure at least one model remains
-                                removed_model = litellm_config["model_list"].pop(idx)
-                                print(f"✓ Removed {removed_model.get('model_name')}")
-
-            # Write LiteLLM config
-            with open("config/litellm_config.yaml", "w") as f:
-                yaml.dump(litellm_config, f, default_flow_style=False)
-            print("✓ Updated config/litellm_config.yaml")
-
     # Create storage directories
     if setup_all or tools:
         print("\n===== CREATING STORAGE DIRECTORIES =====")
@@ -1160,11 +1160,15 @@ def setup(quick, config, tools, litellm, all):
                     if not os.path.isabs(storage_path):
                         # Use a storage directory in the current working directory
                         abs_storage_path = os.path.abspath(
-                            os.path.join(os.getcwd(), "storage", storage_path)
+                            os.path.join(os.getcwd(), storage_path)
                         )
+                        print(
+                            f"⚠️ Converting relative path to absolute: {storage_path} -> {abs_storage_path}"
+                        )
+
+                        # Update the file with absolute path
                         tools_yaml["tools"][tool_id]["storage_path"] = abs_storage_path
                         storage_path = abs_storage_path
-                        print(f"⚠️ Converting relative path to absolute: {storage_path}")
 
                         # Save the updated tools.yaml
                         with open("config/tools.yaml", "w") as f:
@@ -1178,8 +1182,6 @@ def setup(quick, config, tools, litellm, all):
     print("You can now run Smart Agent using:")
     print("  smart-agent chat                 # Start chat session")
     print("  smart-agent start                # Start all services")
-    print("  smart-agent start --tools        # Start only tool services")
-    print("  smart-agent start --proxy        # Start only the LiteLLM proxy")
 
 
 @click.group()
