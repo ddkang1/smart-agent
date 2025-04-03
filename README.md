@@ -166,19 +166,15 @@ All tool management is done through the configuration files in the `config` dire
 
 No command-line flags are needed - simply edit your configuration files and run the commands.
 
-## Environment Configuration
+## Configuration
 
-Smart Agent uses a YAML-based configuration system. Configuration files are located in the `config` directory:
+Smart Agent uses YAML configuration files located in the `config` directory:
 
-1. **Main Configuration Files**:
-   - `config/config.yaml`: Main configuration file
-   - `config/tools.yaml`: Tool-specific configuration
-   - `config/litellm_config.yaml`: LiteLLM proxy configuration (when using proxy)
+- `config.yaml` - Main configuration file
+- `tools.yaml` - Tool configuration
+- `litellm_config.yaml` - LLM provider configuration
 
-2. **Command Line Arguments**:
-   - `--config`: Specify a custom configuration file path
-
-The interactive setup wizard (`smart-agent setup`) will create these files for you with sensible defaults.
+The configuration system has been refactored to eliminate duplication between files. The main config now references the LiteLLM config file for model definitions, creating a single source of truth.
 
 ### Configuration Structure
 
