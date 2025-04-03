@@ -548,19 +548,24 @@ def restart(config, tools, proxy, all):
 def launch_litellm_proxy(config_manager):
     """Launch the LiteLLM proxy using Docker."""
     try:
-        # Load litellm_config.yaml to get server settings
-        with open(os.path.abspath('config/litellm_config.yaml'), 'r') as f:
-            litellm_config = yaml.safe_load(f)
+        # Get litellm configuration from config manager
+        litellm_config = config_manager.get_litellm_config() or {}
         
         server_port = litellm_config.get('server', {}).get('port', 4000)
         server_host = litellm_config.get('server', {}).get('host', '0.0.0.0')
+
+        # Get the config file path from the config manager
+        config_path = config_manager.get_litellm_config_path()
+        if not os.path.exists(config_path):
+            print(f"LiteLLM config file not found at {config_path}")
+            return None
 
         docker_cmd = [
             "docker", "run",
             "--name", "smart-agent-litellm-proxy",
             "-d",
             "-p", f"{server_port}:{server_port}",
-            "-v", f"{os.path.abspath('config')}/litellm_config.yaml:/app/config.yaml",
+            "-v", f"{config_path}:/app/config.yaml",
             "ghcr.io/berriai/litellm:litellm_stable_release_branch-stable",
             "--config", "/app/config.yaml",
             "--port", str(server_port),
@@ -816,7 +821,7 @@ def setup(quick, config, tools, litellm, all):
         print("\nNo models configured. Select a model to use (you can change this later):")
         
         for idx, model in enumerate(example_models):
-            print(f"{idx + 1}. {model}")
+            print(f"{idx+1}. {model}")
         print(f"{len(example_models) + 1}. Custom (enter your own)")
         
         print("\nYou'll need to edit config/litellm_config.yaml later to add your API keys.")

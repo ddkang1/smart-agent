@@ -478,6 +478,39 @@ class ConfigManager:
         # New method using get_llm_config()
         return self.get_llm_config().get("temperature", 1.0)
 
+    def get_litellm_config(self):
+        """
+        Get the full LiteLLM configuration.
+        
+        Returns:
+            Dictionary containing LiteLLM configuration
+        """
+        return self.litellm_config
+        
+    def get_litellm_config_path(self):
+        """
+        Get the path to the LiteLLM configuration file.
+        
+        Returns:
+            String path to the LiteLLM configuration file
+        """
+        litellm_config_path = self.config.get("llm", {}).get("config_file")
+        if not litellm_config_path:
+            # Default fallback path
+            return os.path.join(os.getcwd(), "config", "litellm_config.yaml")
+            
+        # Handle relative paths
+        if not os.path.isabs(litellm_config_path):
+            # If the main config path is known, make path relative to it
+            if self.config_path:
+                config_dir = os.path.dirname(self.config_path)
+                return os.path.join(config_dir, litellm_config_path)
+            else:
+                # Otherwise relative to current directory
+                return os.path.join(os.getcwd(), litellm_config_path)
+                
+        return litellm_config_path
+
 
 # For backward compatibility
 class ToolManager(ConfigManager):
