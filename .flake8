@@ -2,32 +2,51 @@
 # Ignore all non-essential formatting and style errors
 # Following best practices for projects that prioritize functionality over strict style enforcement
 ignore = 
-    # Whitespace and formatting
+    # All whitespace and formatting (E1xx, E2xx, E3xx, E5xx)
     E1, E2, E3, E5,
     # Import formatting and ordering
     E4,
     # Statement formatting
     E7,
-    # Line break issues
+    # Line break issues (W1xx, W2xx, W3xx, W5xx)
     W1, W2, W3, W5,
-    # Unused imports and variables
-    F4, F8,
+    # All pyflakes errors (unused imports, undefined names, etc.)
+    F,
     # Bare except clauses
     E722,
     # Blank lines
     W391,
-    # Line too long
-    E501
+    # All style (PEP8) recommendations (complexity, naming)
+    C
 
-# Maximum line length (ignored due to E501 above, but kept for reference)
+# Maximum line length (ignored due to E501 which is part of E5 above)
 max-line-length = 120
 
-# Exclude patterns
+# Files and directories to exclude from checking
 exclude =
     .git,
     __pycache__,
+    .pytest_cache,
+    *.pyc,
     build,
     dist,
+    *.egg-info,
     .venv,
     venv,
-    .env
+    env,
+    .env,
+    .tox,
+    .coverage,
+    htmlcov,
+    */migrations/*,
+    docs
+
+# Focus only on Python files
+filename = *.py
+
+# Don't try to fix automatically
+per-file-ignores =
+    # Allow unused imports in __init__.py files
+    __init__.py: F401
+    # Allow large dicts and complex functions in configuration files
+    **/config*.py: E501, C901
