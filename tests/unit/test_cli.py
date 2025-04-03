@@ -148,8 +148,17 @@ class TestCliCommands:
     @patch("os.path.exists", return_value=True)
     def test_launch_litellm_proxy(self, mock_exists, mock_popen):
         """Test launch_litellm_proxy function."""
-        # Create a mock config manager
+        # Create a mock config manager with required methods
         mock_config_manager = MagicMock()
+        
+        # Mock the litellm_config used for server settings
+        mock_config_manager.get_litellm_config.return_value = {
+            'server': {'port': 4000, 'host': '0.0.0.0'},
+            'model_list': [{'model_name': 'test-model'}]
+        }
+        
+        # Mock the config path
+        mock_config_manager.get_litellm_config_path.return_value = "/path/to/litellm_config.yaml"
 
         # Call the function
         process = launch_litellm_proxy(mock_config_manager)
