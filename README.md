@@ -79,7 +79,7 @@ For development or quick testing, run Smart Agent with tools managed automatical
 pip install smart-agent
 
 # Run the interactive setup wizard
-smart-agent setup  # Quick setup (default)
+smart-agent setup --quick  # Setup (default is all options)
 
 # Start chat (will automatically launch required tools)
 smart-agent chat
@@ -93,7 +93,7 @@ For development when you need tools to stay running between chat sessions:
 
 ```bash
 # Terminal 1: First setup your configuration 
-smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
+smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
 
 # Then launch tools and proxy services that keep running
 smart-agent start [--all|--tools|--proxy]  # Use --tools or --proxy to start specific services
@@ -114,7 +114,7 @@ Connect to remote tool services running elsewhere (e.g., in production):
 
 ```bash
 # Create configuration through the interactive wizard
-smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
+smart-agent setup --quick  # Setup (default is all options)
 
 # Edit config/tools.yaml to use remote URLs
 # Example: url: "https://production-server.example.com/tool-name/sse"
@@ -166,19 +166,15 @@ All tool management is done through the configuration files in the `config` dire
 
 No command-line flags are needed - simply edit your configuration files and run the commands.
 
-## Environment Configuration
+## Configuration
 
-Smart Agent uses a YAML-based configuration system. Configuration files are located in the `config` directory:
+Smart Agent uses YAML configuration files located in the `config` directory:
 
-1. **Main Configuration Files**:
-   - `config/config.yaml`: Main configuration file
-   - `config/tools.yaml`: Tool-specific configuration
-   - `config/litellm_config.yaml`: LiteLLM proxy configuration (when using proxy)
+- `config.yaml` - Main configuration file
+- `tools.yaml` - Tool configuration
+- `litellm_config.yaml` - LLM provider configuration
 
-2. **Command Line Arguments**:
-   - `--config`: Specify a custom configuration file path
-
-The interactive setup wizard (`smart-agent setup`) will create these files for you with sensible defaults.
+The configuration system has been refactored to eliminate duplication between files. The main config now references the LiteLLM config file for model definitions, creating a single source of truth.
 
 ### Configuration Structure
 
@@ -283,7 +279,7 @@ The Smart Agent CLI provides commands to help manage these configuration files:
 
 ```bash
 # Run the setup wizard to create configuration files
-smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
+smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
 ```
 
 The setup wizard will guide you through creating configuration files based on examples.
@@ -307,7 +303,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -e ".[dev]"
 
 # Run the setup wizard to create configuration files
-smart-agent setup [--quick|--config|--tools|--litellm|--all]  # Setup with various options
+smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
 ```
 
 ### Running Tests
