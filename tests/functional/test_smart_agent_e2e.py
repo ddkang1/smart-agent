@@ -49,7 +49,7 @@ class TestSmartAgentE2E:
         with patch("smart_agent.cli.ConfigManager", return_value=mock_config_manager):
             with patch("sys.exit"):
                 # Call start with all=True to start all services
-                start.callback(config=None, tools=True, proxy=True, all=True)
+                start.callback(config=None, tools=True, proxy=True, all=True, foreground=False)
 
         # Verify that launch_tools and launch_litellm_proxy were called
         assert mock_launch_tools.called
@@ -76,7 +76,7 @@ class TestSmartAgentE2E:
 
         # Test stopping services
         with patch("subprocess.run") as mock_run:
-            stop.callback(config=None, tools=True, proxy=True, all=True)
+            stop.callback(config=None, tools=True, proxy=True, all=True, background=False)
 
             # Verify subprocess.run was called to stop services
             assert mock_run.called
