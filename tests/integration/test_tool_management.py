@@ -35,8 +35,7 @@ class TestToolManagement:
                 "name": "Search Tool",
                 "url": "http://localhost:8001/sse",
                 "enabled": True,
-                "type": "stdio",
-                "launch_cmd": "npx",
+                "type": "uvx",
                 "repository": "search-tool",
             }
         }
@@ -48,8 +47,7 @@ class TestToolManagement:
                     "name": "Search Tool",
                     "url": "http://localhost:8001/sse",
                     "enabled": True,
-                    "type": "stdio",
-                    "launch_cmd": "npx",
+                    "type": "uvx",
                     "repository": "search-tool",
                 }
             }
@@ -66,8 +64,7 @@ class TestToolManagement:
             "name": "Search Tool",
             "url": "http://localhost:8001/sse",
             "enabled": True,
-            "type": "stdio",
-            "launch_cmd": "npx",
+            "type": "uvx",
             "repository": "search-tool",
         }
 

@@ -34,7 +34,7 @@ class TestCliCommands:
             # We need to patch sys.exit to prevent the test from exiting
             with patch("sys.exit"):
                 # We're testing the functionality, not the Click command itself
-                start.callback(config=None, tools=True, proxy=True, all=True)
+                start.callback(config=None, tools=True, proxy=True, all=True, foreground=False)
                 # Verify that launch_tools was called
                 assert mock_launch_tools.called
                 # Verify that launch_litellm_proxy was called
@@ -47,7 +47,7 @@ class TestCliCommands:
         from smart_agent.cli import stop
 
         # Call the internal functionality directly
-        stop.callback(config=None, tools=True, proxy=True, all=True)
+        stop.callback(config=None, tools=True, proxy=True, all=True, background=False)
 
         # Verify subprocess.run was called to stop services
         assert mock_run.called
@@ -99,8 +99,7 @@ class TestCliCommands:
                 "name": "Search Tool",
                 "url": "http://localhost:8001/sse",
                 "enabled": True,
-                "type": "stdio",
-                "launch_cmd": "npx",
+                "type": "uvx",
                 "repository": "search-tool",
             }
         }
@@ -112,8 +111,7 @@ class TestCliCommands:
                     "name": "Search Tool",
                     "url": "http://localhost:8001/sse",
                     "enabled": True,
-                    "type": "stdio",
-                    "launch_cmd": "npx",
+                    "type": "uvx",
                     "repository": "search-tool",
                 }
             }
@@ -127,8 +125,7 @@ class TestCliCommands:
             "name": "Search Tool",
             "url": "http://localhost:8001/sse",
             "enabled": True,
-            "type": "stdio",
-            "launch_cmd": "npx",
+            "type": "uvx",
             "repository": "search-tool",
         }
 
