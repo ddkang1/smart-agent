@@ -51,7 +51,35 @@ This architecture allows Smart Agent to:
 - Invoke tool actions via the `tools/call` endpoint
 - Maintain a consistent interface regardless of whether tools are local or remote
 
+## Prerequisites
+
+- Python 3.9+ 
+- Node.js and npm (required for running tools via supergateway)
+- Docker (for running LiteLLM proxy and container-based tools)
+- Git (for installation from source)
+- API keys for language models
+
 ## Installation
+
+### Setting Up a Virtual Environment (Recommended)
+
+It's best practice to use a virtual environment for Python projects:
+
+```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+
+# Ensure pip is up to date
+pip install --upgrade pip
+```
+
+### Installing Smart Agent
 
 ```bash
 # Install from PyPI
@@ -75,17 +103,28 @@ Smart Agent provides multiple ways to use the tool based on your needs:
 For development or quick testing, run Smart Agent with tools managed automatically:
 
 ```bash
-# Install Smart Agent
-pip install smart-agent
-
 # Run the interactive setup wizard
 smart-agent setup --quick  # Setup (default is all options)
 
-# Start chat (will automatically launch required tools)
+### After Quick Setup: Configure Your YAML Files
+
+Quick setup just copies example files to your config directory. You'll need to edit these files manually to configure your environment:
+
+1. **Edit `config/config.yaml`**:
+2. **Edit `config/tools.yaml`**:
+3. **Edit `config/litellm_config.yaml`**: 
+
+# Start required services (this must be done before chatting)
+smart-agent start# Start all required services (both tools and proxy)
+
+# Start chat session
 smart-agent chat
 ```
 
-The chat command will automatically launch required tools based on your configuration and clean them up when you exit.
+Services must be explicitly started before chatting. The Smart Agent follows a 3-step procedure:
+1. **Setup**: Configure your environment
+2. **Start**: Launch the required services  
+3. **Chat**: Begin your conversation with the agent
 
 ### Development Mode (Persistent Services)
 

@@ -59,6 +59,12 @@ class ConfigManager:
                         if not os.path.isabs(tools_config_path):
                             # Make path relative to the config file
                             config_dir = os.path.dirname(path)
+                            
+                            # Fix for config/tools.yaml style paths when config file is already in the config directory
+                            if tools_config_path.startswith("config/") and os.path.basename(config_dir) == "config":
+                                # Remove the "config/" prefix to avoid duplication
+                                tools_config_path = tools_config_path[7:]  # length of "config/"
+                                
                             tools_config_path = os.path.join(
                                 config_dir, tools_config_path
                             )
@@ -73,7 +79,15 @@ class ConfigManager:
                             print(
                                 f"Warning: Tools configuration file not found: {tools_config_path}"
                             )
-                            
+                            # Try an alternative path construction as fallback
+                            alternate_path = os.path.join(os.path.dirname(config_dir), tools_config_path)
+                            if os.path.exists(alternate_path):
+                                with open(alternate_path, "r") as f:
+                                    self.tools_config = yaml.safe_load(f).get("tools", {})
+                                print(
+                                    f"Loaded tools configuration from alternate path: {alternate_path}"
+                                )
+
                     # Load LiteLLM configuration if available
                     self.litellm_config = self._load_litellm_config()
 
@@ -97,7 +111,10 @@ class ConfigManager:
             
         # Handle relative paths
         if not os.path.isabs(litellm_config_path):
-            litellm_config_path = os.path.join(os.path.dirname(self.config_path), litellm_config_path)
+            if self.config_path:
+                litellm_config_path = os.path.join(os.path.dirname(self.config_path), litellm_config_path)
+            else:
+                litellm_config_path = os.path.join(os.getcwd(), litellm_config_path)
             
         if not os.path.exists(litellm_config_path):
             print(f"Warning: LiteLLM config file not found at {litellm_config_path}")
@@ -152,6 +169,16 @@ class ConfigManager:
     def get_all_tools(self) -> Dict:
         """
         Get configuration for all tools.
+
+        Returns:
+            Dictionary of all tool configurations
+        """
+        return self.tools_config
+
+    def get_tools_config(self) -> Dict:
+        """
+        Get configuration for all tools.
+        Alias for get_all_tools() for backward compatibility.
 
         Returns:
             Dictionary of all tool configurations
@@ -385,35 +412,55 @@ class ConfigManager:
             Dictionary with complete LLM configuration
         """
         # First check for legacy model configuration
-        if "model" in self.config and "name" in self.config.get("model", {}):
+        if "model" in self.config and "name" in self.config.get("model", {}) and "temperature" in self.config.get("model", {}):
             return {
                 "name": self.config.get("model", {}).get("name"),
                 "temperature": self.config.get("model", {}).get("temperature", 1.0),
-                "base_url": self.config.get("api", {}).get("base_url"),
-                "api_key": self.config.get("api", {}).get("api_key"),
             }
             
-        # Handle new style configuration referencing litellm_config.yaml
+        # Get LLM-specific configuration
         llm_config = self.config.get("llm", {})
-        preferred_model = llm_config.get("preferred_model")
         temperature = llm_config.get("temperature", 1.0)
+            
+        # Check for direct model specification (decoupled from litellm)
+        if "model" in llm_config:
+            return {
+                "name": llm_config.get("model"),
+                "temperature": temperature,
+            }
         
-        # Get all unique model names from the model_list
+        # Backward compatibility: check for litellm config
+        if not self.litellm_config:
+            return {
+                "name": None,
+                "temperature": temperature,
+            }
+            
+        # Get the preferred model from the config or use first model
+        preferred_model = llm_config.get("preferred_model")
+        
+        # Extract models from litellm config
         all_models = set()
-        for model in self.litellm_config.get("model_list", []):
-            if model.get("model_name"):
-                all_models.add(model.get("model_name"))
-        
-        # Find the model in litellm_config.yaml
-        model_config = {}
         model_variant_configs = []
         
-        # Find all variants of the preferred model
-        for model in self.litellm_config.get("model_list", []):
-            if model.get("model_name") == preferred_model:
-                model_variant_configs.append(model)
+        if "model_list" in self.litellm_config:
+            for model in self.litellm_config.get("model_list", []):
+                all_models.add(model.get("model_name"))
                 
-        # Pick the first variant as the default
+                # Check if this is the preferred model
+                if model.get("model_name") == preferred_model:
+                    model_variant_configs.append(model)
+                    
+        # Sort model variants by position in the list (priority)
+        if not model_variant_configs and all_models:
+            # Find all variants of the first model
+            first_model = list(all_models)[0]
+            for model in self.litellm_config.get("model_list", []):
+                if model.get("model_name") == first_model:
+                    model_variant_configs.append(model)
+            
+        # Choose first model variant
+        model_config = None
         if model_variant_configs:
             model_config = model_variant_configs[0]
                 
@@ -428,7 +475,7 @@ class ConfigManager:
         base_url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
             
         return {
-            "name": model_config.get("model_name"),
+            "name": model_config.get("model_name") if model_config else None,
             "temperature": temperature,
             "base_url": base_url,
             "api_key": "sk-any-key",  # Default for local LiteLLM proxy
