@@ -4,22 +4,20 @@
 tools:
   mcp_think_tool:
     enabled: true
-    repository: "git+https://github.com/ddkang1/mcp-think-tool"  # Replace with your repository
-    url: "http://localhost:8000/sse"
-    launch_cmd: "uvx"
-    
+    type: uvx
+    repository: git+https://github.com/ddkang1/mcp-think-tool
+    url: http://localhost:8000/sse
   ddg_mcp:
     enabled: true
-    repository: "git+https://github.com/ddkang1/ddg-mcp"  # Replace with your repository
-    url: "http://localhost:8001/sse"
-    launch_cmd: "uvx"
-    
+    type: uvx
+    repository: git+https://github.com/ddkang1/ddg-mcp
+    url: http://localhost:8001/sse
   python_repl:
     enabled: true
-    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"  # Replace with your Docker image
-    url: "http://localhost:8002/sse"
-    launch_cmd: "docker"
-    storage_path: "./storage/"
+    type: docker
+    image: ghcr.io/ddkang1/mcp-py-repl:latest
+    storage_path: /Users/dkang1/test/storage
+    url: http://localhost:8002/sse
     
 # Tool configuration schema
 # Each tool should have:

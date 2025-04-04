@@ -3,9 +3,11 @@
 
 # LLM API Configuration
 llm:
-  config_file: "config/litellm_config.yaml"  # Path to LiteLLM configuration
-  preferred_model: "claude-3-7-sonnet-20250219"  # Preferred model from litellm_config.yaml
+  model: "claude-3-7-sonnet-20250219"        # Model to use for generation
   temperature: 1.0                           # Temperature for generation (0.0-1.0)
+
+# Tools Configuration
+tools_config: "config/tools.yaml"            # Path to tools configuration file
 
 # Logging Configuration
 logging:
@@ -19,6 +21,3 @@ monitoring:
     host: "https://cloud.langfuse.com"       # Langfuse host URL
     public_key: ""                           # Your Langfuse public key
     secret_key: ""                           # Your Langfuse secret key
-
-# Include tools configuration
-tools_config: "config/tools.yaml"            # Path to tools configuration file
