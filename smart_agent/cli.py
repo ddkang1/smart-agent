@@ -720,7 +720,6 @@ def stop(config):
                             pass
         else:
             # Windows would need a different approach with tasklist
-            # We'll implement a simplified version for now
             print("Process tracking on Windows is limited. Some processes may remain.")
             
         # Match Python processes to their tool parents
@@ -1590,120 +1589,48 @@ cli.add_command(restart)
 
 
 @click.command()
-def status():
+@click.option(
+    "--config",
+    default=None,
+    help="Path to configuration file",
+)
+def status(config):
     """
-    Show the status of all Smart Agent services.
-    Displays which services are currently running, including tools and the LiteLLM proxy.
-    """
-    print("Smart Agent Status\n" + "=" * 20)
+    Show the status of all running services.
     
-    # Check running processes with pid file first
-    pid_file = os.path.join(os.path.expanduser("~"), ".smart_agent_pids")
+    Args:
+        config: Path to config file
+    """
+    print("Smart Agent Status")
+    print("====================")
+    
+    # Load the configuration to find all registered tools
+    if config:
+        config_manager = ConfigManager(config_file=config)
+    else:
+        config_manager = ConfigManager()
+    
+    # Find all running processes
     running_processes = []
-    
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file, "r") as f:
-                pids = [int(line.strip()) for line in f if line.strip()]
-            for pid in pids:
-                try:
-                    # Check if process exists by sending signal 0
-                    # This doesn't actually send a signal, just checks if process exists
-                    os.kill(pid, 0)  # This will raise an error if process doesn't exist
-                    # Get process command
-                    try:
-                        if os.name != 'nt':  # Unix-like systems
-                            cmd = subprocess.check_output(
-                                ["ps", "-p", str(pid), "-o", "command="],
-                                stderr=subprocess.PIPE,
-                                text=True
-                            ).strip()
-                        else:  # Windows
-                            cmd = subprocess.check_output(
-                                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV"],
-                                stderr=subprocess.PIPE,
-                                text=True
-                            ).split("\n")[1].split(",")[0].strip('"')
-                        
-                        running_processes.append((pid, cmd))
-                    except:
-                        running_processes.append((pid, "Unknown"))
-                except OSError:
-                    # Process doesn't exist
-                    pass
-        except Exception as e:
-            print(f"Error checking processes: {str(e)}")
-    
-    # Also check for supergateway processes (for detached processes)
     try:
-        if os.name != 'nt':  # Unix-like
-            # Check for supergateway processes
-            supergateway_cmd = subprocess.run(
-                ["pgrep", "-f", "supergateway"],
+        if platform.system() != "Windows":
+            # Use ps on Unix-like systems to get all processes
+            result = subprocess.run(
+                ["ps", "-ef"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                check=False,
             )
-            if supergateway_cmd.returncode == 0:
-                pids = [int(pid) for pid in supergateway_cmd.stdout.strip().split('\n') if pid.strip()]
-                
-                for pid in pids:
-                    # Skip if we already found this PID
-                    if any(pid == p[0] for p in running_processes):
-                        continue
-                        
-                    try:
-                        cmd = subprocess.check_output(
-                            ["ps", "-p", str(pid), "-o", "command="],
-                            stderr=subprocess.PIPE,
-                            text=True
-                        ).strip()
-                        running_processes.append((pid, cmd))
-                    except:
-                        pass
             
-            # Also check for uvx processes directly
-            uvx_cmd = subprocess.run(
-                ["pgrep", "-f", "uvx --from"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            if uvx_cmd.returncode == 0:
-                pids = [int(pid) for pid in uvx_cmd.stdout.strip().split('\n') if pid.strip()]
-                
-                for pid in pids:
-                    # Skip if we already found this PID
-                    if any(pid == p[0] for p in running_processes):
-                        continue
-                        
-                    try:
-                        cmd = subprocess.check_output(
-                            ["ps", "-p", str(pid), "-o", "command="],
-                            stderr=subprocess.PIPE,
-                            text=True
-                        ).strip()
-                        running_processes.append((pid, cmd))
-                    except:
-                        pass
-                        
-            # Also check using ps command to get a more complete picture
-            ps_cmd = subprocess.run(
-                ["ps", "aux"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            if ps_cmd.returncode == 0:
-                for line in ps_cmd.stdout.strip().split('\n'):
-                    if "uvx --from" in line or "supergateway" in line:
-                        parts = line.split()
+            for line in result.stdout.strip().split('\n'):
+                # Check for Python, UV, or supergateway processes
+                if "uvx" in line or "supergateway" in line:
+                    parts = line.split()
+                    if len(parts) > 1:
                         try:
                             pid = int(parts[1])
-                            # Skip if we already found this PID
-                            if pid in [p[0] for p in running_processes]:
-                                continue
-                            cmd = ' '.join(parts[10:])
+                            cmd = ' '.join(parts[8:])
                             running_processes.append((pid, cmd))
                         except (ValueError, IndexError):
                             pass
@@ -1728,8 +1655,39 @@ def status():
                             running_processes.append((pid, cmd))
                         except (ValueError, IndexError):
                             pass
+        else:
+            # Windows would need a different approach with tasklist
+            print("Process tracking on Windows is limited. Some processes may remain.")
     except Exception as e:
         print(f"Error checking for tool processes: {str(e)}")
+    
+    # Group processes by service
+    service_groups = {}
+    for pid, cmd in running_processes:
+        service_name = None
+        
+        # Try to extract service name from command
+        if "ddg-mcp" in cmd:
+            service_name = "ddg-mcp"
+        elif "mcp-think-tool" in cmd:
+            service_name = "mcp-think-tool"
+        elif "repl" in cmd and "python" in cmd:
+            service_name = "python-repl"
+        # Add more mappings as needed
+        
+        if service_name:
+            if service_name not in service_groups:
+                service_groups[service_name] = []
+            service_groups[service_name].append(pid)
+    
+    # Display running processes grouped by service
+    if service_groups:
+        print("\nRunning Tool Services:")
+        print("-----------------")
+        for service, pids in service_groups.items():
+            print(f"Tool: {service} (PID {pids[0]})")
+    else:
+        print("\nNo Smart Agent processes found.")
     
     # Check Docker containers
     docker_containers = []
@@ -1743,133 +1701,24 @@ def status():
             check=False,
         )
         
-        if result.stdout.strip():
-            docker_containers = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-            
-        # Also check for any specific tool containers that might not have the standard prefix
-        config_manager = ConfigManager()
-        all_tools = config_manager.get_all_tools()
-        docker_tools = []
-        
-        # Find all docker-type tools from configuration
-        for tool_id, tool_config in all_tools.items():
-            if tool_config.get("type") == "docker":
-                docker_tools.append(tool_id)
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    docker_containers.append(line.strip())
+                    
+        # Make sure we don't have duplicate containers with the same name prefix
+        unique_containers = {}
+        for container in docker_containers:
+            name = container.split(" - ")[0]
+            # Only keep the most recently started container for each name
+            if name not in unique_containers:
+                unique_containers[name] = container
                 
-        # Search for containers matching each docker tool
-        for tool_id in docker_tools:
-            # Try multiple container name patterns
-            container_patterns = [
-                f"name=smart-agent-{tool_id}",  # Exact prefixed match
-                f"name={tool_id}",              # Exact match of tool_id
-                f"name=supergateway-{tool_id}", # Possible supergateway prefix
-                f"name=*{tool_id}*"             # Contains tool_id anywhere in name
-            ]
-            
-            for pattern in container_patterns:
-                tool_result = subprocess.run(
-                    ["docker", "ps", "--filter", pattern, "--format", "{{.Names}} - {{.Status}}"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
-                
-                if tool_result.stdout.strip():
-                    for line in tool_result.stdout.split('\n'):
-                        if line.strip() and line.strip() not in docker_containers:
-                            docker_containers.append(line.strip())
+        docker_containers = list(unique_containers.values())
     except Exception as e:
         print(f"Error checking Docker containers: {e}")
     
-    # Group processes by service
-    service_groups = {}
-    for pid, cmd in running_processes:
-        # Extract service name from command
-        service_name = "Unknown"
-        
-        # Try to extract tool name from command
-        if "uvx --from" in cmd:
-            # Extract repository or tool name
-            match = re.search(r"uvx --from (\S+) (\S+)", cmd)
-            if match:
-                repo = match.group(1)
-                tool_name = match.group(2)
-                if tool_name:
-                    service_name = f"Tool: {tool_name}"
-                elif repo:
-                    # Extract tool name from repository
-                    repo_parts = repo.split('/')
-                    if len(repo_parts) > 0:
-                        tool_name = repo_parts[-1]
-                        service_name = f"Tool: {tool_name}"
-        elif "supergateway" in cmd:
-            # For supergateway processes, try to extract tool info
-            if "--stdio" in cmd:
-                parts = cmd.split("--stdio")
-                if len(parts) > 1:
-                    tool_cmd = parts[1].strip()
-                    if "uvx" in tool_cmd:
-                        # Extract UVX tool name
-                        match = re.search(r"uvx --from .+ ([\w-]+)", tool_cmd)
-                        if match:
-                            service_name = f"Tool: {match.group(1)}"
-                    elif "docker" in tool_cmd:
-                        # Extract Docker image name
-                        match = re.search(r"docker run .+ ([\w\/\.\-\:]+)", tool_cmd)
-                        if match:
-                            image = match.group(1)
-                            # Extract tool name from image
-                            image_parts = image.split('/')
-                            if len(image_parts) > 0:
-                                tool_name = image_parts[-1].split(':')[0]
-                                service_name = f"Docker Tool: {tool_name}"
-        elif "docker run" in cmd:
-            # Extract Docker image name directly
-            match = re.search(r"docker run .+ ([\w\/\.\-\:]+)", cmd)
-            if match:
-                image = match.group(1)
-                # Extract tool name from image
-                image_parts = image.split('/')
-                if len(image_parts) > 0:
-                    tool_name = image_parts[-1].split(':')[0]
-                    service_name = f"Docker Tool: {tool_name}"
-        
-        # If we're running with ps aux, the column may be different
-        if service_name == "Unknown" and len(cmd.split()) > 3:
-            # Try extracting from ps aux format
-            for part in cmd.split():
-                if "uvx" in part or "supergateway" in part:
-                    # Already tried to extract using other methods
-                    pass
-                elif any(tool_id in part for tool_id in ["ddg_mcp", "mcp_think_tool", "python_repl"]):
-                    tool_id = next((tid for tid in ["ddg_mcp", "mcp_think_tool", "python_repl"] if tid in part), None)
-                    if tool_id:
-                        service_name = f"Tool: {tool_id}"
-                        break
-        
-        # Add to service groups
-        if service_name not in service_groups:
-            service_groups[service_name] = []
-        service_groups[service_name].append(pid)
-    
-    # Display results
-    if service_groups:
-        print("\nRunning Tool Services:")
-        print("-----------------")
-        for service_name, pids in service_groups.items():
-            if service_name == "Unknown" and len(pids) == 1:
-                print(f"Unknown Process (PID {pids[0]})")
-            elif service_name == "Unknown":
-                print(f"Unknown Processes ({len(pids)} instances): PIDs {', '.join(str(pid) for pid in pids)}")
-            else:
-                if len(pids) == 1:
-                    print(f"{service_name} (PID {pids[0]})")
-                else:
-                    print(f"{service_name} ({len(pids)} instances): PIDs {', '.join(str(pid) for pid in pids)}")
-    else:
-        print("\nNo Smart Agent processes found.")
-    
+    # Display Docker containers
     if docker_containers:
         print("\nRunning Docker Containers:")
         print("-------------------------")
@@ -1878,11 +1727,11 @@ def status():
     else:
         print("\nNo Smart Agent Docker containers found.")
     
-    # Check if any services are running
-    if not running_processes and not docker_containers:
-        print("\nStatus: No Smart Agent services are currently running.")
+    # Show summary
+    if service_groups or docker_containers:
+        print(f"\nStatus: Smart Agent is RUNNING with {len(service_groups)} processes and {len(docker_containers)} containers.")
     else:
-        print(f"\nStatus: Smart Agent is RUNNING with {len(running_processes)} processes and {len(docker_containers)} containers.")
+        print("\nStatus: No Smart Agent services are currently running.")
 
 
 cli.add_command(status)
@@ -1975,6 +1824,86 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
         return None
 
 
+def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int) -> subprocess.Popen:
+    """
+    Launch a Docker tool.
+    
+    Args:
+        tool_id: The tool ID
+        container_name: The container name
+        image: The Docker image
+        port: The port to use
+        
+    Returns:
+        The process object for the container
+    """
+    # Check if a container with this name already exists and remove it
+    try:
+        # Check if the container exists (both running and stopped containers)
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "-f", f"name={container_name}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        
+        if result.stdout.strip():
+            # Container exists, stop and remove it first
+            container_id = result.stdout.strip()
+            print(f"Removing existing Docker container: {container_name}")
+            
+            # Stop the container if it's running
+            subprocess.run(
+                ["docker", "stop", container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            
+            # Remove the container
+            subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+    except Exception as e:
+        print(f"Warning: Failed to clean up existing container {container_name}: {e}")
+    
+    # Set up port mapping and container name
+    container_args = [
+        "docker", "run", "-d",
+        "--name", container_name,
+        "-p", f"{port}:8080",
+    ]
+    
+    # Add any needed environment variables
+    # container_args.extend(["-e", f"KEY=VALUE"])
+    
+    # Add the image name
+    container_args.append(image)
+    
+    # Launch the container
+    process = subprocess.Popen(
+        container_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    
+    # Wait a moment for the container to start
+    time.sleep(2)
+    
+    print(f"Launching Docker container via supergateway: {tool_id}")
+    
+    # Use supergateway to run the container
+    supergateway_url = f"http://localhost:{port}/sse"
+    print(f"{tool_id} available at {supergateway_url}")
+    
+    return process
+
+
 def main():
     """Main entry point for the CLI."""
     cli()
@@ -2059,7 +1988,8 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                     parts = line.split()
                     if len(parts) > 1:
                         try:
-                            pids.append(int(parts[1]))  # PID is usually the second field
+                            pid = int(parts[1])
+                            pids.append(pid)
                         except ValueError:
                             continue
                             
@@ -2082,10 +2012,30 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                             pids.append(pid)
                         except (ValueError, IndexError):
                             pass
+                        
+            # Also check using ps command to get a more complete picture
+            ps_cmd = subprocess.run(
+                ["ps", "aux"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if ps_cmd.returncode == 0:
+                for line in ps_cmd.stdout.strip().split('\n'):
+                    if tool_id.replace("_", "-") in line and ("uvx --from" in line or "supergateway" in line or "Python" in line):
+                        parts = line.split()
+                        try:
+                            pid = int(parts[1])
+                            # Skip if we already found this PID
+                            if pid in pids:
+                                continue
+                            pids.append(pid)
+                        except (ValueError, IndexError):
+                            pass
         else:
-            # Use tasklist on Windows
+            # Use tasklist and findstr on Windows
             result = subprocess.run(
-                ["tasklist", "/FO", "CSV"],
+                ["tasklist", "/FI", "IMAGENAME eq node.exe", "/FO", "CSV"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
