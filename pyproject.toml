@@ -25,7 +25,8 @@ dependencies = [
     "python-dotenv",
     "pyyaml>=6.0",
     "uv",
-    "openai-agents"
+    "openai-agents",
+    "rich",
 ]
 
 [project.optional-dependencies]
