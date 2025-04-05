@@ -27,6 +27,7 @@ import platform
 from rich.console import Console
 from rich.markdown import Markdown
 
+from . import __version__
 from .tool_manager import ConfigManager
 from .agent import SmartAgent
 
@@ -237,7 +238,7 @@ def chat_loop(config_manager: ConfigManager):
     print("\nChat session ended")
 
 
-def chat(config_manager: ConfigManager):
+def start_chat(config_manager: ConfigManager):
     """
     Start a chat session with Smart Agent.
 
@@ -261,18 +262,18 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
     processes = []
     tools_config = config_manager.get_tools_config()
     print("Launching tool services...")
-    
+
     # Check if tools are present
     if not tools_config:
         print("No tool configurations found.")
         return processes
-    
+
     # First, clean up any existing tool processes to prevent duplicates
     print("Checking for existing tool processes...")
     cleaned = cleanup_existing_tool_processes()
     if cleaned > 0:
         print(f"Cleaned up {cleaned} existing tool processes.")
-    
+
     # Launch each enabled tool
     for tool_id, tool_config in tools_config.items():
         if tool_config.get("enabled", False):
@@ -281,7 +282,7 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
             if is_running:
                 print(f"Tool {tool_id} is already running. Skipping.")
                 continue
-            
+
             # Get URL and extract port
             url = tool_config.get("url")
             port = None
@@ -297,30 +298,30 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                 # Auto-assign a port starting from 8000
                 # Find a free port to avoid conflicts
                 port = find_free_port(8000)
-                
+
                 # Update the URL with the new port
                 url_parts = urllib.parse.urlparse(url)
                 netloc_parts = url_parts.netloc.split(':')
                 netloc = f"{netloc_parts[0]}:{port}"
                 url_parts = url_parts._replace(netloc=netloc)
                 url = urllib.parse.urlunparse(url_parts)
-                
+
                 # Update the tool config with the new URL
                 tool_config["url"] = url
 
             # Launch based on tool type
             tool_type = tool_config.get("type", "").lower()
-            
+
             if tool_type == "uvx":
                 print(f"Launching UVX tool: {tool_id}")
                 try:
                     # For UVX tools, we need to convert underscores to hyphens
                     # in the executable name (e.g., ddg_mcp -> ddg-mcp)
                     executable_name = tool_id.replace("_", "-")
-                    
+
                     # Get the repository
                     repo = tool_config.get("repository", "")
-                    
+
                     # Construct the launch command
                     tool_cmd = [
                         "npx",
@@ -331,18 +332,18 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                         "--stdio",
                         f"uvx --from {repo} {executable_name}"
                     ]
-                    
+
                     # Initialize environment variables
                     env = os.environ.copy()
-                    
+
                     # Get the tool environment variables prefix
                     # E.g., DDGMCP_ for ddg_mcp
                     env_prefix = config_manager.get_env_prefix(tool_id)
-                    
+
                     # Set the URL environment variable
                     # E.g., DDGMCP_URL for ddg_mcp
                     env[f"{env_prefix}URL"] = url
-                    
+
                     # Launch the process with nohup to keep it running after parent exits
                     # This approach works better for background mode
                     if os.name != 'nt':  # Not on Windows
@@ -364,18 +365,18 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             text=True,
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                         )
-                    
+
                     # Save the PID immediately for better tracking
                     if process and process.pid:
                         pid_file = os.path.join(os.path.expanduser("~"), f".smart_agent_{tool_id}_pid")
                         with open(pid_file, "w") as f:
                             f.write(str(process.pid))
-                    
+
                     processes.append(process)
                     print(f"{tool_id} available at {url}")
                 except Exception as e:
                     print(f"Failed to launch UVX tool {tool_id}: {str(e)}")
-                    
+
             elif tool_type == "docker":
                 print(f"Launching Docker tool: {tool_id}")
                 try:
@@ -384,11 +385,11 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     if not container_image:
                         print(f"No container image specified for {tool_id}")
                         continue
-                    
+
                     # Prepare Docker run command
                     # Use a standardized container name for easier management
                     container_name = f"smart-agent-{tool_id}"
-                    
+
                     # Check if container already exists and is running
                     try:
                         result = subprocess.run(
@@ -402,7 +403,7 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             # Container exists and is running
                             print(f"Docker container {container_name} is already running.")
                             continue
-                        
+
                         # Check if container exists but is not running
                         result = subprocess.run(
                             ["docker", "ps", "-aq", "-f", f"name={container_name}"],
@@ -422,10 +423,10 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             print(f"Removed existing Docker container {container_name}")
                     except Exception as e:
                         print(f"Error checking container status: {str(e)}")
-                    
+
                     # Start the SSE server via supergateway using stdio
                     print(f"Launching Docker container via supergateway: {tool_id}")
-                    
+
                     # Build the Docker run command
                     docker_cmd = [
                         "docker",
@@ -434,7 +435,7 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                         "-d",  # Run in detached mode
                         container_image
                     ]
-                    
+
                     # Launch the Docker container process
                     container_proc = subprocess.Popen(
                         docker_cmd,
@@ -443,10 +444,10 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                         text=True,
                     )
                     container_out, container_err = container_proc.communicate()
-                    
+
                     if container_proc.returncode != 0:
                         print(f"Warning: Docker container {container_name} may have exited: {container_err}")
-                    
+
                     # Convert Docker container output to SSE using supergateway
                     gateway_cmd = [
                         "npx",
@@ -457,10 +458,10 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                         "--stdio",
                         f"docker logs -f {container_name}"
                     ]
-                    
+
                     # Initialize environment variables
                     env = os.environ.copy()
-                    
+
                     # Launch the gateway process
                     if os.name != 'nt':  # Not on Windows
                         process = subprocess.Popen(
@@ -481,18 +482,18 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             text=True,
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                         )
-                    
+
                     # Save the PID immediately for better tracking
                     if process and process.pid:
                         pid_file = os.path.join(os.path.expanduser("~"), f".smart_agent_{tool_id}_pid")
                         with open(pid_file, "w") as f:
                             f.write(str(process.pid))
-                    
+
                     processes.append(process)
                     print(f"{tool_id} available at {url}")
                 except Exception as e:
                     print(f"Failed to launch Docker tool {tool_id}: {str(e)}")
-    
+
     # If we found some tools but none were actually started, check what's happening
     if tools_config and not processes:
         already_running = []
@@ -501,14 +502,14 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                 is_running, _ = is_tool_running(tool_id)
                 if is_running:
                     already_running.append(tool_id)
-        
+
         if already_running:
             print(f"\nAll enabled tools are already running: {', '.join(already_running)}")
         else:
             print("\nNo tools were started. Check configuration.")
     elif processes:
         print("\nAll enabled tools are now running.")
-        
+
     return processes
 
 
@@ -536,7 +537,7 @@ def start(config, tools, proxy, all, foreground):
     # Start processes
     tool_processes = []
     proxy_process = None
-    
+
     # If --all is specified, enable both tools and proxy
     if all:
         tools = True
@@ -546,7 +547,7 @@ def start(config, tools, proxy, all, foreground):
     if not tools and not proxy:
         tools = True
         proxy = True
-    
+
     try:
         print("\033[2J\033[H", end="")  # Clear screen
         if config:
@@ -566,7 +567,7 @@ def start(config, tools, proxy, all, foreground):
         if proxy:
             base_url = config_manager.get_config("api", "base_url") or "http://localhost:4000"
             api_port = 4000
-            
+
             try:
                 from urllib.parse import urlparse
                 parsed_url = urlparse(base_url)
@@ -574,7 +575,7 @@ def start(config, tools, proxy, all, foreground):
                     api_port = parsed_url.port
             except Exception:
                 pass  # Use default port
-                
+
             if base_url is None or "localhost" in base_url or "127.0.0.1" in base_url:
                 # Use Docker to run LiteLLM proxy
                 proxy_process = launch_litellm_proxy(config_manager)
@@ -616,7 +617,7 @@ def start(config, tools, proxy, all, foreground):
                             f.write(f"{proc.pid}\n")
                 if proxy_process and proxy_process.pid:
                     f.write(f"{proxy_process.pid}\n")
-                
+
             print("\nServices are running in the background.")
             print(f"Process IDs saved to {pid_file}")
             print("Use 'smart-agent stop' to terminate the services.")
@@ -641,27 +642,27 @@ def start(config, tools, proxy, all, foreground):
 def stop(config):
     """
     Stop all running services.
-    
+
     Args:
         config: Path to config file
     """
     print("Stopping tool services...")
-    
+
     # Load the configuration to find all registered tools
     if config:
         config_manager = ConfigManager(config_file=config)
     else:
         config_manager = ConfigManager()
-    
+
     all_tools = []
     tools_config = config_manager.get_tools_config()
     if tools_config:
         all_tools = list(tools_config.keys())
-    
+
     # First, find all tool-specific processes
     tool_processes = {}
     python_processes = []
-    
+
     try:
         if platform.system() != "Windows":
             # Use ps on Unix-like systems to get all processes
@@ -672,7 +673,7 @@ def stop(config):
                 text=True,
                 check=False,
             )
-            
+
             for line in result.stdout.strip().split('\n'):
                 # Check for UV tool processes
                 for tool_id in all_tools:
@@ -688,7 +689,7 @@ def stop(config):
                                 tool_processes[tool_id].append((pid, ppid, "UV"))
                             except (ValueError, IndexError):
                                 pass
-                
+
                 # Check for Python processes related to our tools
                 if "Python" in line:
                     for tool_id in all_tools:
@@ -702,7 +703,7 @@ def stop(config):
                                     python_processes.append((pid, ppid, tool_id))
                                 except (ValueError, IndexError):
                                     pass
-                
+
                 # Also check for supergateway processes
                 if "supergateway" in line:
                     parts = line.split()
@@ -721,7 +722,7 @@ def stop(config):
         else:
             # Windows would need a different approach with tasklist
             print("Process tracking on Windows is limited. Some processes may remain.")
-            
+
         # Match Python processes to their tool parents
         for pid, ppid, tool_id in python_processes:
             for t_id, processes in tool_processes.items():
@@ -730,7 +731,7 @@ def stop(config):
                         if t_id not in tool_processes:
                             tool_processes[t_id] = []
                         tool_processes[t_id].append((pid, ppid, "Python"))
-    
+
         # Now terminate all found processes by tool
         terminated_count = 0
         for tool_id, processes in tool_processes.items():
@@ -740,8 +741,8 @@ def stop(config):
                     try:
                         if os.name == 'nt':  # Windows
                             subprocess.run(
-                                ["taskkill", "/F", "/PID", str(pid)], 
-                                stdout=subprocess.PIPE, 
+                                ["taskkill", "/F", "/PID", str(pid)],
+                                stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 check=False
                             )
@@ -757,17 +758,17 @@ def stop(config):
                             except OSError:
                                 # Process already gone, good
                                 pass
-                        
+
                         print(f"  Stopped {proc_type} process with PID {pid}")
                         terminated_count += 1
                     except (ProcessLookupError, OSError) as e:
                         print(f"  Process {pid} not found: {e}")
     except Exception as e:
         print(f"Error finding and stopping tool processes: {e}")
-    
+
     # Get the main PID file path
     pid_file = os.path.join(os.path.expanduser("~"), ".smart_agent_pids")
-    
+
     # Find and collect all tool-specific PID files
     tool_pid_files = {}
     home_dir = os.path.expanduser("~")
@@ -775,28 +776,28 @@ def stop(config):
         if filename.startswith(".smart_agent_") and filename.endswith("_pid"):
             tool_id = filename.replace(".smart_agent_", "").replace("_pid", "")
             tool_pid_files[tool_id] = os.path.join(home_dir, filename)
-    
+
     # Process running tools using tool-specific PID files
     if tool_pid_files:
         for tool_id, pid_file_path in tool_pid_files.items():
             try:
                 with open(pid_file_path, "r") as f:
                     pid = int(f.read().strip())
-                
+
                 try:
                     # Try to terminate the process
                     if os.name == 'nt':  # Windows
                         subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)], 
-                            stdout=subprocess.PIPE, 
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             check=False
                         )
                     else:  # Unix-like
                         os.kill(pid, signal.SIGTERM)
-                    
+
                     print(f"Stopped {tool_id} process with PID {pid}")
-                    
+
                     # Remove the PID file
                     os.remove(pid_file_path)
                 except (ProcessLookupError, OSError):
@@ -805,7 +806,7 @@ def stop(config):
                     pass
             except Exception as e:
                 print(f"Error stopping {tool_id}: {e}")
-    
+
     # Check if the main PID file exists
     if os.path.exists(pid_file):
         # Read the PIDs from the file
@@ -813,7 +814,7 @@ def stop(config):
         try:
             with open(pid_file, "r") as f:
                 pids = [int(line.strip()) for line in f.readlines() if line.strip()]
-            
+
             # Terminate each process
             for pid in pids:
                 try:
@@ -821,8 +822,8 @@ def stop(config):
                     if os.name == 'nt':  # Windows
                         try:
                             subprocess.run(
-                                ["taskkill", "/F", "/PID", str(pid)], 
-                                stdout=subprocess.PIPE, 
+                                ["taskkill", "/F", "/PID", str(pid)],
+                                stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 check=False
                             )
@@ -835,16 +836,16 @@ def stop(config):
                             print(f"Stopped process with PID {pid}")
                         except (ProcessLookupError, OSError):
                             pass
-                        
+
                 except:
                     # Process may not exist anymore
                     pass
-            
+
             # Delete the PID file
             os.remove(pid_file)
         except Exception as e:
             print(f"Error reading PID file: {e}")
-    
+
     # Stop LiteLLM proxy service
     print("Stopping LiteLLM proxy service...")
     try:
@@ -858,7 +859,7 @@ def stop(config):
         )
         if result.returncode == 0:
             print("Stopped LiteLLM proxy Docker container")
-            
+
             # Also remove the container
             subprocess.run(
                 ["docker", "rm", "-f", "smart-agent-litellm-proxy"],
@@ -873,18 +874,18 @@ def stop(config):
                 try:
                     with open(litellm_pid_file, "r") as f:
                         pid = int(f.read().strip())
-                    
+
                     # Try to terminate the process
                     if os.name == 'nt':  # Windows
                         subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)], 
-                            stdout=subprocess.PIPE, 
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             check=False
                         )
                     else:  # Unix-like
                         os.kill(pid, signal.SIGTERM)
-                    
+
                     os.remove(litellm_pid_file)
                     print(f"Stopped LiteLLM proxy process with PID {pid}")
                 except Exception:
@@ -893,9 +894,9 @@ def stop(config):
                 print("No LiteLLM proxy process found.")
     except Exception as e:
         print(f"Error stopping LiteLLM proxy: {e}")
-    
+
     print("All requested services stopped.")
-    
+
     # Clean up Docker containers
     try:
         # List all running Docker containers with the smart-agent prefix
@@ -906,9 +907,9 @@ def stop(config):
             text=True,
             check=False,
         )
-        
+
         container_names = [name for name in result.stdout.strip().split('\n') if name]
-        
+
         if container_names:
             print(f"Stopping {len(container_names)} Docker containers...")
             for container in container_names:
@@ -928,13 +929,13 @@ def stop(config):
                     print(f"Stopped and removed Docker container: {container}")
                 except Exception as e:
                     print(f"Error stopping container {container}: {e}")
-            
+
             print("All Docker containers stopped and removed.")
         else:
             print("No Docker containers found.")
     except Exception as e:
         print(f"Error stopping Docker containers: {e}")
-    
+
     # Verify all processes are actually stopped
     print("Verifying all processes are stopped...")
     try:
@@ -964,15 +965,15 @@ def stop(config):
                         )
                         if verify.returncode == 0 and tool_name in verify.stdout:
                             remaining_processes.append((pid, tool_id))
-        
+
         if remaining_processes:
             print(f"Warning: {len(remaining_processes)} processes still running. Forcefully terminating...")
             for pid, tool_id in remaining_processes:
                 try:
                     if os.name == 'nt':  # Windows
                         subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)], 
-                            stdout=subprocess.PIPE, 
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             check=False
                         )
@@ -986,7 +987,7 @@ def stop(config):
             print("All processes successfully stopped.")
     except Exception as e:
         print(f"Error verifying process termination: {e}")
-    
+
     print("All services stopped successfully.")
 
 
@@ -995,12 +996,12 @@ def stop(config):
 def chat(config):
     """Start a chat session with Smart Agent."""
     config_manager = ConfigManager(config)
-    
+
     # Check if services need to be started
     print("Starting chat session. Make sure you've already run 'smart-agent start' to launch required services.")
-    
+
     # Start chat session
-    chat(config_manager)
+    start_chat(config_manager)
 
 
 @click.command()
@@ -1046,7 +1047,7 @@ def setup(quick, config, tools, litellm, all):
     config_example_path = "config/config.yaml.example"
     tools_example_path = "config/tools.yaml.example"
     litellm_example_path = "config/litellm_config.yaml.example"
-    
+
     # If not found in current directory, try to find them in the package installation
     if not os.path.exists(config_example_path) or not os.path.exists(tools_example_path):
         import importlib.resources as pkg_resources
@@ -1054,7 +1055,7 @@ def setup(quick, config, tools, litellm, all):
             # Try to get the package installation path
             from smart_agent import __path__ as package_path
             package_config_dir = os.path.join(package_path[0], "config")
-            
+
             # Update paths to use package installation
             if os.path.exists(package_config_dir):
                 if not os.path.exists(config_example_path) and os.path.exists(os.path.join(package_config_dir, "config.yaml.example")):
@@ -1154,10 +1155,10 @@ def setup(quick, config, tools, litellm, all):
         with open("config/litellm_config.yaml", "r") as f:
             litellm_data = yaml.safe_load(f)
             existing_models = [
-                model["model_name"] 
+                model["model_name"]
                 for model in litellm_data.get("model_list", [])
             ]
-    
+
     # Extract example models from the example file
     example_models = []
     if os.path.exists(litellm_example_path):
@@ -1171,7 +1172,7 @@ def setup(quick, config, tools, litellm, all):
                         example_models.append(model_name)
         except Exception as e:
             print(f"Warning: Error parsing litellm_config.yaml.example: {e}")
-    
+
     # If we have existing models, use those
     if existing_models:
         available_models = existing_models
@@ -1179,20 +1180,20 @@ def setup(quick, config, tools, litellm, all):
     elif not existing_models and example_models:
         # Present numbered options to the user
         print("\nNo models configured. Select a model to use (you can change this later):")
-        
+
         for idx, model in enumerate(example_models):
             print(f"{idx+1}. {model}")
         print(f"{len(example_models) + 1}. Custom (enter your own)")
-        
+
         print("\nYou'll need to edit config/litellm_config.yaml later to add your API keys.")
-        
+
         while True:
             selection = input("\nSelect model [1]: ").strip()
-            
+
             # Default to first option if nothing entered
             if not selection:
                 selection = "1"
-                
+
             # Check if selection is a valid number
             if selection.isdigit():
                 option = int(selection)
@@ -1204,7 +1205,7 @@ def setup(quick, config, tools, litellm, all):
                     if custom_model:
                         available_models = [custom_model]
                         break
-            
+
             print("Invalid selection. Please try again.")
     # Fallback if no models at all
     else:
@@ -1261,7 +1262,7 @@ def setup(quick, config, tools, litellm, all):
                 input("\nWould you like to add a new model? [y/N]: ").strip().lower()
                 == "y"
             )
-            
+
             while add_models:
                 # Show provider options
                 provider_options = [
@@ -1270,11 +1271,11 @@ def setup(quick, config, tools, litellm, all):
                     ("azure", "Azure OpenAI (requires API key, endpoint, and deployment)"),
                     ("bedrock", "AWS Bedrock (requires AWS credentials)"),
                 ]
-                
+
                 print("\nSelect API provider:")
                 for idx, (provider_id, provider_name) in enumerate(provider_options):
                     print(f"{idx+1}. {provider_name}")
-                
+
                 # Get provider selection
                 while True:
                     provider_selection = input("Provider [1]: ").strip() or "1"
@@ -1284,7 +1285,7 @@ def setup(quick, config, tools, litellm, all):
                             selected_provider = provider_options[option - 1][0]
                             break
                         print("Invalid selection. Please try again.")
-                
+
                 # Get model name
                 model_name = input(f"\nEnter model name (e.g., gpt-4o for OpenAI): ").strip()
                 if not model_name:
@@ -1292,53 +1293,53 @@ def setup(quick, config, tools, litellm, all):
                 else:
                     # Create model config based on provider
                     new_model = {"model_name": model_name, "litellm_params": {}}
-                    
+
                     if selected_provider == "openai":
                         new_model["litellm_params"]["model"] = f"openai/{model_name}"
                         api_key = input("Enter OpenAI API key (leave empty to set later): ").strip()
                         new_model["litellm_params"]["api_key"] = api_key or "api_key"
-                        
+
                     elif selected_provider == "anthropic":
                         new_model["litellm_params"]["model"] = f"anthropic/{model_name}"
                         api_key = input("Enter Anthropic API key (leave empty to set later): ").strip()
                         new_model["litellm_params"]["api_key"] = api_key or "api_key"
-                        
+
                     elif selected_provider == "azure":
                         deployment_name = input("Enter Azure deployment name (leave empty to use model name): ").strip() or model_name
                         new_model["litellm_params"]["model"] = f"azure/{deployment_name}"
-                        
+
                         api_base = input("Enter Azure endpoint URL (leave empty to set later): ").strip()
                         new_model["litellm_params"]["api_base"] = api_base or "api_base"
-                        
+
                         api_key = input("Enter Azure API key (leave empty to set later): ").strip()
                         new_model["litellm_params"]["api_key"] = api_key or "api_key"
-                        
+
                         api_version = input("Enter Azure API version (leave empty for default): ").strip()
                         if api_version:
                             new_model["litellm_params"]["api_version"] = api_version
-                        
+
                     elif selected_provider == "bedrock":
                         new_model["litellm_params"]["model"] = f"bedrock/{model_name}"
-                        
+
                         aws_access_key = input("Enter AWS access key ID (leave empty to set later): ").strip()
                         new_model["litellm_params"]["aws_access_key_id"] = aws_access_key or "aws_access_key_id"
-                        
+
                         aws_secret_key = input("Enter AWS secret access key (leave empty to set later): ").strip()
                         new_model["litellm_params"]["aws_secret_access_key"] = aws_secret_key or "aws_secret_access_key"
-                        
+
                         aws_region = input("Enter AWS region (leave empty to set later): ").strip()
                         new_model["litellm_params"]["aws_region_name"] = aws_region or "aws_region"
-                    
+
                     # Add the model to the config
                     if "model_list" not in litellm_config:
                         litellm_config["model_list"] = []
-                    
+
                     litellm_config["model_list"].append(new_model)
                     print(f"✓ Added {model_name} ({selected_provider}) to configuration")
-                
+
                 # Ask if user wants to add another model
                 add_models = input("\nAdd another model? [y/N]: ").strip().lower() == "y"
-            
+
             # Remove models option
             remove_models = (
                 input("\nRemove any models? [y/N]: ").strip().lower()
@@ -1371,13 +1372,13 @@ def setup(quick, config, tools, litellm, all):
         with open("config/litellm_config.yaml", "w") as f:
             yaml.dump(litellm_config, f, default_flow_style=False)
         print("✓ Updated config/litellm_config.yaml")
-        
+
         # Now we have litellm_config.yaml, continue with main config
 
     # Create config.yaml if needed
     if setup_all or config:
         print("\n===== MAIN CONFIGURATION =====")
-        
+
         # Load existing config or create new one
         if os.path.exists("config/config.yaml"):
             print("Found existing config.yaml, using as default...")
@@ -1388,7 +1389,7 @@ def setup(quick, config, tools, litellm, all):
                 config_data = yaml.safe_load(f)
                 print("Loaded default configuration from example file.")
         else:
-            # Start with minimal config 
+            # Start with minimal config
             config_data = {
                 "llm": {
                     "model": None,  # Will be set based on user selection
@@ -1408,21 +1409,21 @@ def setup(quick, config, tools, litellm, all):
                 },
                 "tools_config": "config/tools.yaml",
             }
-            
+
         # Select model
         print("\nSelect model:")
         for idx, model in enumerate(available_models):
             print(f"{idx + 1}. {model}")
-            
+
         default_idx = 0
-        
+
         # Check if there's already a model set
         current_model = config_data.get("llm", {}).get("model")
         if current_model and current_model in available_models:
             default_idx = available_models.index(current_model)
-            
+
         selected_idx = input(f"\nSelect model [default={default_idx+1}]: ").strip()
-        
+
         # Handle model selection
         if selected_idx and selected_idx.isdigit():
             selected_idx = int(selected_idx) - 1
@@ -1433,14 +1434,14 @@ def setup(quick, config, tools, litellm, all):
                 selected_model = available_models[default_idx]
         else:
             selected_model = available_models[default_idx]
-                
+
         print(f"✓ Using {selected_model} as model")
-        
+
         # Update config with the selected model
         if "llm" not in config_data:
             config_data["llm"] = {}
         config_data["llm"]["model"] = selected_model
-        
+
         # Write config
         with open("config/config.yaml", "w") as f:
             yaml.dump(config_data, f, default_flow_style=False)
@@ -1558,7 +1559,18 @@ def setup(quick, config, tools, litellm, all):
     print("  smart-agent start                # Start all services")
 
 
+def print_version(ctx, param, value):
+    """Print the version and exit."""
+    if not value or ctx.resilient_parsing:
+        return
+    print(f"Smart Agent version {__version__}")
+    ctx.exit()
+
+
 @click.group()
+@click.option('--version', is_flag=True, callback=print_version,
+              expose_value=False, is_eager=True,
+              help='Show the version and exit.')
 def cli():
     """Smart Agent CLI - AI agent with reasoning and tool use capabilities."""
     pass
@@ -1597,19 +1609,19 @@ cli.add_command(restart)
 def status(config):
     """
     Show the status of all running services.
-    
+
     Args:
         config: Path to config file
     """
     print("Smart Agent Status")
     print("====================")
-    
+
     # Load the configuration to find all registered tools
     if config:
         config_manager = ConfigManager(config_file=config)
     else:
         config_manager = ConfigManager()
-    
+
     # Find all running processes
     running_processes = []
     try:
@@ -1622,7 +1634,7 @@ def status(config):
                 text=True,
                 check=False,
             )
-            
+
             for line in result.stdout.strip().split('\n'):
                 # Check for Python, UV, or supergateway processes
                 if "uvx" in line or "supergateway" in line:
@@ -1634,7 +1646,7 @@ def status(config):
                             running_processes.append((pid, cmd))
                         except (ValueError, IndexError):
                             pass
-                        
+
             # Also check using ps command to get a more complete picture
             ps_cmd = subprocess.run(
                 ["ps", "aux"],
@@ -1660,12 +1672,12 @@ def status(config):
             print("Process tracking on Windows is limited. Some processes may remain.")
     except Exception as e:
         print(f"Error checking for tool processes: {str(e)}")
-    
+
     # Group processes by service
     service_groups = {}
     for pid, cmd in running_processes:
         service_name = None
-        
+
         # Try to extract service name from command
         if "ddg-mcp" in cmd:
             service_name = "ddg-mcp"
@@ -1674,12 +1686,12 @@ def status(config):
         elif "repl" in cmd and "python" in cmd:
             service_name = "python-repl"
         # Add more mappings as needed
-        
+
         if service_name:
             if service_name not in service_groups:
                 service_groups[service_name] = []
             service_groups[service_name].append(pid)
-    
+
     # Display running processes grouped by service
     if service_groups:
         print("\nRunning Tool Services:")
@@ -1688,7 +1700,7 @@ def status(config):
             print(f"Tool: {service} (PID {pids[0]})")
     else:
         print("\nNo Smart Agent processes found.")
-    
+
     # Check Docker containers
     docker_containers = []
     try:
@@ -1700,12 +1712,12 @@ def status(config):
             text=True,
             check=False,
         )
-        
+
         if result.returncode == 0 and result.stdout.strip():
             for line in result.stdout.strip().split('\n'):
                 if line.strip():
                     docker_containers.append(line.strip())
-                    
+
         # Make sure we don't have duplicate containers with the same name prefix
         unique_containers = {}
         for container in docker_containers:
@@ -1713,11 +1725,11 @@ def status(config):
             # Only keep the most recently started container for each name
             if name not in unique_containers:
                 unique_containers[name] = container
-                
+
         docker_containers = list(unique_containers.values())
     except Exception as e:
         print(f"Error checking Docker containers: {e}")
-    
+
     # Display Docker containers
     if docker_containers:
         print("\nRunning Docker Containers:")
@@ -1726,7 +1738,7 @@ def status(config):
             print(container)
     else:
         print("\nNo Smart Agent Docker containers found.")
-    
+
     # Show summary
     if service_groups or docker_containers:
         print(f"\nStatus: Smart Agent is RUNNING with {len(service_groups)} processes and {len(docker_containers)} containers.")
@@ -1759,24 +1771,24 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
             text=True,
             check=False,
         )
-        
+
         if result.stdout.strip():
             print(f"LiteLLM proxy container '{container_name}' is already running.")
             # Return an empty process to indicate success
             return subprocess.Popen(["echo", "Reusing existing container"], stdout=subprocess.PIPE)
     except Exception as e:
         print(f"Warning: Error checking for existing LiteLLM proxy container: {str(e)}")
-        
+
     # Get LiteLLM config path
     try:
         litellm_config_path = config_manager.get_litellm_config_path()
     except Exception as e:
         litellm_config_path = None
-        
+
     # Get API settings
     api_base_url = config_manager.get_config("api", "base_url") or "http://localhost:4000"
     api_port = 4000
-    
+
     try:
         from urllib.parse import urlparse
         parsed_url = urlparse(api_base_url)
@@ -1784,7 +1796,7 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
             api_port = parsed_url.port
     except Exception:
         pass  # Use default port
-        
+
     # Create command
     cmd = [
         "docker",
@@ -1795,7 +1807,7 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
         "--name",
         container_name,
     ]
-    
+
     # Add volume if we have a config file
     if litellm_config_path:
         litellm_config_dir = os.path.dirname(os.path.abspath(litellm_config_path))
@@ -1806,10 +1818,10 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
             "-e",
             f"CONFIG_FILE=/app/config/{litellm_config_filename}",
         ])
-        
+
     # Add image
     cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
-    
+
     # Run command
     try:
         process = subprocess.Popen(cmd)
@@ -1827,13 +1839,13 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
 def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int) -> subprocess.Popen:
     """
     Launch a Docker tool.
-    
+
     Args:
         tool_id: The tool ID
         container_name: The container name
         image: The Docker image
         port: The port to use
-        
+
     Returns:
         The process object for the container
     """
@@ -1847,12 +1859,12 @@ def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int)
             text=True,
             check=False,
         )
-        
+
         if result.stdout.strip():
             # Container exists, stop and remove it first
             container_id = result.stdout.strip()
             print(f"Removing existing Docker container: {container_name}")
-            
+
             # Stop the container if it's running
             subprocess.run(
                 ["docker", "stop", container_id],
@@ -1860,7 +1872,7 @@ def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int)
                 stderr=subprocess.PIPE,
                 check=False,
             )
-            
+
             # Remove the container
             subprocess.run(
                 ["docker", "rm", "-f", container_id],
@@ -1870,20 +1882,20 @@ def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int)
             )
     except Exception as e:
         print(f"Warning: Failed to clean up existing container {container_name}: {e}")
-    
+
     # Set up port mapping and container name
     container_args = [
         "docker", "run", "-d",
         "--name", container_name,
         "-p", f"{port}:8080",
     ]
-    
+
     # Add any needed environment variables
     # container_args.extend(["-e", f"KEY=VALUE"])
-    
+
     # Add the image name
     container_args.append(image)
-    
+
     # Launch the container
     process = subprocess.Popen(
         container_args,
@@ -1891,16 +1903,16 @@ def launch_docker_tool(tool_id: str, container_name: str, image: str, port: int)
         stderr=subprocess.PIPE,
         text=True,
     )
-    
+
     # Wait a moment for the container to start
     time.sleep(2)
-    
+
     print(f"Launching Docker container via supergateway: {tool_id}")
-    
+
     # Use supergateway to run the container
     supergateway_url = f"http://localhost:{port}/sse"
     print(f"{tool_id} available at {supergateway_url}")
-    
+
     return process
 
 
@@ -1916,10 +1928,10 @@ if __name__ == "__main__":
 def check_port_in_use(port: int) -> bool:
     """
     Check if a port is already in use.
-    
+
     Args:
         port: The port number to check
-        
+
     Returns:
         True if the port is in use, False otherwise
     """
@@ -1929,10 +1941,10 @@ def check_port_in_use(port: int) -> bool:
 def find_free_port(start_port: int = 8000) -> int:
     """
     Find a free port starting from start_port.
-    
+
     Args:
         start_port: The port to start searching from
-        
+
     Returns:
         A free port number
     """
@@ -1944,15 +1956,15 @@ def find_free_port(start_port: int = 8000) -> int:
 def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
     """
     Check if a tool is already running.
-    
+
     Args:
         tool_id: The tool ID to check
-        
+
     Returns:
         Tuple of (is_running, list_of_pids)
     """
     pids = []
-    
+
     # Check for Docker container
     container_name = f"smart-agent-{tool_id}"
     try:
@@ -1963,13 +1975,13 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
             text=True,
             check=False,
         )
-        
+
         if result.stdout.strip():
             # Container is running
             return True, pids
     except Exception:
         pass
-    
+
     # Check for processes with the tool name
     try:
         if platform.system() != "Windows":
@@ -1981,7 +1993,7 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                 text=True,
                 check=False,
             )
-            
+
             for line in result.stdout.strip().split('\n'):
                 # Look for the tool ID in the process command
                 if tool_id.replace("_", "-") in line and "supergateway" in line:
@@ -1992,7 +2004,7 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                             pids.append(pid)
                         except ValueError:
                             continue
-                            
+
             # Also check using ps command to get a more complete picture
             ps_cmd = subprocess.run(
                 ["ps", "aux"],
@@ -2012,7 +2024,7 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                             pids.append(pid)
                         except (ValueError, IndexError):
                             pass
-                        
+
             # Also check using ps command to get a more complete picture
             ps_cmd = subprocess.run(
                 ["ps", "aux"],
@@ -2041,7 +2053,7 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                 text=True,
                 check=False,
             )
-            
+
             for line in result.stdout.strip().split('\n')[1:]:  # Skip header
                 if tool_id.replace("_", "-") in line:
                     parts = line.split(',')
@@ -2049,7 +2061,7 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                         pids.append(int(parts[1].strip('"')))
                     except ValueError:
                         continue
-                        
+
             # Also use another approach to find processes by command line
             try:
                 find_cmd = subprocess.run(
@@ -2077,18 +2089,18 @@ def is_tool_running(tool_id: str) -> Tuple[bool, List[int]]:
                 pass
     except Exception:
         pass
-    
+
     return len(pids) > 0, pids
 
 def cleanup_existing_tool_processes() -> int:
     """
     Cleanup any existing tool processes that might be running.
-    
+
     Returns:
         Number of processes cleaned up
     """
     cleaned_count = 0
-    
+
     # Clean up Docker containers
     try:
         result = subprocess.run(
@@ -2098,11 +2110,11 @@ def cleanup_existing_tool_processes() -> int:
             text=True,
             check=False,
         )
-        
+
         container_names = []
         if result.stdout.strip():
             container_names = [name for name in result.stdout.strip().split('\n') if name]
-        
+
         if container_names:
             print(f"Found {len(container_names)} existing Docker containers.")
             for container_name in container_names:
@@ -2120,7 +2132,7 @@ def cleanup_existing_tool_processes() -> int:
                     pass
     except Exception:
         pass
-    
+
     # Clean up supergateway processes
     try:
         if platform.system() != "Windows":
@@ -2132,7 +2144,7 @@ def cleanup_existing_tool_processes() -> int:
                 text=True,
                 check=False,
             )
-            
+
             pids = []
             for line in result.stdout.strip().split('\n'):
                 if "supergateway" in line:
@@ -2142,7 +2154,7 @@ def cleanup_existing_tool_processes() -> int:
                             pids.append(int(parts[1]))  # PID is usually the second field
                         except ValueError:
                             continue
-            
+
             if pids:
                 for pid in pids:
                     try:
@@ -2159,7 +2171,7 @@ def cleanup_existing_tool_processes() -> int:
                 text=True,
                 check=False,
             )
-            
+
             pids = []
             for line in result.stdout.strip().split('\n')[1:]:  # Skip header
                 if "supergateway" in line:
@@ -2168,13 +2180,13 @@ def cleanup_existing_tool_processes() -> int:
                         pids.append(int(parts[1].strip('"')))
                     except ValueError:
                         continue
-            
+
             if pids:
                 for pid in pids:
                     try:
                         subprocess.run(
-                            ["taskkill", "/F", "/PID", str(pid)], 
-                            stdout=subprocess.PIPE, 
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             check=False
                         )
@@ -2183,5 +2195,5 @@ def cleanup_existing_tool_processes() -> int:
                         pass
     except Exception:
         pass
-    
+
     return cleaned_count
