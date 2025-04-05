@@ -214,20 +214,103 @@ def chat_loop(config_manager: ConfigManager):
         try:
             # Use the agent for streaming response
             async def run_agent():
-                history = [{"role": "user", "content": user_input}]
-                result = await smart_agent.process_message(history)
+                # Initialize or update the history
+                if not hasattr(run_agent, 'history'):
+                    # First time - create history with system prompt
+                    run_agent.history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
+                else:
+                    # Update the system prompt with current date/time
+                    run_agent.history[0] = {"role": "system", "content": PromptGenerator.create_system_prompt()}
 
-                # Define a callback to print chunks as they arrive
-                async def print_callback(event):
-                    if event.item.type == "message_output_item":
-                        role = event.item.raw_item.role
-                        if role == "assistant":
-                            text_message = ItemHelpers.text_message_output(event.item)
-                            print(text_message, end="", flush=True)
+                # Add the user message to history
+                run_agent.history.append({"role": "user", "content": user_input})
 
-                # Process the stream events
-                await SmartAgent.process_stream_events(result, callback=print_callback, agent=smart_agent.agent)
-                print()  # Add a newline at the end
+                # Process the message using the ask function pattern from research.py
+                async def ask(history):
+                    # Get the MCP server URLs
+                    mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
+
+                    # Create the OpenAI client
+                    client = AsyncOpenAI(
+                        base_url=base_url,
+                        api_key=api_key,
+                    )
+
+                    # Import required classes
+                    from agents.mcp import MCPServerSse
+                    from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+
+                    # Create MCP servers using the same pattern as research.py
+                    mcp_servers_objects = []
+                    for url in mcp_urls:
+                        mcp_servers_objects.append(MCPServerSse(params={"url": url}))
+
+                    # Connect to all MCP servers
+                    for server in mcp_servers_objects:
+                        await server.connect()
+
+                    try:
+                        # Create the agent directly like in research.py
+                        agent = Agent(
+                            name="Assistant",
+                            instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
+                            model=OpenAIChatCompletionsModel(
+                                model="sonnet",  # Use sonnet as in research.py
+                                openai_client=client,
+                            ),
+                            mcp_servers=mcp_servers_objects,
+                        )
+
+                        # Run the agent with the conversation history
+                        result = Runner.run_streamed(agent, history, max_turns=100)
+                        assistant_reply = ""
+                        is_thought = False
+
+                        # Process the stream events exactly like in research.py
+                        async for event in result.stream_events():
+                            if event.type == "raw_response_event":
+                                continue
+                            elif event.type == "agent_updated_stream_event":
+                                continue
+                            elif event.type == "run_item_stream_event":
+                                if event.item.type == "tool_call_item":
+                                    arguments_dict = json.loads(event.item.raw_item.arguments)
+                                    key, value = next(iter(arguments_dict.items()))
+                                    if key == "thought":
+                                        is_thought = True
+                                        print(f"\n[thought]:\n{value}", flush=True)
+                                        assistant_reply += "\n[thought]: " + value
+                                    else:
+                                        is_thought = False
+                                        print(f"\n[{key}]:\n{value}", flush=True)
+                                elif event.item.type == "tool_call_output_item":
+                                    if not is_thought:
+                                        try:
+                                            output_text = json.loads(event.item.output).get("text", "")
+                                            print(f"\n[Tool Output]:\n{output_text}", flush=True)
+                                        except json.JSONDecodeError:
+                                            print(f"\n[Tool Output]:\n{event.item.output}", flush=True)
+                                elif event.item.type == "message_output_item":
+                                    role = event.item.raw_item.role
+                                    text_message = ItemHelpers.text_message_output(event.item)
+                                    if role == "assistant":
+                                        print(f"\n[{role}]:\n{text_message}", flush=True)
+                                        assistant_reply += "\n[response]: " + text_message
+                                    else:
+                                        print(f"\n[{role}]:\n{text_message}", flush=True)
+
+                        return assistant_reply.strip()
+                    finally:
+                        # Clean up MCP servers
+                        for server in mcp_servers_objects:
+                            if hasattr(server, 'cleanup') and callable(server.cleanup):
+                                server.cleanup()
+
+                # Process the complete conversation history
+                assistant_response = await ask(run_agent.history)
+
+                # Append the assistant's response to maintain context
+                run_agent.history.append({"role": "assistant", "content": assistant_response})
 
             # Run the agent in an event loop
             import asyncio
@@ -330,23 +413,50 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
             if tool_type == "uvx":
                 print(f"Launching UVX tool: {tool_id}")
                 try:
-                    # For UVX tools, we need to convert underscores to hyphens
-                    # in the executable name (e.g., ddg_mcp -> ddg-mcp)
-                    executable_name = tool_id.replace("_", "-")
+                    # Get the executable name from the repository URL
+                    # The executable name should match what's used in the repository
+                    repo = tool_config.get("repository", "")
+
+                    # Extract the repository name from the URL
+                    # Example: git+https://github.com/ddkang1/mcp-think-tool -> mcp-think-tool
+                    if repo:
+                        # Extract the last part of the URL (after the last /)
+                        executable_name = repo.split("/")[-1]
+
+                        # Remove git+ prefix if present
+                        if executable_name.startswith("git+"):
+                            executable_name = executable_name[4:]
+
+                        # Remove .git suffix if present
+                        if executable_name.endswith(".git"):
+                            executable_name = executable_name[:-4]
+                    else:
+                        # Fallback to tool_id with hyphens if repository is not specified
+                        executable_name = tool_id.replace("_", "-")
+
+                    print(f"Using executable name: {executable_name}")
 
                     # Get the repository
                     repo = tool_config.get("repository", "")
 
-                    # Construct the launch command
+                    # Construct the launch command exactly as in the working examples
+                    # Get the hostname from the URL or use grai-dev.gilead.com
+                    parsed_url = urllib.parse.urlparse(url)
+                    hostname = parsed_url.hostname or "grai-dev.gilead.com"
+
+                    # Format the command exactly as in the examples
                     tool_cmd = [
-                        "npx",
-                        "-y",
-                        "supergateway",
-                        "--port",
-                        str(port),
-                        "--stdio",
-                        f"uvx --from {repo} {executable_name}"
+                        "npx", "-y", "supergateway",
+                        "--stdio", f"uvx --from {repo} {executable_name}",
+                        "--header", "X-Accel-Buffering: no",
+                        "--port", str(port),
+                        "--baseUrl", f"http://{hostname}:{port}",
+                        "--cors"
                     ]
+
+                    # Print the command for debugging
+                    cmd_str = " ".join(tool_cmd)
+                    print(f"Launching command: {cmd_str}")
 
                     # Initialize environment variables
                     env = os.environ.copy()
@@ -359,19 +469,38 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     # E.g., DDGMCP_URL for ddg_mcp
                     env[f"{env_prefix}URL"] = url
 
-                    # Launch the process with nohup to keep it running after parent exits
-                    # This approach works better for background mode
+                    # Launch the process in the background using the exact format that works
                     if os.name != 'nt':  # Not on Windows
-                        process = subprocess.Popen(
-                            ["nohup"] + tool_cmd,
-                            env=env,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            preexec_fn=os.setpgrp  # Creates a new process group, detaching from parent
-                        )
+                        # Format the command exactly like the working example
+                        # npx -y supergateway --stdio "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool" --header "X-Accel-Buffering: no" --port 8000 --baseUrl http://grai-dev.gilead.com:8000 --cors &
+
+                        # Combine the command parts
+                        cmd_parts = [
+                            "npx", "-y", "supergateway",
+                            "--stdio", f'"uvx --from {repo} {executable_name}"',
+                            "--header", '"X-Accel-Buffering: no"',
+                            "--port", str(port),
+                            "--baseUrl", f"http://{hostname}:{port}",
+                            "--cors",
+                            "&"  # Run in background
+                        ]
+
+                        # Create the command string
+                        cmd_str = " ".join(cmd_parts)
+                        print(f"Executing shell command: {cmd_str}")
+
+                        # Use os.system to run the command in the background
+                        os.system(cmd_str)
+
+                        # Create a dummy process object for tracking
+                        class DummyProcess:
+                            def __init__(self):
+                                self.pid = None
+
+                        process = DummyProcess()
                     else:
-                        # Windows doesn't have nohup or os.setpgrp
+                        # Windows doesn't have the same background process handling
+                        print("Warning: Windows support is limited. Process may not start correctly.")
                         process = subprocess.Popen(
                             tool_cmd,
                             env=env,
@@ -381,12 +510,8 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                         )
 
-                    # Save the PID immediately for better tracking
-                    if process and process.pid:
-                        pid_file = os.path.join(os.path.expanduser("~"), f".smart_agent_{tool_id}_pid")
-                        with open(pid_file, "w") as f:
-                            f.write(str(process.pid))
-
+                    # We can't track PIDs directly since we're using os.system with &
+                    # Just mark the tool as available
                     processes.append(process)
                     print(f"{tool_id} available at {url}")
                 except Exception as e:
@@ -442,53 +567,67 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     # Start the SSE server via supergateway using stdio
                     print(f"Launching Docker container via supergateway: {tool_id}")
 
-                    # Build the Docker run command
-                    docker_cmd = [
-                        "docker",
-                        "run",
-                        "--name", container_name,
-                        "-d",  # Run in detached mode
-                        container_image
-                    ]
+                    # Get the storage path for Docker volume mounting
+                    storage_path = tool_config.get("storage_path", "./data")
 
-                    # Launch the Docker container process
-                    container_proc = subprocess.Popen(
-                        docker_cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                    )
-                    container_out, container_err = container_proc.communicate()
+                    # Format the command exactly as in the examples
+                    # Example: docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest
+                    docker_run_cmd = f"docker run -i --rm --pull=always -v {storage_path}:/mnt/data/ {container_image}"
+                    print(f"Docker run command: {docker_run_cmd}")
 
-                    if container_proc.returncode != 0:
-                        print(f"Warning: Docker container {container_name} may have exited: {container_err}")
+                    # Get the hostname from the URL or use grai-dev.gilead.com
+                    parsed_url = urllib.parse.urlparse(url)
+                    hostname = parsed_url.hostname or "grai-dev.gilead.com"
 
-                    # Convert Docker container output to SSE using supergateway
+                    # Build the supergateway command exactly as in the examples
                     gateway_cmd = [
-                        "npx",
-                        "-y",
-                        "supergateway",
-                        "--port",
-                        str(port),
-                        "--stdio",
-                        f"docker logs -f {container_name}"
+                        "npx", "-y", "supergateway",
+                        "--stdio", docker_run_cmd,
+                        "--header", "X-Accel-Buffering: no",
+                        "--port", str(port),
+                        "--baseUrl", f"http://{hostname}:{port}",
+                        "--cors"
                     ]
+
+                    # Print the command for debugging
+                    cmd_str = " ".join(gateway_cmd)
+                    print(f"Launching command: {cmd_str}")
 
                     # Initialize environment variables
                     env = os.environ.copy()
 
-                    # Launch the gateway process
+                    # Launch the gateway process in the background using the exact format that works
                     if os.name != 'nt':  # Not on Windows
-                        process = subprocess.Popen(
-                            ["nohup"] + gateway_cmd,
-                            env=env,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            preexec_fn=os.setpgrp
-                        )
+                        # Format the command exactly like the working example
+                        # npx -y supergateway --stdio "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest" --header "X-Accel-Buffering: no" --port 8002 --baseUrl http://grai-dev.gilead.com:8002 --cors &
+
+                        # Combine the command parts
+                        cmd_parts = [
+                            "npx", "-y", "supergateway",
+                            "--stdio", f'"{docker_run_cmd}"',
+                            "--header", '"X-Accel-Buffering: no"',
+                            "--port", str(port),
+                            "--baseUrl", f"http://{hostname}:{port}",
+                            "--cors",
+                            "&"  # Run in background
+                        ]
+
+                        # Create the command string
+                        cmd_str = " ".join(cmd_parts)
+                        print(f"Executing shell command: {cmd_str}")
+
+                        # Use os.system to run the command in the background
+                        os.system(cmd_str)
+
+                        # Create a dummy process object for tracking
+                        class DummyProcess:
+                            def __init__(self):
+                                self.pid = None
+
+                        process = DummyProcess()
                     else:
-                        # Windows doesn't have nohup or os.setpgrp
+                        # Windows doesn't have the same background process handling
+                        print("Warning: Windows support is limited. Process may not start correctly.")
                         process = subprocess.Popen(
                             gateway_cmd,
                             env=env,
@@ -498,12 +637,8 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
                         )
 
-                    # Save the PID immediately for better tracking
-                    if process and process.pid:
-                        pid_file = os.path.join(os.path.expanduser("~"), f".smart_agent_{tool_id}_pid")
-                        with open(pid_file, "w") as f:
-                            f.write(str(process.pid))
-
+                    # We can't track PIDs directly since we're using os.system with &
+                    # Just mark the tool as available
                     processes.append(process)
                     print(f"{tool_id} available at {url}")
                 except Exception as e:
@@ -563,8 +698,20 @@ def start(config, tools, proxy, all, foreground):
         tools = True
         proxy = True
 
+    # Save terminal state
+    if os.name != 'nt':
+        try:
+            # Save terminal settings
+            os.system('stty -g > /tmp/smart_agent_stty_settings.txt')
+        except Exception:
+            pass
+
     try:
-        print("\033[2J\033[H", end="")  # Clear screen
+        # Use a more compatible way to clear the screen
+        if os.name == 'nt':
+            os.system('cls')
+        else:
+            os.system('clear')
         if config:
             config_manager = ConfigManager(config_file=config)
         else:
@@ -611,7 +758,21 @@ def start(config, tools, proxy, all, foreground):
                 all_processes = tool_processes or []
                 if proxy_process:
                     all_processes.append(proxy_process)
-                terminate_processes(all_processes)
+                # Terminate all processes
+                for process in all_processes:
+                    if process and process.pid:
+                        try:
+                            if os.name == 'nt':  # Windows
+                                subprocess.run(
+                                    ["taskkill", "/F", "/PID", str(process.pid)],
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    check=False
+                                )
+                            else:  # Unix-like
+                                os.kill(process.pid, signal.SIGTERM)
+                        except Exception as e:
+                            print(f"Error terminating process {process.pid}: {e}")
         else:
             # Running in background mode (default) - return immediately after starting services
             # Write process IDs to a file for potential cleanup later
@@ -627,6 +788,19 @@ def start(config, tools, proxy, all, foreground):
             print("\nServices are running in the background.")
             print(f"Process IDs saved to {pid_file}")
             print("Use 'smart-agent stop' to terminate the services.")
+
+            # Restore terminal state
+            if os.name != 'nt':
+                try:
+                    if os.path.exists('/tmp/smart_agent_stty_settings.txt'):
+                        with open('/tmp/smart_agent_stty_settings.txt', 'r') as f:
+                            stty_settings = f.read().strip()
+                            os.system(f'stty {stty_settings}')
+                        os.remove('/tmp/smart_agent_stty_settings.txt')
+                except Exception:
+                    # If restoring fails, use a generic reset
+                    os.system('stty sane')
+
             return
     except Exception as e:
         print(f"Error: {str(e)}")
@@ -636,7 +810,33 @@ def start(config, tools, proxy, all, foreground):
         all_processes = tool_processes or []
         if proxy_process:
             all_processes.append(proxy_process)
-        terminate_processes(all_processes)
+        # Terminate all processes
+        for process in all_processes:
+            if process and process.pid:
+                try:
+                    if os.name == 'nt':  # Windows
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", str(process.pid)],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False
+                        )
+                    else:  # Unix-like
+                        os.kill(process.pid, signal.SIGTERM)
+                except Exception as e:
+                    print(f"Error terminating process {process.pid}: {e}")
+
+        # Restore terminal state
+        if os.name != 'nt':
+            try:
+                if os.path.exists('/tmp/smart_agent_stty_settings.txt'):
+                    with open('/tmp/smart_agent_stty_settings.txt', 'r') as f:
+                        stty_settings = f.read().strip()
+                        os.system(f'stty {stty_settings}')
+                    os.remove('/tmp/smart_agent_stty_settings.txt')
+            except Exception:
+                # If restoring fails, use a generic reset
+                os.system('stty sane')
 
 
 @click.command()
@@ -653,6 +853,14 @@ def stop(config):
         config: Path to config file
     """
     print("Stopping tool services...")
+
+    # Save terminal state
+    if os.name != 'nt':
+        try:
+            # Save terminal settings
+            os.system('stty -g > /tmp/smart_agent_stty_settings.txt')
+        except Exception:
+            pass
 
     # Load the configuration to find all registered tools
     if config:
@@ -782,6 +990,76 @@ def stop(config):
         if filename.startswith(".smart_agent_") and filename.endswith("_pid"):
             tool_id = filename.replace(".smart_agent_", "").replace("_pid", "")
             tool_pid_files[tool_id] = os.path.join(home_dir, filename)
+
+    # Also look for supergateway processes running Docker commands
+    # This is needed for Docker tools that are run with --rm flag
+    try:
+        # Get a list of all running processes
+        if os.name == 'nt':  # Windows
+            # Windows implementation would go here
+            pass
+        else:  # Unix-like
+            # Get all processes with their command lines
+            result = subprocess.run(
+                ["ps", "-eo", "pid,command"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False
+            )
+
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if "supergateway" in line and "docker run" in line:
+                        # This is a Docker-based tool running through supergateway
+                        parts = line.strip().split()
+                        if len(parts) > 1:
+                            try:
+                                pid = int(parts[0])
+
+                                # Try to identify which tool this is
+                                cmd = line.strip()
+                                tool_name = "Docker tool"
+
+                                # Check if this matches any of our configured Docker tools
+                                for tool_id, tool_config in config_manager.get_tools_config().items():
+                                    if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                                        container_image = tool_config.get("container_image", "") or tool_config.get("image", "")
+                                        if container_image and container_image in cmd:
+                                            tool_name = tool_id
+                                            break
+
+                                        # Also check for the image name without registry
+                                        if container_image:
+                                            image_parts = container_image.split("/")
+                                            if len(image_parts) > 0:
+                                                image_name = image_parts[-1].split(":")[0]  # Get the name without the tag
+                                                if image_name in cmd:
+                                                    tool_name = tool_id
+                                                    break
+
+                                print(f"Found {tool_name} supergateway process with PID {pid}")
+
+                                # Kill the process
+                                os.kill(pid, signal.SIGTERM)
+                                print(f"Stopped {tool_name} supergateway process with PID {pid}")
+
+                                # Give it a moment to shut down
+                                time.sleep(0.5)
+
+                                # Check if it's still running and use SIGKILL if needed
+                                try:
+                                    os.kill(pid, 0)  # This will raise an error if process doesn't exist
+                                    # Process still exists, use SIGKILL
+                                    os.kill(pid, signal.SIGKILL)
+                                    print(f"Forcefully stopped {tool_name} supergateway process with PID {pid}")
+                                except OSError:
+                                    # Process already gone, good
+                                    pass
+                            except (ValueError, OSError) as e:
+                                print(f"Error stopping Docker supergateway process: {e}")
+    except Exception as e:
+        print(f"Error finding and stopping Docker supergateway processes: {e}")
 
     # Process running tools using tool-specific PID files
     if tool_pid_files:
@@ -939,6 +1217,78 @@ def stop(config):
             print("All Docker containers stopped and removed.")
         else:
             print("No Docker containers found.")
+
+        # Find and stop Docker containers launched by tools
+        print("Checking for tool-specific Docker containers...")
+        tool_containers_found = False
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if tool_config.get("type") == "docker":
+                container_image = tool_config.get("container_image") or tool_config.get("image")
+                if container_image:
+                    # Extract the image name without the tag
+                    image_name = container_image.split("/")[-1].split(":")[0]
+
+                    # Find containers using this image
+                    try:
+                        result = subprocess.run(
+                            ["docker", "ps", "--filter", f"ancestor={container_image}", "--format", "{{.ID}}"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                        )
+
+                        if result.returncode == 0 and result.stdout.strip():
+                            container_ids = result.stdout.strip().split('\n')
+                            for container_id in container_ids:
+                                if container_id.strip():
+                                    tool_containers_found = True
+                                    print(f"Stopping Docker container for {tool_id} (ID: {container_id})")
+                                    subprocess.run(
+                                        ["docker", "stop", container_id],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        check=False,
+                                    )
+                                    subprocess.run(
+                                        ["docker", "rm", "-f", container_id],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        check=False,
+                                    )
+
+                        # Also try to find containers by image name without registry
+                        result = subprocess.run(
+                            ["docker", "ps", "--filter", f"ancestor={image_name}", "--format", "{{.ID}}"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True,
+                            check=False,
+                        )
+
+                        if result.returncode == 0 and result.stdout.strip():
+                            container_ids = result.stdout.strip().split('\n')
+                            for container_id in container_ids:
+                                if container_id.strip():
+                                    tool_containers_found = True
+                                    print(f"Stopping Docker container for {tool_id} (ID: {container_id})")
+                                    subprocess.run(
+                                        ["docker", "stop", container_id],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        check=False,
+                                    )
+                                    subprocess.run(
+                                        ["docker", "rm", "-f", container_id],
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE,
+                                        check=False,
+                                    )
+                    except Exception as e:
+                        print(f"Error stopping Docker container for {tool_id}: {e}")
+
+        if not tool_containers_found:
+            print("No tool-specific Docker containers found.")
     except Exception as e:
         print(f"Error stopping Docker containers: {e}")
 
@@ -993,6 +1343,18 @@ def stop(config):
             print("All processes successfully stopped.")
     except Exception as e:
         print(f"Error verifying process termination: {e}")
+
+    # Restore terminal state
+    if os.name != 'nt':
+        try:
+            if os.path.exists('/tmp/smart_agent_stty_settings.txt'):
+                with open('/tmp/smart_agent_stty_settings.txt', 'r') as f:
+                    stty_settings = f.read().strip()
+                    os.system(f'stty {stty_settings}')
+                os.remove('/tmp/smart_agent_stty_settings.txt')
+        except Exception:
+            # If restoring fails, use a generic reset
+            os.system('stty sane')
 
     print("All services stopped successfully.")
 
@@ -1662,7 +2024,7 @@ def status(config):
             )
             if ps_cmd.returncode == 0:
                 for line in ps_cmd.stdout.strip().split('\n'):
-                    if "uvx --from" in line or "supergateway" in line:
+                    if "uvx --from" in line or "supergateway" in line or "docker run" in line:
                         parts = line.split()
                         try:
                             pid = int(parts[1])
@@ -1673,6 +2035,28 @@ def status(config):
                             running_processes.append((pid, cmd))
                         except (ValueError, IndexError):
                             pass
+
+            # Specifically look for supergateway processes running Docker commands
+            docker_cmd = subprocess.run(
+                ["ps", "-eo", "pid,command"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if docker_cmd.returncode == 0:
+                for line in docker_cmd.stdout.strip().split('\n'):
+                    if "supergateway" in line and "docker run" in line:
+                        parts = line.strip().split()
+                        if len(parts) > 1:
+                            try:
+                                pid = int(parts[0])
+                                # Skip if we already found this PID
+                                if pid in [p[0] for p in running_processes]:
+                                    continue
+                                cmd = line.strip()[len(str(pid)):].strip()
+                                running_processes.append((pid, cmd))
+                            except (ValueError, IndexError):
+                                pass
         else:
             # Windows would need a different approach with tasklist
             print("Process tracking on Windows is limited. Some processes may remain.")
@@ -1685,12 +2069,40 @@ def status(config):
         service_name = None
 
         # Try to extract service name from command
-        if "ddg-mcp" in cmd:
-            service_name = "ddg-mcp"
-        elif "mcp-think-tool" in cmd:
-            service_name = "mcp-think-tool"
-        elif "repl" in cmd and "python" in cmd:
-            service_name = "python-repl"
+        # First check for supergateway processes running Docker commands
+        if "supergateway" in cmd and "docker run" in cmd:
+            # This is a Docker-based tool running through supergateway
+            # Try to match with tool configurations
+            for tool_id, tool_config in config_manager.get_tools_config().items():
+                if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                    container_image = tool_config.get("container_image")
+                    if container_image:
+                        # Extract just the image name without the registry and tag
+                        image_parts = container_image.split("/")
+                        if len(image_parts) > 0:
+                            image_name = image_parts[-1].split(":")[0]  # Get the name without the tag
+                            if image_name in cmd:
+                                service_name = tool_id
+                                break
+        else:
+            # For non-Docker tools, try to match with tool configurations
+            for tool_id, tool_config in config_manager.get_tools_config().items():
+                if tool_config.get("enabled", False) and tool_config.get("type") == "uvx":
+                    # Get the repository URL
+                    repo = tool_config.get("repository", "")
+                    if repo:
+                        # Extract the tool name from the repository URL
+                        tool_name = repo.split("/")[-1]
+                        # Remove git+ prefix if present
+                        if tool_name.startswith("git+"):
+                            tool_name = tool_name[4:]
+                        # Remove .git suffix if present
+                        if tool_name.endswith(".git"):
+                            tool_name = tool_name[:-4]
+
+                        if tool_name in cmd:
+                            service_name = tool_id
+                            break
         # Add more mappings as needed
 
         if service_name:
@@ -1724,6 +2136,88 @@ def status(config):
                 if line.strip():
                     docker_containers.append(line.strip())
 
+        # Also look for tool-specific containers like mcp-py-repl
+        # Get the list of tool IDs from the configuration
+        tools_config = config_manager.get_tools_config()
+        for tool_id, tool_config in tools_config.items():
+            if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                # Get the container image
+                container_image = tool_config.get("container_image") or tool_config.get("image")
+                if container_image:
+                    # Extract the image name without the tag
+                    image_name = container_image.split("/")[-1].split(":")[0]
+
+                    # Look for containers using this image
+                    result = subprocess.run(
+                        ["docker", "ps", "--filter", f"ancestor={container_image}", "--format", "{{.ID}} - {{.Names}} - {{.Status}}"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+
+                    if result.returncode == 0 and result.stdout.strip():
+                        for line in result.stdout.strip().split('\n'):
+                            if line.strip():
+                                docker_containers.append(f"{tool_id} ({image_name}) - {line.strip()}")
+
+        # Also check for supergateway processes running Docker commands
+        # This is needed for Docker tools that are run with --rm flag
+        for pid, cmd in running_processes:
+            if "supergateway" in cmd and "docker run" in cmd:
+                # This is a Docker-based tool running through supergateway
+                # Try to match with any Docker-based tool
+                matched = False
+                for tool_id, tool_config in tools_config.items():
+                    if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                        container_image = tool_config.get("container_image") or tool_config.get("image")
+                        if container_image:
+                            # Check for exact image match
+                            if container_image in cmd:
+                                # Extract the image name without the tag
+                                image_name = container_image.split("/")[-1].split(":")[0]
+                                docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
+                                matched = True
+                                break
+
+                            # Also check for just the image name without registry
+                            image_name = container_image.split("/")[-1].split(":")[0]
+                            if image_name in cmd:
+                                docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
+                                matched = True
+                                break
+
+                # If no match was found but it's clearly a Docker command, add a generic entry
+                if not matched and "docker run" in cmd:
+                    # Try to extract the image name from the command
+                    cmd_parts = cmd.split()
+                    for i, part in enumerate(cmd_parts):
+                        if part == "ghcr.io" and i+1 < len(cmd_parts):
+                            image_path = cmd_parts[i] + "/" + cmd_parts[i+1]
+                            image_name = image_path.split("/")[-1].split(":")[0]
+                            # Look for a matching tool ID
+                            for tool_id, tool_config in tools_config.items():
+                                if tool_config.get("enabled", False) and tool_config.get("type") == "docker" and image_name in tool_config.get("container_image", ""):
+                                    docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
+                                    matched = True
+                                    break
+                            if matched:
+                                break
+
+                # Check for any Docker container images that might be in the command
+                # but weren't matched by the tool_id loop above
+                for tool_id, tool_config in tools_config.items():
+                    if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                        container_image = tool_config.get("container_image", "")
+                        # Extract just the image name without the registry and tag
+                        if container_image:
+                            image_parts = container_image.split("/")
+                            if len(image_parts) > 0:
+                                image_name = image_parts[-1].split(":")[0]  # Get the name without the tag
+                                if image_name in cmd and not any(tool_id in container for container in docker_containers):
+                                    docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
+                                    break
+
         # Make sure we don't have duplicate containers with the same name prefix
         unique_containers = {}
         for container in docker_containers:
@@ -1745,9 +2239,66 @@ def status(config):
     else:
         print("\nNo Smart Agent Docker containers found.")
 
+    # Count tool-specific Docker containers
+    tool_containers = 0
+    litellm_containers = 0
+    docker_pids = set()  # Track PIDs that are already counted as Docker containers
+
+    for container in docker_containers:
+        if "smart-agent-litellm-proxy" in container:
+            litellm_containers += 1
+        else:
+            # Extract PID if this is a supergateway process
+            pid_match = None
+            if "Running via supergateway (PID " in container:
+                pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
+                try:
+                    pid_match = int(pid_str)
+                    docker_pids.add(pid_match)
+                except ValueError:
+                    pass
+            tool_containers += 1
+
+    # Count unique services (not individual processes)
+    # We only want to count each service once, not every process
+    unique_services = len(service_groups)
+
+    # Get a list of all Docker-based tool PIDs
+    docker_tool_pids = set()
+    docker_tool_ids = set()
+    for container in docker_containers:
+        if "Running via supergateway (PID " in container:
+            try:
+                # Extract the tool ID from the container string
+                tool_id = container.split(" (")[0]
+                docker_tool_ids.add(tool_id)
+
+                # Extract the PID from the container string
+                pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
+                docker_tool_pids.add(int(pid_str))
+            except (ValueError, IndexError):
+                pass
+
+    # Count total processes (for informational purposes)
+    # But exclude Docker-based tool PIDs that are already counted as containers
+    total_processes = 0
+    for service, pids in service_groups.items():
+        # Skip services that are already counted as Docker containers
+        if service in docker_tool_ids:
+            continue
+
+        # Count the processes for this service
+        for pid in pids:
+            if pid not in docker_tool_pids:
+                total_processes += 1
+
     # Show summary
     if service_groups or docker_containers:
-        print(f"\nStatus: Smart Agent is RUNNING with {len(service_groups)} processes and {len(docker_containers)} containers.")
+        # Calculate the actual number of tool services (excluding Docker tools counted twice)
+        actual_tool_services = unique_services - len(docker_tool_ids)
+
+        print(f"\nStatus: Smart Agent is RUNNING with {total_processes} processes and {len(docker_containers)} containers")
+        print(f"({actual_tool_services} tool services, {tool_containers} tool containers, {litellm_containers} LiteLLM proxy).")
     else:
         print("\nStatus: No Smart Agent services are currently running.")
 
