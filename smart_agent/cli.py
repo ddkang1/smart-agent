@@ -30,6 +30,7 @@ from rich.markdown import Markdown
 from . import __version__
 from .tool_manager import ConfigManager
 from .agent import SmartAgent
+from agents import ItemHelpers
 
 console = Console()
 
@@ -215,9 +216,17 @@ def chat_loop(config_manager: ConfigManager):
             async def run_agent():
                 history = [{"role": "user", "content": user_input}]
                 result = await smart_agent.process_message(history)
-                async for chunk in result.stream():
-                    if chunk.delta and chunk.delta.content:
-                        print(chunk.delta.content, end="", flush=True)
+
+                # Define a callback to print chunks as they arrive
+                async def print_callback(event):
+                    if event.item.type == "message_output_item":
+                        role = event.item.raw_item.role
+                        if role == "assistant":
+                            text_message = ItemHelpers.text_message_output(event.item)
+                            print(text_message, end="", flush=True)
+
+                # Process the stream events
+                await SmartAgent.process_stream_events(result, callback=print_callback, agent=smart_agent.agent)
                 print()  # Add a newline at the end
 
             # Run the agent in an event loop
