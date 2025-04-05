@@ -2367,17 +2367,27 @@ def launch_litellm_proxy(config_manager: ConfigManager) -> Optional[subprocess.P
 
     # Add volume if we have a config file
     if litellm_config_path:
-        litellm_config_dir = os.path.dirname(os.path.abspath(litellm_config_path))
-        litellm_config_filename = os.path.basename(litellm_config_path)
+        # Mount the config file directly to /app/config.yaml as in docker-compose
         cmd.extend([
             "-v",
-            f"{litellm_config_dir}:/app/config",
-            "-e",
-            f"CONFIG_FILE=/app/config/{litellm_config_filename}",
+            f"{litellm_config_path}:/app/config.yaml",
         ])
 
-    # Add image
-    cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
+        # Add image
+        cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
+
+        # Add command line arguments as in docker-compose
+        cmd.extend([
+            "--config", "/app/config.yaml",
+            "--port", str(api_port),
+            "--num_workers", "8"
+        ])
+    else:
+        # Add image only if no config file
+        cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
+
+    # Print the command for debugging
+    print(f"Launching LiteLLM proxy with command: {' '.join(cmd)}")
 
     # Run command
     try:
