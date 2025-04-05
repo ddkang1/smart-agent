@@ -109,6 +109,12 @@ def chat_loop(config_manager: ConfigManager):
     api_key = config_manager.get_api_key()
     base_url = config_manager.get_api_base_url()
 
+    # Check if API key is set
+    if not api_key:
+        print("Error: API key is not set in config.yaml or environment variable.")
+        print("Please set the api_key in config/config.yaml or use OPENAI_API_KEY environment variable.")
+        return
+
     # Get model configuration
     model_name = config_manager.get_model_name()
     temperature = config_manager.get_model_temperature()
@@ -137,7 +143,7 @@ def chat_loop(config_manager: ConfigManager):
     try:
         # Import required libraries
         from openai import AsyncOpenAI
-        from smart_agent.agent import SmartAgent, Agent, OpenAIChatCompletionsModel
+        from smart_agent.agent import SmartAgent
 
         # Initialize AsyncOpenAI client
         client = AsyncOpenAI(
@@ -566,15 +572,6 @@ def start(config, tools, proxy, all, foreground):
         # Start proxy services
         if proxy:
             base_url = config_manager.get_config("api", "base_url") or "http://localhost:4000"
-            api_port = 4000
-
-            try:
-                from urllib.parse import urlparse
-                parsed_url = urlparse(base_url)
-                if parsed_url.port:
-                    api_port = parsed_url.port
-            except Exception:
-                pass  # Use default port
 
             if base_url is None or "localhost" in base_url or "127.0.0.1" in base_url:
                 # Use Docker to run LiteLLM proxy
