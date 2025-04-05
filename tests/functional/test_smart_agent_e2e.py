@@ -76,7 +76,7 @@ class TestSmartAgentE2E:
 
         # Test stopping services
         with patch("subprocess.run") as mock_run:
-            stop.callback(config=None, tools=True, proxy=True, all=True, background=False)
+            stop.callback(config=None)
 
             # Verify subprocess.run was called to stop services
             assert mock_run.called
