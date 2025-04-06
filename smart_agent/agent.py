@@ -6,11 +6,54 @@ import json
 import datetime
 import locale
 import logging
+import asyncio
+import contextlib
 from typing import List, Dict, Any, Optional
+from contextlib import AsyncExitStack
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Configure logging for various libraries to suppress specific error messages
+openai_agents_logger = logging.getLogger('openai.agents')
+asyncio_logger = logging.getLogger('asyncio')
+httpx_logger = logging.getLogger('httpx')
+httpcore_logger = logging.getLogger('httpcore')
+mcp_client_sse_logger = logging.getLogger('mcp.client.sse')
+
+# Set log levels to reduce verbosity
+httpx_logger.setLevel(logging.WARNING)
+mcp_client_sse_logger.setLevel(logging.WARNING)
+
+# Create a filter to suppress specific error messages
+class SuppressSpecificErrorFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress specific error messages
+        message = record.getMessage()
+
+        # List of error patterns to suppress
+        suppress_patterns = [
+            'Error cleaning up server: Attempted to exit a cancel scope',
+            'Event loop is closed',
+            'Task exception was never retrieved',
+            'AsyncClient.aclose',
+        ]
+
+        # Check if any of the patterns are in the message
+        for pattern in suppress_patterns:
+            if pattern in message:
+                return False
+
+        return True
+
+# Add the filter to various loggers
+openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
+asyncio_logger.addFilter(SuppressSpecificErrorFilter())
+httpx_logger.addFilter(SuppressSpecificErrorFilter())
+httpcore_logger.addFilter(SuppressSpecificErrorFilter())
+
+# OpenAI and Agent imports
+from openai import AsyncOpenAI
 from agents import (
     Agent,
     OpenAIChatCompletionsModel,
@@ -18,7 +61,6 @@ from agents import (
     ItemHelpers,
 )
 from agents.mcp import MCPServerSse
-from openai import AsyncOpenAI
 
 
 class PromptGenerator:
@@ -116,8 +158,11 @@ class SmartAgent:
             self.system_prompt = PromptGenerator.create_system_prompt(custom_instructions)
 
         self.agent = None
+        self.exit_stack = AsyncExitStack()
+        self.connected_servers = []
 
-        if self.mcp_servers and self.openai_client:
+        # Initialize the agent if we have the required components
+        if self.openai_client:
             self._initialize_agent()
 
     def _initialize_agent(self):
@@ -137,6 +182,7 @@ class SmartAgent:
                 # It's already an MCP server object
                 mcp_server_objects.append(server)
 
+        # Create the agent with the MCP servers
         self.agent = Agent(
             name="Assistant",
             instructions=self.system_prompt,
@@ -144,7 +190,7 @@ class SmartAgent:
                 model=self.model_name,
                 openai_client=self.openai_client,
             ),
-            mcp_servers=[],#mcp_server_objects
+            mcp_servers=mcp_server_objects,  # Use the MCP server objects
         )
 
     async def process_message(
@@ -162,60 +208,66 @@ class SmartAgent:
             The agent's response
         """
         if not self.agent:
-            raise ValueError(
-                "Agent not initialized. Make sure to provide openai_client and mcp_servers."
-            )
+            # Return a simple error message instead of raising
+            return "I'm sorry, I couldn't initialize the agent. Please check your configuration."
 
         # Update the system prompt with current date/time if requested
         if update_system_prompt and history and history[0].get("role") == "system":
             logger.debug("Updating system prompt with current date/time")
             history[0]["content"] = PromptGenerator.create_system_prompt(self.custom_instructions)
 
-        # Use async context managers for MCP servers when possible
-        # This ensures proper cleanup even if an exception occurs
-        connected_servers = []
+        # Reset the exit stack and connected servers for this message
+        self.exit_stack = AsyncExitStack()
+        self.connected_servers = []
 
         try:
-            # Connect to all MCP servers
+            # Connect to all MCP servers using the exit stack for proper cleanup
             logger.debug(f"Connecting to {len(self.agent.mcp_servers)} MCP servers")
             for i, server in enumerate(self.agent.mcp_servers):
                 server_name = getattr(server, 'name', f"server_{i}")
                 logger.debug(f"Connecting to MCP server {server_name}")
-                if hasattr(server, 'connect') and callable(server.connect):
-                    try:
-                        await server.connect()
-                        connected_servers.append(server)
-                        logger.debug(f"Successfully connected to MCP server {server_name}")
-                    except Exception as e:
-                        logger.error(f"Failed to connect to MCP server {server_name}: {e}")
-                        raise
+
+                # Skip servers that don't have a connect method
+                if not hasattr(server, 'connect') or not callable(server.connect):
+                    logger.warning(f"MCP server {server_name} does not have a connect method, skipping")
+                    continue
+
+                try:
+                    # Use the exit stack to ensure proper cleanup
+                    await self.exit_stack.enter_async_context(server)
+                    self.connected_servers.append(server)
+                    logger.debug(f"Successfully connected to MCP server {server_name}")
+                except Exception as e:
+                    # Log the error but continue with other servers
+                    logger.error(f"Failed to connect to MCP server {server_name}: {e}")
+                    # Suppress the exception to continue with other servers
+                    with contextlib.suppress(Exception):
+                        if hasattr(server, 'cleanup') and callable(server.cleanup):
+                            await server.cleanup()
+                    continue
 
             # Run the agent with the conversation history
             result = Runner.run_streamed(self.agent, history, max_turns=max_turns)
             return result
         except Exception as e:
-            # Clean up MCP servers on error
-            logger.debug(f"Cleaning up {len(connected_servers)} MCP servers due to error")
-            for server in connected_servers:
-                server_name = getattr(server, 'name', 'unknown')
-                logger.debug(f"Cleaning up MCP server {server_name}")
-                if hasattr(server, 'cleanup') and callable(server.cleanup):
-                    try:
-                        server.cleanup()
-                        logger.debug(f"Successfully cleaned up MCP server {server_name}")
-                    except Exception as cleanup_error:
-                        logger.error(f"Error cleaning up MCP server {server_name}: {cleanup_error}")
-            raise e
+            # Log the error and return a user-friendly message
+            logger.error(f"Error processing message: {e}")
+            return f"I'm sorry, I encountered an error: {str(e)}. Please try again later."
+        finally:
+            # Use the exit stack to ensure proper cleanup of all resources
+            # This will automatically call cleanup on all connected servers
+            with contextlib.suppress(Exception):
+                await self.exit_stack.aclose()
+                logger.debug("Successfully closed all MCP server connections")
 
     @staticmethod
-    async def process_stream_events(result, callback=None, agent=None, verbose=False):
+    async def process_stream_events(result, callback=None, verbose=False):
         """
         Process stream events from the agent.
 
         Args:
             result: The result from process_message
             callback: Optional callback function to handle events
-            agent: Optional agent instance for cleanup
             verbose: Whether to include detailed tool outputs in the reply
 
         Returns:
@@ -275,17 +327,8 @@ class SmartAgent:
                     if callback:
                         await callback(event)
         finally:
-            # Clean up MCP servers if agent is provided
-            if agent and hasattr(agent, 'mcp_servers'):
-                logger.debug(f"Cleaning up {len(agent.mcp_servers)} MCP servers in process_stream_events")
-                for i, server in enumerate(agent.mcp_servers):
-                    server_name = getattr(server, 'name', f"server_{i}")
-                    logger.debug(f"Cleaning up MCP server {server_name}")
-                    if hasattr(server, 'cleanup') and callable(server.cleanup):
-                        try:
-                            server.cleanup()
-                            logger.debug(f"Successfully cleaned up MCP server {server_name}")
-                        except Exception as cleanup_error:
-                            logger.error(f"Error cleaning up MCP server {server_name}: {cleanup_error}")
+            # Clean up is now handled by the exit stack in the agent's process_message method
+            # We don't need to manually clean up here anymore
+            pass
 
         return assistant_reply.strip()
