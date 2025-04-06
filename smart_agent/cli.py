@@ -24,6 +24,44 @@ from pathlib import Path
 import asyncio
 import platform
 
+# Configure logging for various libraries to suppress specific error messages
+openai_agents_logger = logging.getLogger('openai.agents')
+asyncio_logger = logging.getLogger('asyncio')
+httpx_logger = logging.getLogger('httpx')
+httpcore_logger = logging.getLogger('httpcore')
+mcp_client_sse_logger = logging.getLogger('mcp.client.sse')
+
+# Set log levels to reduce verbosity
+httpx_logger.setLevel(logging.WARNING)
+mcp_client_sse_logger.setLevel(logging.WARNING)
+
+# Create a filter to suppress specific error messages
+class SuppressSpecificErrorFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress specific error messages
+        message = record.getMessage()
+
+        # List of error patterns to suppress
+        suppress_patterns = [
+            'Error cleaning up server: Attempted to exit a cancel scope',
+            'Event loop is closed',
+            'Task exception was never retrieved',
+            'AsyncClient.aclose',
+        ]
+
+        # Check if any of the patterns are in the message
+        for pattern in suppress_patterns:
+            if pattern in message:
+                return False
+
+        return True
+
+# Add the filter to various loggers
+openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
+asyncio_logger.addFilter(SuppressSpecificErrorFilter())
+httpx_logger.addFilter(SuppressSpecificErrorFilter())
+httpcore_logger.addFilter(SuppressSpecificErrorFilter())
+
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -206,7 +244,7 @@ def chat_loop(config_manager: ConfigManager):
         if user_input.lower() == "clear":
             # Reset the conversation history
             conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
-            
+
             # Reset the agent - using SmartAgent wrapper class
             smart_agent = SmartAgent(
                 model_name=model_name,
@@ -228,7 +266,7 @@ def chat_loop(config_manager: ConfigManager):
             async def run_agent():
                 # Add the user message to history
                 history = conversation_history.copy()
-                
+
                 # Get the MCP server URLs
                 mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
 
@@ -1383,9 +1421,6 @@ def stop(config):
 def chat(config):
     """Start a chat session with Smart Agent."""
     config_manager = ConfigManager(config)
-
-    # Check if services need to be started
-    print("Starting chat session. Make sure you've already run 'smart-agent start' to launch required services.")
 
     # Start chat session
     start_chat(config_manager)
