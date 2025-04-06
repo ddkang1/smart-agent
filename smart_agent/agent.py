@@ -6,9 +6,8 @@ import json
 import datetime
 import locale
 import logging
-import asyncio
 import contextlib
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from contextlib import AsyncExitStack
 
 # Set up logging
@@ -27,8 +26,14 @@ mcp_client_sse_logger.setLevel(logging.WARNING)
 
 # Create a filter to suppress specific error messages
 class SuppressSpecificErrorFilter(logging.Filter):
-    def filter(self, record):
-        # Suppress specific error messages
+    """Filter to suppress specific error messages in logs.
+
+    This filter checks log messages against a list of patterns and
+    filters out any messages that match, preventing them from being
+    displayed to the user.
+    """
+    def filter(self, record) -> bool:
+        # Get the message from the record
         message = record.getMessage()
 
         # List of error patterns to suppress
@@ -42,9 +47,9 @@ class SuppressSpecificErrorFilter(logging.Filter):
         # Check if any of the patterns are in the message
         for pattern in suppress_patterns:
             if pattern in message:
-                return False
+                return False  # Filter out this message
 
-        return True
+        return True  # Keep this message
 
 # Add the filter to various loggers
 openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
@@ -64,11 +69,21 @@ from agents.mcp import MCPServerSse
 
 
 class PromptGenerator:
-    """Generates dynamic system prompts with current date and time."""
+    """Generates dynamic system prompts with current date and time.
+
+    This class provides static methods for creating system prompts with
+    current date and time information, and optionally including custom
+    instructions provided by the user.
+    """
 
     @staticmethod
-    def create_system_prompt(custom_instructions: str = None) -> str:
+    def create_system_prompt(custom_instructions: Optional[str] = None) -> str:
         """Generate a system prompt with current date and time.
+
+        This method generates a system prompt that includes the current date and time,
+        formatted according to the user's locale settings if possible. It provides
+        guidelines for the assistant's behavior and can include custom instructions
+        if provided.
 
         Args:
             custom_instructions: Optional custom instructions to include
@@ -76,12 +91,8 @@ class PromptGenerator:
         Returns:
             A formatted system prompt
         """
-        # Get current date and time in the local format
-        current_datetime = datetime.datetime.now().strftime(
-            locale.nl_langinfo(locale.D_T_FMT)
-            if hasattr(locale, "nl_langinfo")
-            else "%c"
-        )
+        # Get current date and time with proper locale handling
+        current_datetime = PromptGenerator._get_formatted_datetime()
 
         # Base system prompt
         base_prompt = f"""## Guidelines for Using the Think Tool
@@ -122,29 +133,71 @@ For each part of your answer, indicate which sources most support it via valid c
 
         return base_prompt
 
+    @staticmethod
+    def _get_formatted_datetime() -> str:
+        """Get the current date and time formatted according to locale settings.
+
+        This helper method attempts to format the current date and time using
+        the user's locale settings. If that fails, it falls back to a simple
+        format.
+
+        Returns:
+            A string containing the formatted current date and time
+        """
+        try:
+            # Try to use the system's locale settings
+            return datetime.datetime.now().strftime(
+                locale.nl_langinfo(locale.D_T_FMT)
+                if hasattr(locale, "nl_langinfo")
+                else "%c"
+            )
+        except Exception as e:
+            # Log the error but don't let it affect the user experience
+            logger.debug(f"Error formatting datetime: {e}")
+            # Fall back to a simple format if locale settings cause issues
+            return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
 
 class SmartAgent:
     """
     Smart Agent with reasoning and tool use capabilities.
+
+    This class provides a high-level interface for interacting with the OpenAI Agent framework,
+    handling the initialization, connection, and cleanup of MCP servers, and processing
+    messages with proper error handling and resource management.
+
+    Attributes:
+        model_name (str): The name of the model to use
+        openai_client (AsyncOpenAI): The OpenAI client for API calls
+        mcp_servers (List): List of MCP servers or URLs
+        system_prompt (str): The system prompt to use
+        custom_instructions (Optional[str]): Custom instructions to append to the system prompt
+        agent (Agent): The underlying Agent instance
+        exit_stack (AsyncExitStack): Stack for managing async context managers
+        connected_servers (List): List of successfully connected MCP servers
     """
 
     def __init__(
         self,
-        model_name: str = None,
-        openai_client: AsyncOpenAI = None,
-        mcp_servers: List[Any] = None,
+        model_name: Optional[str] = None,
+        openai_client: Optional[AsyncOpenAI] = None,
+        mcp_servers: Optional[List[Any]] = None,
         system_prompt: Optional[str] = None,
         custom_instructions: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Initialize a new Smart Agent.
 
         Args:
-            model_name: The name of the model to use
-            openai_client: An initialized OpenAI client
-            mcp_servers: A list of MCP servers to use
+            model_name: The name of the model to use (e.g., "gpt-4o")
+            openai_client: An initialized AsyncOpenAI client
+            mcp_servers: A list of MCP servers or URLs to use for tools
             system_prompt: Optional system prompt to use (overrides the default)
             custom_instructions: Optional custom instructions to append to the default system prompt
+
+        Note:
+            If openai_client is provided, the agent will be initialized immediately.
+            Otherwise, you'll need to set the client later and call _initialize_agent() manually.
         """
         self.model_name = model_name
         self.openai_client = openai_client
@@ -157,6 +210,7 @@ class SmartAgent:
         else:
             self.system_prompt = PromptGenerator.create_system_prompt(custom_instructions)
 
+        # Initialize instance variables
         self.agent = None
         self.exit_stack = AsyncExitStack()
         self.connected_servers = []
@@ -165,17 +219,26 @@ class SmartAgent:
         if self.openai_client:
             self._initialize_agent()
 
-    def _initialize_agent(self):
-        """Initialize the agent with the provided configuration."""
+    def _initialize_agent(self) -> None:
+        """Initialize the agent with the provided configuration.
+
+        This method converts URL strings to MCPServerSse objects if needed,
+        and creates the Agent instance with the appropriate configuration.
+
+        Returns:
+            None
+        """
         # Convert URL strings to MCPServerSse objects if needed
         mcp_server_objects = []
+
         for server in self.mcp_servers:
             if isinstance(server, str):
-                # It's a URL string, convert to MCPServerSse
-                # Parse the URL to extract tool information
-                tool_name = server.split('/')[-2] if '/' in server else 'tool'
+                # Extract tool name from URL for better identification
+                tool_name = self._extract_tool_name_from_url(server)
+
+                # Create MCPServerSse object from URL string
                 mcp_server_objects.append(MCPServerSse(
-                    name=tool_name,  # Add a name for better identification
+                    name=tool_name,
                     params={"url": server}
                 ))
             else:
@@ -190,14 +253,46 @@ class SmartAgent:
                 model=self.model_name,
                 openai_client=self.openai_client,
             ),
-            mcp_servers=mcp_server_objects,  # Use the MCP server objects
+            mcp_servers=mcp_server_objects,
         )
 
+    def _extract_tool_name_from_url(self, url: str) -> str:
+        """Extract a tool name from a URL string.
+
+        Args:
+            url: The URL string to extract the tool name from
+
+        Returns:
+            A string containing the extracted tool name
+        """
+        try:
+            # Try to extract the tool name from the URL path
+            if '/' in url:
+                # Get the second-to-last path component as the tool name
+                path_parts = url.rstrip('/').split('/')
+                if len(path_parts) >= 2:
+                    return path_parts[-2]
+
+            # If we can't extract a meaningful name, use a generic one
+            return 'tool'
+        except Exception:
+            # Fall back to a generic name if anything goes wrong
+            return 'tool'
+
     async def process_message(
-        self, history: List[Dict[str, str]], max_turns: int = 100, update_system_prompt: bool = True
-    ):
+        self,
+        history: List[Dict[str, str]],
+        max_turns: int = 100,
+        update_system_prompt: bool = True
+    ) -> Any:
         """
         Process a message with the agent.
+
+        This method handles the entire lifecycle of processing a message:
+        1. Initializes and updates the system prompt if needed
+        2. Connects to all MCP servers using an AsyncExitStack for proper resource management
+        3. Runs the agent with the conversation history
+        4. Ensures proper cleanup of resources even if exceptions occur
 
         Args:
             history: A list of message dictionaries with 'role' and 'content' keys
@@ -205,10 +300,11 @@ class SmartAgent:
             update_system_prompt: Whether to update the system prompt with current date/time
 
         Returns:
-            The agent's response
+            The agent's response stream or an error message string
         """
+        # Check if agent is properly initialized
         if not self.agent:
-            # Return a simple error message instead of raising
+            logger.error("Agent not initialized. Check configuration.")
             return "I'm sorry, I couldn't initialize the agent. Please check your configuration."
 
         # Update the system prompt with current date/time if requested
@@ -222,37 +318,25 @@ class SmartAgent:
 
         try:
             # Connect to all MCP servers using the exit stack for proper cleanup
-            logger.debug(f"Connecting to {len(self.agent.mcp_servers)} MCP servers")
-            for i, server in enumerate(self.agent.mcp_servers):
-                server_name = getattr(server, 'name', f"server_{i}")
-                logger.debug(f"Connecting to MCP server {server_name}")
+            server_count = len(self.agent.mcp_servers)
+            logger.debug(f"Connecting to {server_count} MCP servers")
 
-                # Skip servers that don't have a connect method
-                if not hasattr(server, 'connect') or not callable(server.connect):
-                    logger.warning(f"MCP server {server_name} does not have a connect method, skipping")
-                    continue
+            # Connect to each server
+            await self._connect_to_mcp_servers()
 
-                try:
-                    # Use the exit stack to ensure proper cleanup
-                    await self.exit_stack.enter_async_context(server)
-                    self.connected_servers.append(server)
-                    logger.debug(f"Successfully connected to MCP server {server_name}")
-                except Exception as e:
-                    # Log the error but continue with other servers
-                    logger.error(f"Failed to connect to MCP server {server_name}: {e}")
-                    # Suppress the exception to continue with other servers
-                    with contextlib.suppress(Exception):
-                        if hasattr(server, 'cleanup') and callable(server.cleanup):
-                            await server.cleanup()
-                    continue
+            # If no servers connected successfully but servers were provided, log a warning
+            if not self.connected_servers and server_count > 0:
+                logger.warning("No MCP servers connected successfully. Some functionality may be limited.")
 
             # Run the agent with the conversation history
             result = Runner.run_streamed(self.agent, history, max_turns=max_turns)
             return result
+
         except Exception as e:
             # Log the error and return a user-friendly message
             logger.error(f"Error processing message: {e}")
             return f"I'm sorry, I encountered an error: {str(e)}. Please try again later."
+
         finally:
             # Use the exit stack to ensure proper cleanup of all resources
             # This will automatically call cleanup on all connected servers
@@ -260,75 +344,185 @@ class SmartAgent:
                 await self.exit_stack.aclose()
                 logger.debug("Successfully closed all MCP server connections")
 
+    async def _connect_to_mcp_servers(self) -> None:
+        """Connect to all MCP servers in the agent.
+
+        This helper method attempts to connect to each MCP server,
+        handling errors gracefully to ensure that as many servers
+        as possible are connected.
+
+        Returns:
+            None
+        """
+        for i, server in enumerate(self.agent.mcp_servers):
+            # Get server name for logging
+            server_name = getattr(server, 'name', f"server_{i}")
+            logger.debug(f"Connecting to MCP server {server_name}")
+
+            # Skip servers that don't have a connect method
+            if not hasattr(server, 'connect') or not callable(server.connect):
+                logger.warning(f"MCP server {server_name} does not have a connect method, skipping")
+                continue
+
+            try:
+                # Use the exit stack to ensure proper cleanup
+                await self.exit_stack.enter_async_context(server)
+                self.connected_servers.append(server)
+                logger.debug(f"Successfully connected to MCP server {server_name}")
+
+            except Exception as e:
+                # Log the error but continue with other servers
+                logger.error(f"Failed to connect to MCP server {server_name}: {e}")
+
+                # Suppress the exception to continue with other servers
+                with contextlib.suppress(Exception):
+                    if hasattr(server, 'cleanup') and callable(server.cleanup):
+                        await server.cleanup()
+                continue
+
     @staticmethod
-    async def process_stream_events(result, callback=None, verbose=False):
+    async def process_stream_events(result: Any, callback: Optional[callable] = None, verbose: bool = False) -> str:
         """
         Process stream events from the agent.
 
+        This method processes the stream of events from the agent, extracting relevant
+        information and formatting it into a coherent reply. It handles different types
+        of events including tool calls, tool outputs, and assistant messages.
+
         Args:
-            result: The result from process_message
+            result: The result stream from process_message
             callback: Optional callback function to handle events
             verbose: Whether to include detailed tool outputs in the reply
 
         Returns:
-            The assistant's reply
+            The formatted assistant's reply as a string
         """
         assistant_reply = ""
         current_tool = None  # Track the current tool being used
 
         try:
             async for event in result.stream_events():
-                if event.type == "raw_response_event":
+                # Skip events that don't contain useful content for the reply
+                if event.type in ("raw_response_event", "agent_updated_stream_event"):
                     continue
-                elif event.type == "agent_updated_stream_event":
-                    continue
+
+                # Process run item stream events (tool calls, outputs, messages)
                 elif event.type == "run_item_stream_event":
+                    assistant_reply = await SmartAgent._process_run_item_event(
+                        event,
+                        assistant_reply,
+                        current_tool,
+                        verbose,
+                        callback
+                    )
+
+                    # Update current tool if this was a tool call
                     if event.item.type == "tool_call_item":
-                        arguments_dict = json.loads(event.item.raw_item.arguments)
-                        key, value = next(iter(arguments_dict.items()))
-
-                        # Store the current tool being used
-                        current_tool = key
-
-                        if key == "thought":
-                            # Add thought to the assistant reply
-                            if verbose:
-                                assistant_reply += f"\n[thought]: {value}"
-                        else:
-                            # Add tool call to the assistant reply if verbose
-                            if verbose:
-                                assistant_reply += f"\n[tool]: {key}\n{value}"
-
-                    elif event.item.type == "tool_call_output_item":
-                        # Process tool output
                         try:
-                            # Try to parse the output as JSON
-                            output_data = json.loads(event.item.output)
-                            output_text = output_data.get("text", event.item.output)
-
-                            # Log the tool output
-                            logger.debug(f"Tool output: {output_text}")
-
-                            # Add tool output to the assistant reply if verbose
-                            if verbose and current_tool:
-                                assistant_reply += f"\n[tool output]: {output_text}"
-                        except json.JSONDecodeError:
-                            # If not JSON, use the raw output
-                            if verbose:
-                                assistant_reply += f"\n[tool output]: {event.item.output}"
-
-                    elif event.item.type == "message_output_item":
-                        role = event.item.raw_item.role
-                        text_message = ItemHelpers.text_message_output(event.item)
-                        if role == "assistant":
-                            assistant_reply += f"\n[response]: {text_message}"
-
-                    # Call the callback if provided
-                    if callback:
-                        await callback(event)
+                            arguments_dict = json.loads(event.item.raw_item.arguments)
+                            current_tool = next(iter(arguments_dict.items()))[0]
+                        except (json.JSONDecodeError, StopIteration):
+                            # If we can't parse the arguments, don't update the current tool
+                            pass
+        except Exception as e:
+            # Log any errors that occur during event processing
+            logger.error(f"Error processing stream events: {e}")
+            # Add error information to the reply if it's empty
+            if not assistant_reply:
+                assistant_reply = f"\n[error]: Error processing response: {str(e)}"
         finally:
             # Clean up is now handled by the exit stack in the agent's process_message method
             # We don't need to manually clean up here anymore
             pass
 
         return assistant_reply.strip()
+
+    @staticmethod
+    async def _process_run_item_event(event: Any, assistant_reply: str, current_tool: Optional[str],
+                                     verbose: bool, callback: Optional[callable]) -> str:
+        """
+        Process a run item stream event and update the assistant reply.
+
+        Args:
+            event: The event to process
+            assistant_reply: The current assistant reply
+            current_tool: The current tool being used
+            verbose: Whether to include detailed outputs
+            callback: Optional callback function
+
+        Returns:
+            The updated assistant reply
+        """
+        # Handle tool call events
+        if event.item.type == "tool_call_item":
+            try:
+                arguments_dict = json.loads(event.item.raw_item.arguments)
+                key, value = next(iter(arguments_dict.items()))
+
+                # Add appropriate content based on the tool type
+                if key == "thought" and verbose:
+                    assistant_reply += f"\n[thought]: {value}"
+                elif verbose:
+                    assistant_reply += f"\n[tool]: {key}\n{value}"
+            except (json.JSONDecodeError, StopIteration) as e:
+                logger.warning(f"Could not parse tool call arguments: {e}")
+
+        # Handle tool output events
+        elif event.item.type == "tool_call_output_item":
+            assistant_reply = SmartAgent._process_tool_output(
+                event, assistant_reply, current_tool, verbose)
+
+        # Handle message output events
+        elif event.item.type == "message_output_item":
+            try:
+                role = event.item.raw_item.role
+                text_message = ItemHelpers.text_message_output(event.item)
+                if role == "assistant":
+                    assistant_reply += f"\n[response]: {text_message}"
+            except Exception as e:
+                logger.warning(f"Error processing message output: {e}")
+
+        # Call the callback if provided
+        if callback:
+            try:
+                await callback(event)
+            except Exception as e:
+                logger.warning(f"Error in callback: {e}")
+
+        return assistant_reply
+
+    @staticmethod
+    def _process_tool_output(event: Any, assistant_reply: str, current_tool: Optional[str], verbose: bool) -> str:
+        """
+        Process a tool output event and update the assistant reply.
+
+        Args:
+            event: The tool output event
+            assistant_reply: The current assistant reply
+            current_tool: The current tool being used
+            verbose: Whether to include detailed outputs
+
+        Returns:
+            The updated assistant reply
+        """
+        if not verbose:
+            return assistant_reply
+
+        try:
+            # Try to parse the output as JSON
+            output_data = json.loads(event.item.output)
+            output_text = output_data.get("text", event.item.output)
+
+            # Log the tool output
+            logger.debug(f"Tool output: {output_text}")
+
+            # Add tool output to the assistant reply if verbose and we have a current tool
+            if current_tool:
+                assistant_reply += f"\n[tool output]: {output_text}"
+        except json.JSONDecodeError:
+            # If not JSON, use the raw output
+            assistant_reply += f"\n[tool output]: {event.item.output}"
+        except Exception as e:
+            logger.warning(f"Error processing tool output: {e}")
+
+        return assistant_reply

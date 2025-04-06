@@ -1,28 +1,47 @@
 #!/usr/bin/env python
 """
 CLI interface for Smart Agent.
+
+This module provides command-line interface functionality for the Smart Agent,
+including chat, tool management, and configuration handling.
 """
 
+# Standard library imports
 import os
 import sys
 import time
 import signal
 import socket
-import yaml
 import json
-import click
-import subprocess
-import logging
 import re
 import urllib.parse
 import locale
 import shutil
 import getpass
 import datetime
-from typing import List, Dict, Optional, Any, Tuple
-from pathlib import Path
-import asyncio
+import subprocess
 import platform
+import asyncio
+from typing import List, Dict, Optional, Any, Tuple, Union, Set
+from pathlib import Path
+from contextlib import suppress
+
+# Third-party imports
+import yaml
+import click
+from rich.console import Console
+from rich.markdown import Markdown
+
+# Configure logging
+import logging
+
+# Set up basic logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
 
 # Configure logging for various libraries to suppress specific error messages
 openai_agents_logger = logging.getLogger('openai.agents')
@@ -37,8 +56,14 @@ mcp_client_sse_logger.setLevel(logging.WARNING)
 
 # Create a filter to suppress specific error messages
 class SuppressSpecificErrorFilter(logging.Filter):
-    def filter(self, record):
-        # Suppress specific error messages
+    """Filter to suppress specific error messages in logs.
+
+    This filter checks log messages against a list of patterns and
+    filters out any messages that match, preventing them from being
+    displayed to the user.
+    """
+    def filter(self, record) -> bool:
+        # Get the message from the record
         message = record.getMessage()
 
         # List of error patterns to suppress
@@ -52,9 +77,9 @@ class SuppressSpecificErrorFilter(logging.Filter):
         # Check if any of the patterns are in the message
         for pattern in suppress_patterns:
             if pattern in message:
-                return False
+                return False  # Filter out this message
 
-        return True
+        return True  # Keep this message
 
 # Add the filter to various loggers
 openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
@@ -62,81 +87,34 @@ asyncio_logger.addFilter(SuppressSpecificErrorFilter())
 httpx_logger.addFilter(SuppressSpecificErrorFilter())
 httpcore_logger.addFilter(SuppressSpecificErrorFilter())
 
-from rich.console import Console
-from rich.markdown import Markdown
-
+# Local imports
 from . import __version__
 from .tool_manager import ConfigManager
-from .agent import SmartAgent
-from agents import set_tracing_disabled
+from .agent import SmartAgent, PromptGenerator
 
-set_tracing_disabled(disabled=True)
-
-console = Console()
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
-)
-logger = logging.getLogger(__name__)
-
+# Optional imports with fallbacks
 try:
     from openai import AsyncOpenAI
 except ImportError:
-    pass
+    AsyncOpenAI = None
+    logger.warning("OpenAI package not installed. Some features may not work.")
 
 try:
     from dotenv import load_dotenv
-
     load_dotenv()
 except ImportError:
-    pass
+    logger.debug("python-dotenv not installed. Environment variables will not be loaded from .env files.")
 
-class PromptGenerator:
-    @staticmethod
-    def create_system_prompt():
-        """
-        Generates the system prompt guidelines with a dynamically updated datetime.
-        """
-        current_datetime = datetime.datetime.now().strftime(
-            locale.nl_langinfo(locale.D_T_FMT)
-            if hasattr(locale, "nl_langinfo")
-            else "%c"
-        )
+try:
+    from agents import set_tracing_disabled
+    set_tracing_disabled(disabled=True)
+except ImportError:
+    logger.warning("Agents package not installed. Some features may not work.")
 
-        return f"""## Guidelines for Using the Think Tool
-The think tool is designed to help you "take a break and think"—a deliberate pause for reflection—both before initiating any action (like calling a tool) and after processing any new evidence. Use it as your internal scratchpad for careful analysis, ensuring that each step logically informs the next. Follow these steps:
+# Initialize console for rich output
+console = Console()
 
-0. Assumption
-   - Current date and time is {current_datetime}
-
-1. **Pre-Action Pause ("Take a Break and Think"):**
-   - Before initiating any external action or calling a tool, pause to use the think tool.
-
-2. **Post-Evidence Reflection:**
-   - After receiving results or evidence from any tool, take another break using the think tool.
-   - Reassess the new information by:
-     - Reiterating the relevant rules, guidelines, and policies.
-     - Examining the consistency, correctness, and relevance of the tool results.
-     - Reflecting on any insights that may influence the final answer.
-   - Incorporate updated or new information ensuring that it fits logically with your earlier conclusions.
-   - **Maintain Logical Flow:** Connect the new evidence back to your original reasoning, ensuring that this reflection fills in any gaps or uncertainties in your reasoning.
-
-3. **Iterative Review and Verification:**
-   - Verify that you have gathered all necessary information.
-   - Use the think tool to repeatedly validate your reasoning.
-   - Revisit each step of your thought process, ensuring that no essential details have been overlooked.
-   - Check that the insights gained in each phase flow logically into the next—confirm there are no abrupt jumps or inconsistencies in your reasoning.
-
-4. **Proceed to Final Action:**
-   - Only after these reflective checks should you proceed with your final answer.
-   - Synthesize the insights from all prior steps to form a comprehensive, coherent, and logically connected final response.
-
-## Guidelines for the final answer
-For each part of your answer, indicate which sources most support it via valid citation markers with the markdown hyperlink to the source at the end of sentences, like ([Source](URL)).
-"""
+# Use the PromptGenerator from agent.py instead of duplicating it here
 
 
 def chat_loop(config_manager: ConfigManager):
@@ -496,9 +474,9 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     repo = tool_config.get("repository", "")
 
                     # Construct the launch command exactly as in the working examples
-                    # Get the hostname from the URL or use grai-dev.gilead.com
+                    # Get the hostname from the URL or use localhost
                     parsed_url = urllib.parse.urlparse(url)
-                    hostname = parsed_url.hostname or "grai-dev.gilead.com"
+                    hostname = parsed_url.hostname or "localhost"
 
                     # Format the command exactly as in the examples
                     tool_cmd = [
@@ -527,9 +505,6 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
 
                     # Launch the process in the background using the exact format that works
                     if os.name != 'nt':  # Not on Windows
-                        # Format the command exactly like the working example
-                        # npx -y supergateway --stdio "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool" --header "X-Accel-Buffering: no" --port 8000 --baseUrl http://grai-dev.gilead.com:8000 --cors &
-
                         # Combine the command parts
                         cmd_parts = [
                             "npx", "-y", "supergateway",
@@ -631,9 +606,9 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     docker_run_cmd = f"docker run -i --rm --pull=always -v {storage_path}:/mnt/data/ {container_image}"
                     print(f"Docker run command: {docker_run_cmd}")
 
-                    # Get the hostname from the URL or use grai-dev.gilead.com
+                    # Get the hostname from the URL or use localhost
                     parsed_url = urllib.parse.urlparse(url)
-                    hostname = parsed_url.hostname or "grai-dev.gilead.com"
+                    hostname = parsed_url.hostname or "localhost"
 
                     # Build the supergateway command exactly as in the examples
                     gateway_cmd = [
@@ -655,7 +630,7 @@ def launch_tools(config_manager: ConfigManager) -> List[subprocess.Popen]:
                     # Launch the gateway process in the background using the exact format that works
                     if os.name != 'nt':  # Not on Windows
                         # Format the command exactly like the working example
-                        # npx -y supergateway --stdio "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest" --header "X-Accel-Buffering: no" --port 8002 --baseUrl http://grai-dev.gilead.com:8002 --cors &
+                        # npx -y supergateway --stdio "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/example/mcp-py-repl:latest" --header "X-Accel-Buffering: no" --port 8002 --baseUrl http://localhost:8002 --cors &
 
                         # Combine the command parts
                         cmd_parts = [
