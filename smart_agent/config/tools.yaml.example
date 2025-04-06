@@ -16,7 +16,7 @@ tools:
     enabled: true
     type: docker
     image: ghcr.io/ddkang1/mcp-py-repl:latest
-    storage_path: /Users/dkang1/test/storage
+    storage_path: ./storage
     url: http://localhost:8002/sse
     
 # Tool configuration schema

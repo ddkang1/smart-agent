@@ -30,7 +30,9 @@ from rich.markdown import Markdown
 from . import __version__
 from .tool_manager import ConfigManager
 from .agent import SmartAgent
-from agents import ItemHelpers
+from agents import set_tracing_disabled
+
+set_tracing_disabled(disabled=True)
 
 console = Console()
 
@@ -123,6 +125,7 @@ def chat_loop(config_manager: ConfigManager):
     # Get Langfuse configuration
     langfuse_config = config_manager.get_langfuse_config()
     langfuse_enabled = langfuse_config.get("enabled", False)
+    langfuse = None
 
     # Initialize Langfuse if enabled
     if langfuse_enabled:
@@ -186,6 +189,9 @@ def chat_loop(config_manager: ConfigManager):
     print("Type 'exit' or 'quit' to end the conversation")
     print("Type 'clear' to clear the conversation history")
 
+    # Initialize conversation history
+    conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
+
     # Chat loop
     while True:
         # Get user input
@@ -198,6 +204,9 @@ def chat_loop(config_manager: ConfigManager):
 
         # Check for clear command
         if user_input.lower() == "clear":
+            # Reset the conversation history
+            conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
+            
             # Reset the agent - using SmartAgent wrapper class
             smart_agent = SmartAgent(
                 model_name=model_name,
@@ -208,72 +217,66 @@ def chat_loop(config_manager: ConfigManager):
             print("Conversation history cleared")
             continue
 
+        # Add the user message to history
+        conversation_history.append({"role": "user", "content": user_input})
+
         # Get assistant response
         print("\nAssistant: ", end="", flush=True)
 
         try:
             # Use the agent for streaming response
             async def run_agent():
-                # Initialize or update the history
-                if not hasattr(run_agent, 'history'):
-                    # First time - create history with system prompt
-                    run_agent.history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
-                else:
-                    # Update the system prompt with current date/time
-                    run_agent.history[0] = {"role": "system", "content": PromptGenerator.create_system_prompt()}
-
                 # Add the user message to history
-                run_agent.history.append({"role": "user", "content": user_input})
+                history = conversation_history.copy()
+                
+                # Get the MCP server URLs
+                mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
 
-                # Process the message using the ask function pattern from research.py
-                async def ask(history):
-                    # Get the MCP server URLs
-                    mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
+                # Create the OpenAI client
+                client = AsyncOpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                )
 
-                    # Create the OpenAI client
-                    client = AsyncOpenAI(
-                        base_url=base_url,
-                        api_key=api_key,
+                # Import required classes
+                from agents.mcp import MCPServerSse
+                from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+
+                # Create MCP servers using the same pattern as research.py
+                mcp_servers_objects = []
+                for url in mcp_urls:
+                    mcp_servers_objects.append(MCPServerSse(params={"url": url}))
+
+                # Connect to all MCP servers
+                for server in mcp_servers_objects:
+                    await server.connect()
+
+                try:
+                    # Create the agent directly like in research.py
+                    agent = Agent(
+                        name="Assistant",
+                        instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
+                        model=OpenAIChatCompletionsModel(
+                            model=model_name,
+                            openai_client=client,
+                        ),
+                        mcp_servers=mcp_servers_objects,
                     )
 
-                    # Import required classes
-                    from agents.mcp import MCPServerSse
-                    from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+                    # Run the agent with the conversation history
+                    result = Runner.run_streamed(agent, history, max_turns=100)
+                    assistant_reply = ""
+                    is_thought = False
 
-                    # Create MCP servers using the same pattern as research.py
-                    mcp_servers_objects = []
-                    for url in mcp_urls:
-                        mcp_servers_objects.append(MCPServerSse(params={"url": url}))
-
-                    # Connect to all MCP servers
-                    for server in mcp_servers_objects:
-                        await server.connect()
-
-                    try:
-                        # Create the agent directly like in research.py
-                        agent = Agent(
-                            name="Assistant",
-                            instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
-                            model=OpenAIChatCompletionsModel(
-                                model="sonnet",  # Use sonnet as in research.py
-                                openai_client=client,
-                            ),
-                            mcp_servers=mcp_servers_objects,
-                        )
-
-                        # Run the agent with the conversation history
-                        result = Runner.run_streamed(agent, history, max_turns=100)
-                        assistant_reply = ""
-                        is_thought = False
-
-                        # Process the stream events exactly like in research.py
-                        async for event in result.stream_events():
-                            if event.type == "raw_response_event":
-                                continue
-                            elif event.type == "agent_updated_stream_event":
-                                continue
-                            elif event.type == "run_item_stream_event":
-                                if event.item.type == "tool_call_item":
+                    # Process the stream events exactly like in research.py
+                    async for event in result.stream_events():
+                        if event.type == "raw_response_event":
+                            continue
+                        elif event.type == "agent_updated_stream_event":
+                            continue
+                        elif event.type == "run_item_stream_event":
+                            if event.item.type == "tool_call_item":
+                                try:
                                     arguments_dict = json.loads(event.item.raw_item.arguments)
                                     key, value = next(iter(arguments_dict.items()))
                                     if key == "thought":
@@ -283,55 +286,70 @@ def chat_loop(config_manager: ConfigManager):
                                     else:
                                         is_thought = False
                                         print(f"\n[{key}]:\n{value}", flush=True)
-                                elif event.item.type == "tool_call_output_item":
-                                    if not is_thought:
-                                        try:
-                                            output_text = json.loads(event.item.output).get("text", "")
-                                            print(f"\n[Tool Output]:\n{output_text}", flush=True)
-                                        except json.JSONDecodeError:
-                                            print(f"\n[Tool Output]:\n{event.item.output}", flush=True)
-                                elif event.item.type == "message_output_item":
-                                    role = event.item.raw_item.role
-                                    text_message = ItemHelpers.text_message_output(event.item)
-                                    if role == "assistant":
-                                        print(f"\n[{role}]:\n{text_message}", flush=True)
-                                        assistant_reply += "\n[response]: " + text_message
-                                    else:
-                                        print(f"\n[{role}]:\n{text_message}", flush=True)
+                                except (json.JSONDecodeError, StopIteration) as e:
+                                    print(f"\n[Error parsing tool call]: {e}", flush=True)
+                            elif event.item.type == "tool_call_output_item":
+                                if not is_thought:
+                                    try:
+                                        output_text = json.loads(event.item.output).get("text", "")
+                                        print(f"\n[Tool Output]:\n{output_text}", flush=True)
+                                    except json.JSONDecodeError:
+                                        print(f"\n[Tool Output]:\n{event.item.output}", flush=True)
+                            elif event.item.type == "message_output_item":
+                                role = event.item.raw_item.role
+                                text_message = ItemHelpers.text_message_output(event.item)
+                                if role == "assistant":
+                                    print(f"\n[{role}]:\n{text_message}", flush=True)
+                                    assistant_reply += "\n[response]: " + text_message
+                                else:
+                                    print(f"\n[{role}]:\n{text_message}", flush=True)
 
-                        return assistant_reply.strip()
-                    finally:
-                        # Clean up MCP servers
-                        for server in mcp_servers_objects:
-                            if hasattr(server, 'cleanup') and callable(server.cleanup):
-                                server.cleanup()
-
-                # Process the complete conversation history
-                assistant_response = await ask(run_agent.history)
-
-                # Append the assistant's response to maintain context
-                run_agent.history.append({"role": "assistant", "content": assistant_response})
+                    return assistant_reply.strip()
+                finally:
+                    # Clean up MCP servers
+                    for server in mcp_servers_objects:
+                        if hasattr(server, 'cleanup') and callable(server.cleanup):
+                            try:
+                                if asyncio.iscoroutinefunction(server.cleanup):
+                                    await server.cleanup()  # Use await for async cleanup
+                                else:
+                                    server.cleanup()  # Call directly for sync cleanup
+                            except Exception as e:
+                                print(f"Error during server cleanup: {e}")
 
             # Run the agent in an event loop
             import asyncio
+            assistant_response = asyncio.run(run_agent())
 
-            asyncio.run(run_agent())
+            # Append the assistant's response to maintain context
+            conversation_history.append({"role": "assistant", "content": assistant_response})
 
             # Log to Langfuse if enabled
-            if langfuse_enabled:
-                trace = langfuse.trace(
-                    name="chat_session",
-                    metadata={"model": model_name, "temperature": temperature},
-                )
-                trace.generation(
-                    name="assistant_response",
-                    model=model_name,
-                    prompt=user_input,
-                    completion="Agent response (not captured)",
-                )
+            if langfuse_enabled and langfuse:
+                try:
+                    trace = langfuse.trace(
+                        name="chat_session",
+                        metadata={"model": model_name, "temperature": temperature},
+                    )
+                    trace.generation(
+                        name="assistant_response",
+                        model=model_name,
+                        prompt=user_input,
+                        completion="Agent response (not captured)",
+                    )
+                except Exception as e:
+                    print(f"Langfuse logging error: {e}")
 
+        except KeyboardInterrupt:
+            print("\nOperation interrupted by user.")
+            continue
+        except asyncio.CancelledError:
+            print("\nOperation cancelled.")
+            continue
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"\nError: {e}")
+            import traceback
+            traceback.print_exc()
 
     print("\nChat session ended")
 
@@ -773,6 +791,7 @@ def start(config, tools, proxy, all, foreground):
                                 os.kill(process.pid, signal.SIGTERM)
                         except Exception as e:
                             print(f"Error terminating process {process.pid}: {e}")
+
         else:
             # Running in background mode (default) - return immediately after starting services
             # Write process IDs to a file for potential cleanup later
@@ -1005,7 +1024,7 @@ def stop(config):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=False
+                check=False,
             )
 
             if result.returncode == 0:
@@ -1223,7 +1242,7 @@ def stop(config):
         tool_containers_found = False
         for tool_id, tool_config in config_manager.get_tools_config().items():
             if tool_config.get("type") == "docker":
-                container_image = tool_config.get("container_image") or tool_config.get("image")
+                container_image = tool_config.get("container_image", "") or tool_config.get("image", "")
                 if container_image:
                     # Extract the image name without the tag
                     image_name = container_image.split("/")[-1].split(":")[0]
@@ -2025,7 +2044,7 @@ def status(config):
             if ps_cmd.returncode == 0:
                 for line in ps_cmd.stdout.strip().split('\n'):
                     if "uvx --from" in line or "supergateway" in line or "docker run" in line:
-                        parts = line.split()
+                        parts = line.strip().split()
                         try:
                             pid = int(parts[1])
                             # Skip if we already found this PID
@@ -2046,6 +2065,7 @@ def status(config):
             if docker_cmd.returncode == 0:
                 for line in docker_cmd.stdout.strip().split('\n'):
                     if "supergateway" in line and "docker run" in line:
+                        # This is a Docker-based tool running through supergateway
                         parts = line.strip().split()
                         if len(parts) > 1:
                             try:
@@ -2060,248 +2080,210 @@ def status(config):
         else:
             # Windows would need a different approach with tasklist
             print("Process tracking on Windows is limited. Some processes may remain.")
-    except Exception as e:
-        print(f"Error checking for tool processes: {str(e)}")
 
-    # Group processes by service
-    service_groups = {}
-    for pid, cmd in running_processes:
-        service_name = None
-
-        # Try to extract service name from command
-        # First check for supergateway processes running Docker commands
-        if "supergateway" in cmd and "docker run" in cmd:
-            # This is a Docker-based tool running through supergateway
-            # Try to match with tool configurations
-            for tool_id, tool_config in config_manager.get_tools_config().items():
-                if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
-                    container_image = tool_config.get("container_image")
-                    if container_image:
-                        # Extract just the image name without the registry and tag
-                        image_parts = container_image.split("/")
-                        if len(image_parts) > 0:
-                            image_name = image_parts[-1].split(":")[0]  # Get the name without the tag
-                            if image_name in cmd:
-                                service_name = tool_id
-                                break
-        else:
-            # For non-Docker tools, try to match with tool configurations
-            for tool_id, tool_config in config_manager.get_tools_config().items():
-                if tool_config.get("enabled", False) and tool_config.get("type") == "uvx":
-                    # Get the repository URL
-                    repo = tool_config.get("repository", "")
-                    if repo:
-                        # Extract the tool name from the repository URL
-                        tool_name = repo.split("/")[-1]
-                        # Remove git+ prefix if present
-                        if tool_name.startswith("git+"):
-                            tool_name = tool_name[4:]
-                        # Remove .git suffix if present
-                        if tool_name.endswith(".git"):
-                            tool_name = tool_name[:-4]
-
-                        if tool_name in cmd:
-                            service_name = tool_id
-                            break
-        # Add more mappings as needed
-
-        if service_name:
-            if service_name not in service_groups:
-                service_groups[service_name] = []
-            service_groups[service_name].append(pid)
-
-    # Display running processes grouped by service
-    if service_groups:
-        print("\nRunning Tool Services:")
-        print("-----------------")
-        for service, pids in service_groups.items():
-            print(f"Tool: {service} (PID {pids[0]})")
-    else:
-        print("\nNo Smart Agent processes found.")
-
-    # Check Docker containers
-    docker_containers = []
-    try:
-        # First look for containers with the standard smart-agent- prefix
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "name=smart-agent-", "--format", "{{.Names}} - {{.Status}}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-
-        if result.returncode == 0 and result.stdout.strip():
-            for line in result.stdout.strip().split('\n'):
-                if line.strip():
-                    docker_containers.append(line.strip())
-
-        # Also look for tool-specific containers like mcp-py-repl
-        # Get the list of tool IDs from the configuration
-        tools_config = config_manager.get_tools_config()
-        for tool_id, tool_config in tools_config.items():
-            if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
-                # Get the container image
-                container_image = tool_config.get("container_image") or tool_config.get("image")
-                if container_image:
-                    # Extract the image name without the tag
-                    image_name = container_image.split("/")[-1].split(":")[0]
-
-                    # Look for containers using this image
-                    result = subprocess.run(
-                        ["docker", "ps", "--filter", f"ancestor={container_image}", "--format", "{{.ID}} - {{.Names}} - {{.Status}}"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        check=False,
-                    )
-
-                    if result.returncode == 0 and result.stdout.strip():
-                        for line in result.stdout.strip().split('\n'):
-                            if line.strip():
-                                docker_containers.append(f"{tool_id} ({image_name}) - {line.strip()}")
-
-        # Also check for supergateway processes running Docker commands
-        # This is needed for Docker tools that are run with --rm flag
+        # Group processes by service
+        service_groups = {}
         for pid, cmd in running_processes:
+            service_name = None
+
+            # Try to extract service name from command
+            # First check for supergateway processes running Docker commands
             if "supergateway" in cmd and "docker run" in cmd:
                 # This is a Docker-based tool running through supergateway
-                # Try to match with any Docker-based tool
-                matched = False
-                for tool_id, tool_config in tools_config.items():
+                # Try to match with tool configurations
+                for tool_id, tool_config in config_manager.get_tools_config().items():
                     if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
-                        container_image = tool_config.get("container_image") or tool_config.get("image")
+                        container_image = tool_config.get("container_image")
                         if container_image:
-                            # Check for exact image match
-                            if container_image in cmd:
-                                # Extract the image name without the tag
-                                image_name = container_image.split("/")[-1].split(":")[0]
-                                docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
-                                matched = True
-                                break
-
-                            # Also check for just the image name without registry
-                            image_name = container_image.split("/")[-1].split(":")[0]
-                            if image_name in cmd:
-                                docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
-                                matched = True
-                                break
-
-                # If no match was found but it's clearly a Docker command, add a generic entry
-                if not matched and "docker run" in cmd:
-                    # Try to extract the image name from the command
-                    cmd_parts = cmd.split()
-                    for i, part in enumerate(cmd_parts):
-                        if part == "ghcr.io" and i+1 < len(cmd_parts):
-                            image_path = cmd_parts[i] + "/" + cmd_parts[i+1]
-                            image_name = image_path.split("/")[-1].split(":")[0]
-                            # Look for a matching tool ID
-                            for tool_id, tool_config in tools_config.items():
-                                if tool_config.get("enabled", False) and tool_config.get("type") == "docker" and image_name in tool_config.get("container_image", ""):
-                                    docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
-                                    matched = True
-                                    break
-                            if matched:
-                                break
-
-                # Check for any Docker container images that might be in the command
-                # but weren't matched by the tool_id loop above
-                for tool_id, tool_config in tools_config.items():
-                    if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
-                        container_image = tool_config.get("container_image", "")
-                        # Extract just the image name without the registry and tag
-                        if container_image:
+                            # Extract just the image name without the registry and tag
                             image_parts = container_image.split("/")
                             if len(image_parts) > 0:
                                 image_name = image_parts[-1].split(":")[0]  # Get the name without the tag
-                                if image_name in cmd and not any(tool_id in container for container in docker_containers):
-                                    docker_containers.append(f"{tool_id} ({image_name}) - Running via supergateway (PID {pid})")
+                                if image_name in cmd:
+                                    service_name = tool_id
                                     break
+            else:
+                # For non-Docker tools, try to match with tool configurations
+                for tool_id, tool_config in config_manager.get_tools_config().items():
+                    if tool_config.get("enabled", False) and tool_config.get("type") == "uvx":
+                        # Get the repository URL
+                        repo = tool_config.get("repository", "")
+                        if repo:
+                            # Extract the tool name from the repository URL
+                            tool_name = repo.split("/")[-1]
+                            # Remove git+ prefix if present
+                            if tool_name.startswith("git+"):
+                                tool_name = tool_name[4:]
+                            # Remove .git suffix if present
+                            if tool_name.endswith(".git"):
+                                tool_name = tool_name[:-4]
 
-        # Make sure we don't have duplicate containers with the same name prefix
-        unique_containers = {}
-        for container in docker_containers:
-            name = container.split(" - ")[0]
-            # Only keep the most recently started container for each name
-            if name not in unique_containers:
-                unique_containers[name] = container
+                            if tool_name in cmd:
+                                service_name = tool_id
+                                break
+            # Add more mappings as needed
 
-        docker_containers = list(unique_containers.values())
-    except Exception as e:
-        print(f"Error checking Docker containers: {e}")
+            if service_name:
+                if service_name not in service_groups:
+                    service_groups[service_name] = []
+                service_groups[service_name].append(pid)
 
-    # Display Docker containers
-    if docker_containers:
-        print("\nRunning Docker Containers:")
-        print("-------------------------")
-        for container in docker_containers:
-            print(container)
-    else:
-        print("\nNo Smart Agent Docker containers found.")
-
-    # Count tool-specific Docker containers
-    tool_containers = 0
-    litellm_containers = 0
-    docker_pids = set()  # Track PIDs that are already counted as Docker containers
-
-    for container in docker_containers:
-        if "smart-agent-litellm-proxy" in container:
-            litellm_containers += 1
+        # Display running processes grouped by service
+        if service_groups:
+            print("\nRunning Tool Services:")
+            print("-----------------")
+            for service, pids in service_groups.items():
+                print(f"Tool: {service} (PID {pids[0]})")
         else:
-            # Extract PID if this is a supergateway process
-            pid_match = None
+            print("\nNo Smart Agent processes found.")
+
+        # Check Docker containers
+        docker_containers = []
+        try:
+            # First look for containers with the standard smart-agent- prefix
+            result = subprocess.run(
+                ["docker", "ps", "--filter", "name=smart-agent-", "--format", "{{.Names}} - {{.Status}}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().split('\n'):
+                    if line.strip():
+                        docker_containers.append(line.strip())
+
+            # Also look for tool-specific containers like mcp-py-repl
+            # Get the list of tool IDs from the configuration
+            tools_config = config_manager.get_tools_config()
+            for tool_id, tool_config in tools_config.items():
+                if tool_config.get("enabled", False) and tool_config.get("type") == "docker":
+                    container_image = tool_config.get("container_image", "") or tool_config.get("image", "")
+                    if container_image:
+                        # Extract the image name without the tag
+                        image_name = container_image.split("/")[-1].split(":")[0]
+
+                        # Look for containers using this image
+                        try:
+                            result = subprocess.run(
+                                ["docker", "ps", "--filter", f"ancestor={container_image}", "--format", "{{.ID}} - {{.Names}} - {{.Status}}"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                check=False,
+                            )
+
+                            if result.returncode == 0 and result.stdout.strip():
+                                for line in result.stdout.strip().split('\n'):
+                                    if line.strip():
+                                        docker_containers.append(f"{tool_id} ({image_name}) - {line.strip()}")
+                        except Exception as e:
+                            print(f"Error searching for container with image {container_image}: {e}")
+
+                        # Also try to find containers by image name without registry
+                        try:
+                            result = subprocess.run(
+                                ["docker", "ps", "--filter", f"ancestor={image_name}", "--format", "{{.ID}} - {{.Names}} - {{.Status}}"],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                check=False,
+                            )
+
+                            if result.returncode == 0 and result.stdout.strip():
+                                for line in result.stdout.strip().split('\n'):
+                                    if line.strip():
+                                        docker_containers.append(f"{tool_id} ({image_name}) - {line.strip()}")
+                        except Exception as e:
+                            print(f"Error searching for container with image name {image_name}: {e}")
+        except Exception as e:
+            print(f"Error checking Docker containers: {e}")
+
+        # Display Docker containers
+        if docker_containers:
+            print("\nRunning Docker Containers:")
+            print("-------------------------")
+            for container in docker_containers:
+                print(container)
+        else:
+            print("\nNo Smart Agent Docker containers found.")
+
+        # Count tool-specific Docker containers
+        tool_containers = 0
+        litellm_containers = 0
+        docker_pids = set()  # Track PIDs that are already counted as Docker containers
+
+        for container in docker_containers:
+            if "smart-agent-litellm-proxy" in container:
+                litellm_containers += 1
+            else:
+                # Extract PID if this is a supergateway process
+                pid_match = None
+                if "Running via supergateway (PID " in container:
+                    pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
+                    try:
+                        pid_match = int(pid_str)
+                        docker_pids.add(pid_match)
+                    except ValueError:
+                        pass
+                tool_containers += 1
+
+        # Count unique services (not individual processes)
+        # We only want to count each service once, not every process
+        unique_services = len(service_groups)
+
+        # Get a list of all Docker-based tool PIDs
+        docker_tool_pids = set()
+        docker_tool_ids = set()
+        for container in docker_containers:
             if "Running via supergateway (PID " in container:
-                pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
                 try:
-                    pid_match = int(pid_str)
-                    docker_pids.add(pid_match)
-                except ValueError:
+                    # Extract the tool ID from the container string
+                    tool_id = container.split(" (")[0]
+                    docker_tool_ids.add(tool_id)
+
+                    # Extract the PID from the container string
+                    pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
+                    docker_tool_pids.add(int(pid_str))
+                except (ValueError, IndexError):
                     pass
-            tool_containers += 1
 
-    # Count unique services (not individual processes)
-    # We only want to count each service once, not every process
-    unique_services = len(service_groups)
+        # Count total processes (for informational purposes)
+        # But exclude Docker-based tool PIDs that are already counted as containers
+        total_processes = 0
+        for service, pids in service_groups.items():
+            # Skip services that are already counted as Docker containers
+            if service in docker_tool_ids:
+                continue
 
-    # Get a list of all Docker-based tool PIDs
-    docker_tool_pids = set()
-    docker_tool_ids = set()
+            # Count the processes for this service
+            for pid in pids:
+                if pid not in docker_tool_pids:
+                    total_processes += 1
+
+        # Show summary
+        if service_groups or docker_containers:
+            # Calculate the actual number of tool services (excluding Docker tools counted twice)
+            actual_tool_services = unique_services - len(docker_tool_ids)
+
+            print(f"\nStatus: Smart Agent is RUNNING with {total_processes} processes and {len(docker_containers)} containers")
+            print(f"({actual_tool_services} tool services, {tool_containers} tool containers, {litellm_containers} LiteLLM proxy).")
+        else:
+            print("\nStatus: No Smart Agent services are currently running.")
+
+    except Exception as e:
+        print(f"Error checking services: {e}")
+
+    # Make sure we don't have duplicate containers with the same name prefix
+    unique_containers = {}
     for container in docker_containers:
-        if "Running via supergateway (PID " in container:
-            try:
-                # Extract the tool ID from the container string
-                tool_id = container.split(" (")[0]
-                docker_tool_ids.add(tool_id)
+        name = container.split(" - ")[0]
+        # Only keep the most recently started container for each name
+        if name not in unique_containers:
+            unique_containers[name] = container
 
-                # Extract the PID from the container string
-                pid_str = container.split("Running via supergateway (PID ")[1].split(")")[0]
-                docker_tool_pids.add(int(pid_str))
-            except (ValueError, IndexError):
-                pass
-
-    # Count total processes (for informational purposes)
-    # But exclude Docker-based tool PIDs that are already counted as containers
-    total_processes = 0
-    for service, pids in service_groups.items():
-        # Skip services that are already counted as Docker containers
-        if service in docker_tool_ids:
-            continue
-
-        # Count the processes for this service
-        for pid in pids:
-            if pid not in docker_tool_pids:
-                total_processes += 1
-
-    # Show summary
-    if service_groups or docker_containers:
-        # Calculate the actual number of tool services (excluding Docker tools counted twice)
-        actual_tool_services = unique_services - len(docker_tool_ids)
-
-        print(f"\nStatus: Smart Agent is RUNNING with {total_processes} processes and {len(docker_containers)} containers")
-        print(f"({actual_tool_services} tool services, {tool_containers} tool containers, {litellm_containers} LiteLLM proxy).")
-    else:
-        print("\nStatus: No Smart Agent services are currently running.")
-
+    docker_containers = list(unique_containers.values())
 
 cli.add_command(status)
 
