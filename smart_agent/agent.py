@@ -305,7 +305,7 @@ class SmartAgent:
         # Check if agent is properly initialized
         if not self.agent:
             logger.error("Agent not initialized. Check configuration.")
-            return "I'm sorry, I couldn't initialize the agent. Please check your configuration."
+            raise ValueError("Agent not initialized. Please check your configuration.")
 
         # Update the system prompt with current date/time if requested
         if update_system_prompt and history and history[0].get("role") == "system":

@@ -877,12 +877,36 @@ def start(config, tools, proxy, all, foreground):
     default=None,
     help="Path to configuration file",
 )
-def stop(config):
+@click.option(
+    "--tools",
+    is_flag=True,
+    help="Stop tool services",
+)
+@click.option(
+    "--proxy",
+    is_flag=True,
+    help="Stop proxy services",
+)
+@click.option(
+    "--all",
+    is_flag=True,
+    help="Stop all services",
+)
+@click.option(
+    "--background",
+    is_flag=True,
+    help="Run in background",
+)
+def stop(config, tools=False, proxy=False, all=False, background=False):
     """
     Stop all running services.
 
     Args:
         config: Path to config file
+        tools: Stop tool services
+        proxy: Stop proxy services
+        all: Stop all services
+        background: Run in background
     """
     print("Stopping tool services...")
 
