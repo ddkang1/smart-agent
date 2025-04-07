@@ -26,43 +26,7 @@ try:
 except ImportError:
     Langfuse = None
 
-
-async def process_agent_message(
-    smart_agent: SmartAgent,
-    conversation_history: List[Dict[str, str]],
-) -> str:
-    """
-    Process a message with the agent and return the response.
-
-    Args:
-        smart_agent: The SmartAgent instance
-        conversation_history: The conversation history
-
-    Returns:
-        The assistant's response
-    """
-    try:
-        # Process the message with the agent
-        result = await smart_agent.process_message(
-            history=conversation_history,
-            max_turns=100,
-            update_system_prompt=True,
-        )
-        
-        # Process the stream events
-        assistant_reply = await SmartAgent.process_stream_events(
-            result=result,
-            callback=None,
-            verbose=True,
-        )
-        
-        return assistant_reply
-    except Exception as e:
-        console.print(f"\\n[bold red]Error processing message:[/] {e}")
-        return f"I'm sorry, I encountered an error: {str(e)}. Please try again."
-
-
-def run_chat_loop(config_manager: ConfigManager) -> None:
+def run_chat_loop(config_manager: ConfigManager):
     """
     Run the chat loop.
 
@@ -75,8 +39,7 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
 
     # Check if API key is set
     if not api_key:
-        console.print("[bold red]Error:[/] API key is not set in config.yaml or environment variable.")
-        console.print("Please set the api_key in config/config.yaml or use OPENAI_API_KEY environment variable.")
+        print("Error: API key is not set in config.yaml or environment variable.")
         return
 
     # Get model configuration
@@ -89,30 +52,26 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
     langfuse = None
 
     # Initialize Langfuse if enabled
-    if langfuse_enabled and Langfuse:
+    if langfuse_enabled:
         try:
+            from langfuse import Langfuse
+
             langfuse = Langfuse(
                 public_key=langfuse_config.get("public_key", ""),
                 secret_key=langfuse_config.get("secret_key", ""),
                 host=langfuse_config.get("host", "https://cloud.langfuse.com"),
             )
-            console.print("[green]Langfuse monitoring enabled[/]")
-        except Exception as e:
-            console.print(f"[yellow]Error initializing Langfuse: {e}[/]")
+            print("Langfuse monitoring enabled")
+        except ImportError:
+            print(
+                "Langfuse package not installed. Run 'pip install langfuse' to enable monitoring."
+            )
             langfuse_enabled = False
-    elif langfuse_enabled:
-        console.print(
-            "[yellow]Langfuse package not installed. Run 'pip install langfuse' to enable monitoring.[/]"
-        )
-        langfuse_enabled = False
 
     try:
-        # Check if required packages are installed
-        if not AsyncOpenAI:
-            console.print(
-                "[bold red]Required packages not installed. Run 'pip install openai agent' to use the agent.[/]"
-            )
-            return
+        # Import required libraries
+        from openai import AsyncOpenAI
+        from smart_agent.agent import SmartAgent
 
         # Initialize AsyncOpenAI client
         client = AsyncOpenAI(
@@ -131,7 +90,7 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
         # Create MCP server list for the agent
         mcp_servers = []
         for tool_id, tool_name, tool_url in enabled_tools:
-            console.print(f"Adding {tool_name} at {tool_url} to agent")
+            print(f"Adding {tool_name} at {tool_url} to agent")
             mcp_servers.append(tool_url)
 
         # Create the agent - using SmartAgent wrapper class
@@ -142,15 +101,17 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
             system_prompt=PromptGenerator.create_system_prompt(),
         )
 
-        console.print(f"Agent initialized with {len(mcp_servers)} tools")
+        print(f"Agent initialized with {len(mcp_servers)} tools")
 
-    except Exception as e:
-        console.print(f"[bold red]Error initializing agent:[/] {e}")
+    except ImportError:
+        print(
+            "Required packages not installed. Run 'pip install openai agent' to use the agent."
+        )
         return
 
-    console.print("\n[bold]Smart Agent Chat[/]")
-    console.print("Type 'exit' or 'quit' to end the conversation")
-    console.print("Type 'clear' to clear the conversation history")
+    print("\nSmart Agent Chat")
+    print("Type 'exit' or 'quit' to end the conversation")
+    print("Type 'clear' to clear the conversation history")
 
     # Initialize conversation history
     conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
@@ -162,7 +123,7 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
 
         # Check for exit command
         if user_input.lower() in ["exit", "quit"]:
-            console.print("Exiting chat...")
+            print("Exiting chat...")
             break
 
         # Check for clear command
@@ -177,18 +138,112 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
                 mcp_servers=mcp_servers,
                 system_prompt=PromptGenerator.create_system_prompt(),
             )
-            console.print("Conversation history cleared")
+            print("Conversation history cleared")
             continue
 
         # Add the user message to history
         conversation_history.append({"role": "user", "content": user_input})
 
         # Get assistant response
-        console.print("\nAssistant: ", end="")
+        print("\nAssistant: ", end="", flush=True)
 
         try:
+            # Use the agent for streaming response
+            async def run_agent():
+                # Add the user message to history
+                history = conversation_history.copy()
+
+                # Get the MCP server URLs
+                mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
+
+                # Create the OpenAI client
+                client = AsyncOpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                )
+
+                # Import required classes
+                from agents.mcp import MCPServerSse
+                from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+
+                # Create MCP servers using the same pattern as research.py
+                mcp_servers_objects = []
+                for url in mcp_urls:
+                    mcp_servers_objects.append(MCPServerSse(params={"url": url}))
+
+                # Connect to all MCP servers
+                for server in mcp_servers_objects:
+                    await server.connect()
+
+                try:
+                    # Create the agent directly like in research.py
+                    agent = Agent(
+                        name="Assistant",
+                        instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
+                        model=OpenAIChatCompletionsModel(
+                            model=model_name,
+                            openai_client=client,
+                        ),
+                        mcp_servers=mcp_servers_objects,
+                    )
+
+                    # Run the agent with the conversation history
+                    result = Runner.run_streamed(agent, history, max_turns=100)
+                    assistant_reply = ""
+                    is_thought = False
+
+                    # Process the stream events exactly like in research.py
+                    async for event in result.stream_events():
+                        if event.type == "raw_response_event":
+                            continue
+                        elif event.type == "agent_updated_stream_event":
+                            continue
+                        elif event.type == "run_item_stream_event":
+                            if event.item.type == "tool_call_item":
+                                try:
+                                    arguments_dict = json.loads(event.item.raw_item.arguments)
+                                    key, value = next(iter(arguments_dict.items()))
+                                    if key == "thought":
+                                        is_thought = True
+                                        print(f"\n[thought]:\n{value}", flush=True)
+                                        assistant_reply += "\n[thought]: " + value
+                                    else:
+                                        is_thought = False
+                                        print(f"\n[{key}]:\n{value}", flush=True)
+                                except (json.JSONDecodeError, StopIteration) as e:
+                                    print(f"\n[Error parsing tool call]: {e}", flush=True)
+                            elif event.item.type == "tool_call_output_item":
+                                if not is_thought:
+                                    try:
+                                        output_text = json.loads(event.item.output).get("text", "")
+                                        print(f"\n[Tool Output]:\n{output_text}", flush=True)
+                                    except json.JSONDecodeError:
+                                        print(f"\n[Tool Output]:\n{event.item.output}", flush=True)
+                            elif event.item.type == "message_output_item":
+                                role = event.item.raw_item.role
+                                text_message = ItemHelpers.text_message_output(event.item)
+                                if role == "assistant":
+                                    print(f"\n[{role}]:\n{text_message}", flush=True)
+                                    assistant_reply += "\n[response]: " + text_message
+                                else:
+                                    print(f"\n[{role}]:\n{text_message}", flush=True)
+
+                    return assistant_reply.strip()
+                finally:
+                    # Clean up MCP servers
+                    for server in mcp_servers_objects:
+                        if hasattr(server, 'cleanup') and callable(server.cleanup):
+                            try:
+                                if asyncio.iscoroutinefunction(server.cleanup):
+                                    await server.cleanup()  # Use await for async cleanup
+                                else:
+                                    server.cleanup()  # Call directly for sync cleanup
+                            except Exception as e:
+                                print(f"Error during server cleanup: {e}")
+
             # Run the agent in an event loop
-            assistant_response = asyncio.run(process_agent_message(smart_agent, conversation_history))
+            import asyncio
+            assistant_response = asyncio.run(run_agent())
 
             # Append the assistant's response to maintain context
             conversation_history.append({"role": "assistant", "content": assistant_response})
@@ -201,15 +256,27 @@ def run_chat_loop(config_manager: ConfigManager) -> None:
                         metadata={"model": model_name, "temperature": temperature},
                     )
                     trace.generation(
-                        name="chat_response",
+                        name="assistant_response",
                         model=model_name,
                         prompt=user_input,
-                        completion=assistant_response,
+                        completion="Agent response (not captured)",
                     )
                 except Exception as e:
-                    console.print(f"[yellow]Error logging to Langfuse: {e}[/]")
+                    print(f"Langfuse logging error: {e}")
+
+        except KeyboardInterrupt:
+            print("\nOperation interrupted by user.")
+            continue
+        except asyncio.CancelledError:
+            print("\nOperation cancelled.")
+            continue
         except Exception as e:
-            console.print(f"[bold red]Error:[/] {e}")
+            print(f"\nError: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("\nChat session ended")
+
 
 
 @click.command()
