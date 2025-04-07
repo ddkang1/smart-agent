@@ -6,15 +6,26 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
+# Skip the test if agents package is not available
+try:
+    from agents import OpenAIChatCompletionsModel
+    agents_available = True
+except ImportError:
+    agents_available = False
+
 from smart_agent.commands.start import start_tools
 from smart_agent.agent import SmartAgent
+
+
+# Skip all tests in this module if agents package is not available
+pytestmark = pytest.mark.skipif(not agents_available, reason="agents package not available")
 
 
 class TestToolManagement:
     """Test suite for tool management integration."""
 
     @pytest.mark.asyncio
-    @patch("smart_agent.commands.start.subprocess.Popen")  # Patch the specific import path
+    @patch("subprocess.Popen")  # Patch the global subprocess.Popen
     @patch("agents.OpenAIChatCompletionsModel")
     async def test_tool_launch_and_agent_integration(self, mock_model, mock_popen):
         """Test launching tools and using them with the agent."""
