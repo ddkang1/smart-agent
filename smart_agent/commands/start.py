@@ -221,7 +221,22 @@ def start(config, background, debug):
 
     if should_start_litellm:
         console.print("[bold]Starting LiteLLM proxy...[/]")
-        pid = proxy_manager.launch_litellm_proxy(config_manager, background)
+
+        # Check if the proxy is already running
+        proxy_status = proxy_manager.get_litellm_proxy_status()
+
+        if proxy_status["running"]:
+            console.print(f"[green]LiteLLM proxy is already running on port {proxy_status['port']}[/]")
+            pid = 999999  # Dummy PID
+        else:
+            # If the container exists but is not running, restart it
+            if proxy_status["container_id"]:
+                console.print(f"[yellow]LiteLLM proxy container exists but is not running. Restarting...[/]")
+                pid = proxy_manager.restart_litellm_proxy(config_manager, background)
+            else:
+                # Otherwise, launch a new container
+                pid = proxy_manager.launch_litellm_proxy(config_manager, background)
+
         if pid:
             console.print(f"[green]LiteLLM proxy started successfully[/]")
         else:

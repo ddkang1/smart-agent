@@ -132,13 +132,17 @@ class ProxyManager:
             cmd.extend([
                 "--config", "/app/config.yaml",
                 "--port", str(api_port),
+                "--host", "0.0.0.0",  # Bind to all interfaces
                 "--num_workers", "8"
             ])
         else:
             # Add image only if no config file
             cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
-            # Add port argument
-            cmd.extend(["--port", str(api_port)])
+            # Add port and host arguments
+            cmd.extend([
+                "--port", str(api_port),
+                "--host", "0.0.0.0"  # Bind to all interfaces
+            ])
 
         # Print the command for debugging
         if self.debug:
@@ -175,6 +179,28 @@ class ProxyManager:
         except Exception as e:
             logger.error(f"Error launching LiteLLM proxy: {str(e)}")
             return None
+
+    def restart_litellm_proxy(self, config_manager, background: bool = True) -> Optional[int]:
+        """
+        Restart the LiteLLM proxy if it's not running.
+
+        Args:
+            config_manager: Configuration manager instance
+            background: Whether to run in background
+
+        Returns:
+            Process ID if successful, None otherwise
+        """
+        if self.debug:
+            logger.debug("Restarting LiteLLM proxy...")
+        else:
+            logger.info("Restarting LiteLLM proxy...")
+
+        # First stop the proxy if it's running
+        self.stop_litellm_proxy()
+
+        # Then start it again
+        return self.launch_litellm_proxy(config_manager, background)
 
     def stop_litellm_proxy(self) -> bool:
         """
@@ -216,6 +242,22 @@ class ProxyManager:
                         logger.debug(f"Successfully stopped LiteLLM proxy container '{container_name}'")
                     else:
                         logger.info(f"Successfully stopped LiteLLM proxy container '{container_name}'")
+
+                    # Also remove the container to ensure a clean restart
+                    rm_result = subprocess.run(
+                        ["docker", "rm", container_name],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+
+                    if rm_result.returncode == 0:
+                        if self.debug:
+                            logger.debug(f"Successfully removed LiteLLM proxy container '{container_name}'")
+                    else:
+                        logger.warning(f"Failed to remove LiteLLM proxy container: {rm_result.stderr}")
+
                     success = True
                 else:
                     logger.warning(f"Failed to stop LiteLLM proxy container: {stop_result.stderr}")
@@ -285,7 +327,16 @@ class ProxyManager:
         }
 
         try:
-            # Check if container exists and is running
+            # First check if container is running (only running containers)
+            running_result = subprocess.run(
+                ["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.ID}}|{{.Ports}}|{{.Image}}|{{.Status}}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            # Check if container exists (including stopped containers)
             result = subprocess.run(
                 ["docker", "ps", "-a", "--filter", f"name={container_name}", "--format", "{{.ID}}|{{.Ports}}|{{.Image}}|{{.Status}}"],
                 stdout=subprocess.PIPE,
@@ -293,6 +344,13 @@ class ProxyManager:
                 text=True,
                 check=False,
             )
+
+            # If the container is running, use that result
+            if running_result.stdout.strip():
+                result = running_result
+                status["running"] = True
+                if self.debug:
+                    logger.debug(f"LiteLLM proxy container is running")
 
             if result.stdout.strip():
                 # Parse the output
