@@ -306,6 +306,8 @@ class ProcessManager:
 
                 # If we found a container ID, stop it
                 if container_found and docker_container_id:
+                    if self.debug:
+                        logger.debug(f"Stopping Docker container {docker_container_id} for {tool_id}")
                     stop_cmd = f"docker stop {docker_container_id}"
                     stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
                     if stop_result.returncode == 0:
@@ -316,13 +318,56 @@ class ProcessManager:
                 else:
                     # If we couldn't find a specific container, try a more general approach
                     # Look for any container that might be related to this tool
+
+                    # 1. Try by tool name
                     tool_name = tool_id.replace("_", "-")
-                    # This will find and stop any container with the tool name in its command line
+                    if self.debug:
+                        logger.debug(f"Trying to find Docker containers by name pattern: {tool_name}")
+                    # This will find and stop any container with the tool name in its name
                     find_cmd = f"docker ps -q --filter name={tool_name} | xargs -r docker stop"
                     stop_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
                     if stop_result.returncode == 0 and stop_result.stdout.strip():
                         success = True
                         logger.info(f"Stopped Docker containers for {tool_id} by name")
+
+                    # 2. Try by image pattern for common tool images
+                    if not success and "repl" in tool_id.lower():
+                        if self.debug:
+                            logger.debug(f"Trying to find Docker containers for {tool_id} by image pattern: mcp-py-repl")
+                        # For python_repl, try to find containers with mcp-py-repl image
+                        find_cmd = "docker ps -q --filter ancestor=ghcr.io/ddkang1/mcp-py-repl:latest | xargs -r docker stop"
+                        stop_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                        if stop_result.returncode == 0 and stop_result.stdout.strip():
+                            success = True
+                            logger.info(f"Stopped Docker containers for {tool_id} by image pattern")
+
+                    # 3. Try a more generic approach - find all containers and check their command lines
+                    if not success:
+                        if self.debug:
+                            logger.debug(f"Trying to find Docker containers by inspecting all running containers")
+                        # Get all running containers
+                        find_cmd = "docker ps -a --format \"{{.ID}}|{{.Image}}|{{.Command}}\""
+                        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                        if result.stdout.strip():
+                            for line in result.stdout.strip().split('\n'):
+                                parts = line.split('|')
+                                if len(parts) >= 3:
+                                    container_id = parts[0]
+                                    image = parts[1]
+                                    command = parts[2]
+
+                                    # Check for any pattern that might match our tool
+                                    if ("repl" in tool_id.lower() and ("repl" in image.lower() or "python" in image.lower())) or \
+                                       (tool_name in image.lower()) or \
+                                       (tool_id in image.lower()):
+                                        if self.debug:
+                                            logger.debug(f"Found matching container {container_id} with image {image}")
+                                        # Stop this container
+                                        stop_cmd = f"docker stop {container_id}"
+                                        stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                                        if stop_result.returncode == 0:
+                                            success = True
+                                            logger.info(f"Stopped Docker container {container_id} for {tool_id}")
             except Exception as e:
                 logger.warning(f"Error stopping Docker container for {tool_id}: {e}")
 

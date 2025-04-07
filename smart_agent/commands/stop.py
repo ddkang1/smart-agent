@@ -83,7 +83,13 @@ def stop_tools(
     is_flag=True,
     help="Stop all processes, including those not in the configuration",
 )
-def stop(config, tools, all):
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug mode for verbose logging",
+)
+def stop(config, tools, all, debug):
     """
     Stop all tool services.
 
@@ -95,9 +101,16 @@ def stop(config, tools, all):
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Create process manager and proxy manager
-    process_manager = ProcessManager()
-    proxy_manager = ProxyManager()
+    # Create process manager and proxy manager with debug mode if requested
+    process_manager = ProcessManager(debug=debug)
+    proxy_manager = ProxyManager(debug=debug)
+
+    if debug:
+        # Set up logging for debugging
+        logging.basicConfig(level=logging.DEBUG)
+        logger = logging.getLogger("smart_agent")
+        logger.setLevel(logging.DEBUG)
+        console.print("[yellow]Debug mode enabled. Verbose logging will be shown.[/]")
 
     # Stop tools
     console.print("[bold]Stopping tool services...[/]")
