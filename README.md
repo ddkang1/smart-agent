@@ -210,6 +210,21 @@ Smart Agent uses YAML configuration files located in the `config` directory:
 
 The configuration system has been refactored to eliminate duplication between files. The main config now references the LiteLLM config file for model definitions, creating a single source of truth.
 
+### LiteLLM Proxy
+
+Smart Agent can automatically launch a local LiteLLM proxy when needed. This happens when:
+
+1. The `base_url` in your configuration contains `localhost`, `127.0.0.1`, or `0.0.0.0`
+2. The LiteLLM configuration is explicitly enabled with `enabled: true`
+
+The LiteLLM proxy is configured in `config/litellm_config.yaml` and allows you to:
+
+- Use multiple LLM providers through a single API
+- Route requests to different models based on your needs
+- Add authentication, rate limiting, and other features
+
+By default, the LiteLLM proxy binds to `0.0.0.0:4000`, allowing connections from any IP address.
+
 ### Configuration Structure
 
 The main configuration file (`config/config.yaml`) has the following structure:
@@ -218,6 +233,7 @@ The main configuration file (`config/config.yaml`) has the following structure:
 # API Configuration
 api:
   provider: "proxy"  # Options: anthropic, bedrock, proxy
+  # Using localhost, 127.0.0.1, or 0.0.0.0 in base_url will automatically start a local LiteLLM proxy
   base_url: "http://0.0.0.0:4000"
 
 # Model Configuration

@@ -3,7 +3,7 @@
 
 # LLM API Configuration
 llm:
-  base_url: "http://localhost:4000"          # Base URL for LLM API (local LiteLLM proxy)
+  base_url: "http://localhost:4000"          # Use localhost, 127.0.0.1, or 0.0.0.0 to automatically start a local LiteLLM proxy
   model: "claude-3-7-sonnet-20250219"        # Model to use for generation
   api_key: "sk-any-key"                      # API key for local LiteLLM proxy
   temperature: 1.0                           # Temperature for generation (0.0-1.0)

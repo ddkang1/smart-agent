@@ -210,8 +210,8 @@ def start(config, background, debug):
     # Check if we should start the LiteLLM proxy
     should_start_litellm = False
 
-    # Check if API base URL is localhost
-    if api_base_url and ("localhost" in api_base_url or "127.0.0.1" in api_base_url):
+    # Check if API base URL is a local address (localhost, 127.0.0.1, or 0.0.0.0)
+    if api_base_url and ("localhost" in api_base_url or "127.0.0.1" in api_base_url or "0.0.0.0" in api_base_url):
         should_start_litellm = True
 
     # Check if LiteLLM is explicitly enabled in config
