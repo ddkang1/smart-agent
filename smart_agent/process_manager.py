@@ -249,15 +249,9 @@ class ProcessManager:
                 container_found = False
                 docker_container_id = None
 
-                # 1. Try to find containers by the tool ID (converted to container name format)
-                tool_name = tool_id.replace("_", "-")
-                find_cmd = f"docker ps -q --filter name={tool_name}"
-                result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                if result.stdout.strip():
-                    docker_container_id = result.stdout.strip()
-                    container_found = True
-                    if self.debug:
-                        logger.debug(f"Found Docker container {docker_container_id} by name {tool_name}")
+                # We won't rely on container names as they can be randomly generated
+                # Instead, focus on extracting the image name from the command line
+                # and using that to find containers
 
                 # 2. Try to extract the Docker image name from the command line
                 if not container_found and docker_cmd_line:
@@ -355,8 +349,11 @@ class ProcessManager:
                                     container_id = parts[0]
                                     image = parts[1]
 
-                                    # Check if this is a relevant container
-                                    if "mcp-py-repl" in image or "repl" in image.lower():
+                                    # Check if this is a relevant container by comparing with the extracted image
+                                    # or by looking for any similarity with the tool ID
+                                    if (docker_image and docker_image in image) or \
+                                       (tool_id.lower() in image.lower()) or \
+                                       (tool_id.replace("_", "-").lower() in image.lower()):
                                         if self.debug:
                                             logger.debug(f"Found container {container_id} with image {image}")
                                         # Stop this container
@@ -382,9 +379,10 @@ class ProcessManager:
                                     command = parts[2]
 
                                     # Check for any pattern that might match our tool
-                                    if ("repl" in tool_id.lower() and ("repl" in image.lower() or "python" in image.lower())) or \
-                                       (tool_name in image.lower()) or \
-                                       (tool_id in image.lower()):
+                                    # Compare with extracted image or look for tool ID in image name
+                                    if (docker_image and docker_image in image) or \
+                                       (tool_id.lower() in image.lower()) or \
+                                       (tool_id.replace("_", "-").lower() in image.lower()):
                                         if self.debug:
                                             logger.debug(f"Found matching container {container_id} with image {image}")
                                         # Stop this container
