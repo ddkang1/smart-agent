@@ -38,7 +38,7 @@ class TestCliCommands:
             # We need to patch sys.exit to prevent the test from exiting
             with patch("sys.exit"):
                 # We're testing the functionality, not the Click command itself
-                start.callback(config=None, tools=None, background=True)
+                start.callback(config=None, background=True, debug=False)
                 # Verify that launch_tools was called
                 assert mock_launch_tools.called
 
@@ -55,7 +55,7 @@ class TestCliCommands:
         from smart_agent.commands.stop import stop
 
         # Call the internal functionality directly
-        stop.callback(config=None, tools=None, all=True)
+        stop.callback(config=None, tools=None, all=True, debug=False)
 
         # Verify stop_all_processes was called
         assert mock_stop_all.called
