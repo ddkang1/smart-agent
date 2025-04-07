@@ -25,18 +25,31 @@ class ProcessManager:
     for the Smart Agent CLI.
     """
 
-    def __init__(self, config_dir: Optional[str] = None):
+    def __init__(self, config_dir: Optional[str] = None, debug: bool = False):
         """
         Initialize the process manager.
 
         Args:
             config_dir: Directory for configuration files
+            debug: Enable debug mode for verbose logging
         """
         self.config_dir = config_dir or os.path.join(os.path.expanduser("~"), ".smart_agent")
         self.pid_dir = os.path.join(self.config_dir, "pids")
+        self.debug = debug
 
         # Create directories if they don't exist
         os.makedirs(self.pid_dir, exist_ok=True)
+
+        # Set up logging level based on debug flag
+        if self.debug:
+            logger.setLevel(logging.DEBUG)
+            # Add a console handler if not already present
+            if not logger.handlers:
+                console_handler = logging.StreamHandler()
+                console_handler.setLevel(logging.DEBUG)
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                console_handler.setFormatter(formatter)
+                logger.addHandler(console_handler)
 
     def is_port_in_use(self, port: int) -> bool:
         """
@@ -239,62 +252,81 @@ class ProcessManager:
         Returns:
             True if the process is running, False otherwise
         """
-        # First try to find the process using the marker
-        marker = f"SMART_AGENT_TOOL_{tool_id}"
+        if self.debug:
+            logger.debug(f"Checking if tool {tool_id} is running")
 
-        try:
-            if platform.system() == "Windows":
-                # Windows approach - use tasklist and find
-                result = subprocess.run(
-                    ['tasklist', '/FO', 'CSV'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
-                return marker in result.stdout
-            else:
-                # Unix approach - use ps and grep
-                result = subprocess.run(
-                    ['ps', '-ef'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
-                return marker in result.stdout
-        except Exception as e:
-            logger.debug(f"Error checking if tool {tool_id} is running using marker: {e}")
-
-        # Fallback to PID-based check
+        # Get the PID from the PID file
         pid_info = self._load_pid(tool_id)
+        if self.debug:
+            logger.debug(f"PID info for {tool_id}: {pid_info}")
+
         if not pid_info:
+            if self.debug:
+                logger.debug(f"No PID info found for {tool_id}")
             return False
 
         pid = pid_info.get("pid")
         if not pid:
+            if self.debug:
+                logger.debug(f"No PID found in PID info for {tool_id}")
             return False
 
-        # Check if the process is running
+        # Check if the process is running using the PID
+        if self.debug:
+            logger.debug(f"Checking if process with PID {pid} is running for {tool_id}")
+
         try:
             if platform.system() == "Windows":
                 # Windows approach
-                subprocess.check_call(
-                    ['tasklist', '/FI', f'PID eq {pid}'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                if self.debug:
+                    result = subprocess.run(
+                        ['tasklist', '/FI', f'PID eq {pid}'],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    logger.debug(f"Tasklist output for PID {pid}: {result.stdout}")
+                else:
+                    subprocess.check_call(
+                        ['tasklist', '/FI', f'PID eq {pid}'],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                 return True
             else:
-                # Unix approach
-                os.kill(pid, 0)  # Signal 0 doesn't kill the process, just checks if it exists
-                return True
+                # Unix approach - check if process exists
+                try:
+                    # First try to check if the process exists
+                    os.kill(pid, 0)  # Signal 0 doesn't kill the process, just checks if it exists
+                    if self.debug:
+                        logger.debug(f"Process with PID {pid} exists for {tool_id}")
+
+                        # Get process details for debugging
+                        ps_cmd = f"ps -p {pid} -o pid,ppid,cmd"
+                        ps_result = subprocess.run(ps_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                        logger.debug(f"Process details for PID {pid}: {ps_result.stdout}")
+                    return True
+                except ProcessLookupError:
+                    if self.debug:
+                        logger.debug(f"Process with PID {pid} not found for {tool_id}")
+
+                        # Try to find any processes with the tool ID in the command line
+                        find_cmd = f"ps -ef | grep {tool_id} | grep -v grep"
+                        find_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                        if find_result.stdout.strip():
+                            logger.debug(f"Found processes matching {tool_id}: {find_result.stdout}")
+                        else:
+                            logger.debug(f"No processes found matching {tool_id}")
+                    return False
         except (subprocess.CalledProcessError, ProcessLookupError):
             # Process not found
+            if self.debug:
+                logger.debug(f"Process with PID {pid} not found for {tool_id}")
             return False
         except Exception as e:
             # Other error
-            logger.debug(f"Error checking if tool {tool_id} is running using PID: {e}")
+            logger.debug(f"Error checking if tool {tool_id} is running: {e}")
             return False
 
     def get_tool_port(self, tool_id: str) -> Optional[int]:
@@ -307,44 +339,119 @@ class ProcessManager:
         Returns:
             Port number or None if not found
         """
+        if self.debug:
+            logger.debug(f"Getting port for tool {tool_id}")
+
         # First check if the tool is running
-        if not self.is_tool_running(tool_id):
+        is_running = self.is_tool_running(tool_id)
+        if self.debug:
+            logger.debug(f"Tool {tool_id} is running: {is_running}")
+
+        if not is_running:
+            if self.debug:
+                logger.debug(f"Tool {tool_id} is not running, cannot get port")
             return None
 
         # Get the port from the PID file
         pid_info = self._load_pid(tool_id)
+        if self.debug:
+            logger.debug(f"PID info for {tool_id}: {pid_info}")
+
         if pid_info and pid_info.get("port"):
-            return pid_info.get("port")
+            port = pid_info.get("port")
+            if self.debug:
+                logger.debug(f"Found port {port} in PID file for {tool_id}")
+            return port
 
         # Try to extract port from command line
-        marker = f"SMART_AGENT_TOOL_{tool_id}"
+        pid = pid_info.get("pid") if pid_info else None
+        if self.debug:
+            logger.debug(f"Trying to extract port from command line for PID {pid}")
+
+        if pid:
+            try:
+                # Get the command line for this PID
+                if platform.system() != "Windows":
+                    # Unix approach - use ps to get the command line
+                    ps_cmd = f"ps -p {pid} -o command= || ps -p {pid} -o args="
+                    ps_result = subprocess.run(ps_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                    if self.debug:
+                        logger.debug(f"Command line for PID {pid}: {ps_result.stdout}")
+
+                    if ps_result.stdout.strip():
+                        cmd_line = ps_result.stdout.strip()
+                        # Look for --port or -p argument
+                        if "--port" in cmd_line:
+                            parts = cmd_line.split("--port")
+                            if len(parts) > 1:
+                                port_part = parts[1].strip().split()[0]
+                                try:
+                                    port = int(port_part)
+                                    if self.debug:
+                                        logger.debug(f"Found port {port} in command line for {tool_id}")
+                                    return port
+                                except ValueError:
+                                    if self.debug:
+                                        logger.debug(f"Could not parse port from {port_part}")
+                        elif " -p " in cmd_line:
+                            parts = cmd_line.split(" -p ")
+                            if len(parts) > 1:
+                                port_part = parts[1].strip().split()[0]
+                                try:
+                                    port = int(port_part)
+                                    if self.debug:
+                                        logger.debug(f"Found port {port} in command line for {tool_id}")
+                                    return port
+                                except ValueError:
+                                    if self.debug:
+                                        logger.debug(f"Could not parse port from {port_part}")
+            except Exception as e:
+                logger.debug(f"Error extracting port from command line for PID {pid}: {e}")
+
+        # Try to find the port from any process with the tool ID in the command line
+        if self.debug:
+            logger.debug(f"Trying to find port from any process with {tool_id} in the command line")
+
         try:
             if platform.system() != "Windows":
-                # Unix approach - use ps and grep
-                find_cmd = f"ps -ef | grep '{marker}' | grep -v grep"
-                result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, text=True, check=False)
-                if result.stdout.strip():
-                    # Look for --port or -p argument
-                    for line in result.stdout.splitlines():
+                # Look for processes with the tool ID in the command line
+                find_cmd = f"ps -ef | grep {tool_id} | grep -v grep"
+                find_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                if self.debug:
+                    logger.debug(f"Processes matching {tool_id}: {find_result.stdout}")
+
+                if find_result.stdout.strip():
+                    # Look for --port or -p argument in any of the matching processes
+                    for line in find_result.stdout.splitlines():
                         if "--port" in line:
                             parts = line.split("--port")
                             if len(parts) > 1:
                                 port_part = parts[1].strip().split()[0]
                                 try:
-                                    return int(port_part)
+                                    port = int(port_part)
+                                    if self.debug:
+                                        logger.debug(f"Found port {port} in process matching {tool_id}")
+                                    return port
                                 except ValueError:
-                                    pass
+                                    if self.debug:
+                                        logger.debug(f"Could not parse port from {port_part}")
                         elif " -p " in line:
                             parts = line.split(" -p ")
                             if len(parts) > 1:
                                 port_part = parts[1].strip().split()[0]
                                 try:
-                                    return int(port_part)
+                                    port = int(port_part)
+                                    if self.debug:
+                                        logger.debug(f"Found port {port} in process matching {tool_id}")
+                                    return port
                                 except ValueError:
-                                    pass
+                                    if self.debug:
+                                        logger.debug(f"Could not parse port from {port_part}")
         except Exception as e:
-            logger.debug(f"Error extracting port from command line for {tool_id}: {e}")
+            logger.debug(f"Error extracting port from ps output for {tool_id}: {e}")
 
+        if self.debug:
+            logger.debug(f"Could not find port for {tool_id}")
         return None
 
     def _save_pid(self, tool_id: str, pid: int, port: int) -> None:

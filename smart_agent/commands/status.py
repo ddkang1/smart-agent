@@ -144,7 +144,13 @@ def get_tools_status(
     is_flag=True,
     help="Output in JSON format",
 )
-def status(config, tools, json):
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug mode for verbose logging",
+)
+def status(config, tools, json, debug):
     """
     Show the status of all services.
 
@@ -156,8 +162,15 @@ def status(config, tools, json):
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Create process manager
-    process_manager = ProcessManager()
+    # Create process manager with debug mode if requested
+    process_manager = ProcessManager(debug=debug)
+
+    if debug:
+        # Set up logging for debugging
+        logging.basicConfig(level=logging.DEBUG)
+        logger = logging.getLogger("smart_agent")
+        logger.setLevel(logging.DEBUG)
+        console.print("[yellow]Debug mode enabled. Verbose logging will be shown.[/]")
 
     # Get tools status
     tools_status = get_tools_status(config_manager, process_manager)
