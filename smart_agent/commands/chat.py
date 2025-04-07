@@ -187,8 +187,14 @@ def run_chat_loop(config_manager: ConfigManager):
                     elif transport_type == "stdio":
                         command = tool_config.get("command")
                         if command:
-                            # For MCPServerStdio, we need to provide the command directly
-                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, command=command))
+                            # For MCPServerStdio, we need to split the command into command and args
+                            command_parts = command.split()
+                            executable = command_parts[0]
+                            args = command_parts[1:] if len(command_parts) > 1 else []
+                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={
+                                "command": executable,
+                                "args": args
+                            }))
                     # For sse_to_stdio transport, always construct the command from the URL
                     elif transport_type == "sse_to_stdio":
                         # Get the URL from the configuration
