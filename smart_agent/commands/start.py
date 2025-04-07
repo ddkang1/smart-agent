@@ -128,42 +128,34 @@ def start_tools(
                     logger.debug(f"Error extracting hostname from URL '{tool_url}': {e}")
                 pass
 
-        # Get the tool type
-        tool_type = tool_config.get("type", "").lower()
+        # Log the original command
         if process_manager.debug:
-            logger.debug(f"Tool type for {tool_id}: '{tool_type}'")
             logger.debug(f"Original command for {tool_id}: '{command}'")
 
-        # Construct the full command based on the tool type
+        # Construct the full command
         original_command = command
-        if tool_type == "docker":
-            # For Docker commands, first ensure port mapping is included
+
+        # First, handle port parameters based on command type
+        is_docker_command = command.startswith("docker") or "docker run" in command
+
+        if is_docker_command:
+            # For Docker commands, ensure port mapping is included
             if "-p" not in command:
                 command = command.replace("docker run", f"docker run -p {{port}}:{{port}}")
                 if process_manager.debug:
                     logger.debug(f"Added port mapping to Docker command: '{command}'")
-
-            # Then wrap the command in supergateway
-            command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
-            if process_manager.debug:
-                logger.debug(f"Wrapped Docker command in supergateway: '{command}'")
-        elif tool_type == "uvx":
-            # For UVX commands, first ensure port parameter is included
-            if "--port" not in command and "-p" not in command:
-                command = f"{command} --port {{port}}"
-                if process_manager.debug:
-                    logger.debug(f"Added port parameter to UVX command: '{command}'")
-
-            # Then wrap the command in supergateway
-            command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
-            if process_manager.debug:
-                logger.debug(f"Wrapped UVX command in supergateway: '{command}'")
         else:
-            # For other commands, just add port parameter if needed
+            # For non-Docker commands, add --port parameter if not present
             if "--port" not in command and "-p" not in command:
                 command = f"{command} --port {{port}}"
                 if process_manager.debug:
                     logger.debug(f"Added port parameter to command: '{command}'")
+
+        # Then wrap all commands in supergateway
+        command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+
+        if process_manager.debug:
+            logger.debug(f"Wrapped command in supergateway: '{command}'")
 
         if process_manager.debug:
             logger.debug(f"Final command for {tool_id}: '{command}'")
