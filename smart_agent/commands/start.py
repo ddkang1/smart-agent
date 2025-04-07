@@ -61,12 +61,30 @@ def start_tools(
             started_tools[tool_id] = {"status": "already_running", "port": port}
             continue
 
-        # Get the tool command
-        command = config_manager.get_tool_command(tool_id)
-        if not command:
-            console.print(f"[red]No command specified for tool {tool_id}, skipping[/]")
-            console.print(f"[yellow]Please add a 'command' field to the {tool_id} configuration in your tools.yaml file[/]")
-            continue
+        # Get the transport type first
+        transport_type = tool_config.get("transport", "stdio_to_sse").lower()
+
+        # For sse transport type, we don't need a command
+        if transport_type == "sse":
+            command = ""
+        # For sse_to_stdio transport type, we construct the command from the URL
+        elif transport_type == "sse_to_stdio":
+            tool_url = tool_config.get("url")
+            if tool_url:
+                command = f"npx -y supergateway --sse \"{tool_url}\""
+                if process_manager.debug:
+                    logger.debug(f"Constructed command for sse_to_stdio transport: '{command}'")
+            else:
+                console.print(f"[red]No URL specified for sse_to_stdio tool {tool_id}, skipping[/]")
+                console.print(f"[yellow]Please add a 'url' field to the {tool_id} configuration in your tools.yaml file[/]")
+                continue
+        # For all other transport types, get the command from the configuration
+        else:
+            command = config_manager.get_tool_command(tool_id)
+            if not command:
+                console.print(f"[red]No command specified for tool {tool_id}, skipping[/]")
+                console.print(f"[yellow]Please add a 'command' field to the {tool_id} configuration in your tools.yaml file[/]")
+                continue
 
         # Get the tool URL
         tool_url = tool_config.get("url", "")
@@ -113,18 +131,54 @@ def start_tools(
             logger.warning(f"Tool {tool_id} URL specifies port {url_port} but will run on port {port}")
             console.print(f"[yellow]Warning: Tool {tool_id} URL specifies port {url_port} but will run on port {port}[/]")
 
-        # Determine if we need to add port parameters based on the command
-        hostname = "localhost"
-        try:
-            parsed_url = urllib.parse.urlparse(tool_url)
-            hostname = parsed_url.hostname or "localhost"
-            if process_manager.debug:
-                logger.debug(f"Extracted hostname '{hostname}' from URL '{tool_url}'")
-        except Exception as e:
-            if process_manager.debug:
-                logger.debug(f"Error extracting hostname from URL '{tool_url}': {e}")
+        # Get the transport type from the configuration
+        transport_type = tool_config.get("transport", "stdio_to_sse").lower()
 
-        command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+        if process_manager.debug:
+            logger.debug(f"Transport type for {tool_id}: '{transport_type}'")
+            logger.debug(f"Original command for {tool_id}: '{command}'")
+
+        # Skip tool launching for 'sse' transport type (remote tools)
+        if transport_type == "sse":
+            logger.info(f"Skipping launch for {tool_id} as it uses 'sse' transport type (remote tool)")
+            console.print(f"[yellow]Skipping tool {tool_id} (remote tool)[/]")
+            continue
+
+        # For 'stdio' transport type, we use the command directly without any modifications
+        if transport_type == "stdio":
+            # Use the command as is, without any modifications
+            original_command = command  # Store the original command for reference
+            if process_manager.debug:
+                logger.debug(f"Using stdio transport with command: '{command}'")
+        else:
+            # For supergateway-based transport types
+            # Determine if we need to add port parameters based on the command
+            hostname = "localhost"
+            try:
+                parsed_url = urllib.parse.urlparse(tool_url)
+                hostname = parsed_url.hostname or "localhost"
+                if process_manager.debug:
+                    logger.debug(f"Extracted hostname '{hostname}' from URL '{tool_url}'")
+            except Exception as e:
+                if process_manager.debug:
+                    logger.debug(f"Error extracting hostname from URL '{tool_url}': {e}")
+
+            # Handle different transport types
+            if transport_type == "stdio_to_sse":
+                command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+                if process_manager.debug:
+                    logger.debug(f"Using stdio_to_sse transport with command: '{command}'")
+            # stdio_to_ws transport type is no longer supported
+            # elif transport_type == "stdio_to_ws":
+            #     command = f"npx -y supergateway --stdio \"{command}\" --outputTransport ws --port {{port}} --cors"
+            #     if process_manager.debug:
+            #         logger.debug(f"Using stdio_to_ws transport with command: '{command}'")
+            # sse_to_stdio is handled in the command construction section above
+            else:
+                logger.warning(f"Unknown transport type '{transport_type}' for {tool_id}, defaulting to stdio_to_sse")
+                command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+                if process_manager.debug:
+                    logger.debug(f"Using default stdio_to_sse transport with command: '{command}'")
 
         try:
             # Start the tool process
