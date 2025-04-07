@@ -5,6 +5,7 @@ Start command implementation for the Smart Agent CLI.
 import os
 import time
 import logging
+import urllib.parse
 from typing import Dict, List, Optional, Any
 
 import click
@@ -113,53 +114,17 @@ def start_tools(
             console.print(f"[yellow]Warning: Tool {tool_id} URL specifies port {url_port} but will run on port {port}[/]")
 
         # Determine if we need to add port parameters based on the command
-
-        # Get the tool URL to extract hostname
         hostname = "localhost"
-        if tool_url:
-            try:
-                from urllib.parse import urlparse
-                parsed_url = urlparse(tool_url)
-                hostname = parsed_url.hostname or "localhost"
-                if process_manager.debug:
-                    logger.debug(f"Extracted hostname '{hostname}' from URL '{tool_url}'")
-            except Exception as e:
-                if process_manager.debug:
-                    logger.debug(f"Error extracting hostname from URL '{tool_url}': {e}")
-                pass
+        try:
+            parsed_url = urllib.parse.urlparse(tool_url)
+            hostname = parsed_url.hostname or "localhost"
+            if process_manager.debug:
+                logger.debug(f"Extracted hostname '{hostname}' from URL '{tool_url}'")
+        except Exception as e:
+            if process_manager.debug:
+                logger.debug(f"Error extracting hostname from URL '{tool_url}': {e}")
 
-        # Log the original command
-        if process_manager.debug:
-            logger.debug(f"Original command for {tool_id}: '{command}'")
-
-        # Construct the full command
-        original_command = command
-
-        # First, handle port parameters based on command type
-        is_docker_command = command.startswith("docker") or "docker run" in command
-
-        if is_docker_command:
-            # For Docker commands, ensure port mapping is included
-            if "-p" not in command:
-                command = command.replace("docker run", f"docker run -p {{port}}:{{port}}")
-                if process_manager.debug:
-                    logger.debug(f"Added port mapping to Docker command: '{command}'")
-        else:
-            # For non-Docker commands, add --port parameter if not present
-            if "--port" not in command and "-p" not in command:
-                command = f"{command} --port {{port}}"
-                if process_manager.debug:
-                    logger.debug(f"Added port parameter to command: '{command}'")
-
-        # Then wrap all commands in supergateway
         command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
-
-        if process_manager.debug:
-            logger.debug(f"Wrapped command in supergateway: '{command}'")
-
-        if process_manager.debug:
-            logger.debug(f"Final command for {tool_id}: '{command}'")
-            logger.debug(f"Command transformation: '{original_command}' -> '{command}'")
 
         try:
             # Start the tool process
