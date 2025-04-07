@@ -37,14 +37,6 @@ def run_chat_loop(config_manager: ConfigManager):
     Args:
         config_manager: Configuration manager instance
     """
-    # Set log level for httpx and mcp.client.sse to reduce verbose logging
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("mcp.client.sse").setLevel(logging.WARNING)
-
-    # Suppress asyncio error messages about 'Event loop is closed'
-    import warnings
-    warnings.filterwarnings("ignore", message="Event loop is closed")
-
     # Get API configuration
     api_key = config_manager.get_api_key()
     base_url = config_manager.get_api_base_url()
@@ -226,18 +218,8 @@ def run_chat_loop(config_manager: ConfigManager):
                         logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
 
                 # Connect to all MCP servers
-                try:
-                    for server in mcp_servers_objects:
-                        await server.connect()
-                except Exception as e:
-                    logger.error(f"Error connecting to MCP server: {e}")
-                    # Clean up any connected servers
-                    for server in mcp_servers_objects:
-                        try:
-                            await server.disconnect()
-                        except Exception as disconnect_error:
-                            logger.debug(f"Error disconnecting from server: {disconnect_error}")
-                    raise
+                for server in mcp_servers_objects:
+                    await server.connect()
 
                 try:
                     # Create the agent directly like in research.py
@@ -325,59 +307,20 @@ def run_chat_loop(config_manager: ConfigManager):
 
                     return assistant_reply.strip()
                 finally:
-                    # Clean up MCP servers with timeout
+                    # Clean up MCP servers
                     for server in mcp_servers_objects:
-                        try:
-                            # Set a timeout for server cleanup (5 seconds should be enough)
-                            async def cleanup_with_timeout():
-                                try:
-                                    # First try to disconnect
-                                    if hasattr(server, 'disconnect') and callable(server.disconnect):
-                                        await asyncio.wait_for(server.disconnect(), timeout=5.0)
-                                    # Then try cleanup if available
-                                    elif hasattr(server, 'cleanup') and callable(server.cleanup):
-                                        if asyncio.iscoroutinefunction(server.cleanup):
-                                            await asyncio.wait_for(server.cleanup(), timeout=5.0)  # Use await for async cleanup
-                                        else:
-                                            server.cleanup()  # Call directly for sync cleanup
-                                except asyncio.TimeoutError:
-                                    logger.warning(f"Timeout during cleanup of server {server.name if hasattr(server, 'name') else 'unknown'}")
+                        if hasattr(server, 'cleanup') and callable(server.cleanup):
+                            try:
+                                if asyncio.iscoroutinefunction(server.cleanup):
+                                    await server.cleanup()  # Use await for async cleanup
+                                else:
+                                    server.cleanup()  # Call directly for sync cleanup
+                            except Exception as e:
+                                print(f"Error during server cleanup: {e}")
 
-                            # Run the cleanup with timeout
-                            await cleanup_with_timeout()
-                        except Exception as e:
-                            logger.error(f"Error during server cleanup: {e}")
-                            # Continue with other servers even if one fails
-
-            # Run the agent in an event loop with a timeout
+            # Run the agent in an event loop
             import asyncio
-            import signal
-
-            # Define a timeout handler
-            def timeout_handler(signum, frame):
-                raise TimeoutError("Agent execution timed out")
-
-            # Set a timeout (60 seconds should be enough for most responses)
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(60)  # 60 second timeout
-
-            try:
-                # Create a new event loop for each run to prevent resource leaks
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-                # Run the agent with the new loop
-                assistant_response = loop.run_until_complete(run_agent())
-
-                # Clean up the loop
-                loop.close()
-            except TimeoutError as e:
-                logger.error(f"Agent execution timed out: {e}")
-                console.print("[red]Error: The agent took too long to respond. Please try again.[/]")
-                assistant_response = "I apologize, but I was unable to complete my response in time. Please try again with a simpler query."
-            finally:
-                # Cancel the timeout
-                signal.alarm(0)
+            assistant_response = asyncio.run(run_agent())
 
             # Append the assistant's response to maintain context
             conversation_history.append({"role": "assistant", "content": assistant_response})
