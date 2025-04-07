@@ -24,6 +24,7 @@ def start_tools(
     config_manager: ConfigManager,
     process_manager: ProcessManager,
     background: bool = True,
+    start_port: int = 8000,
 ) -> Dict[str, Any]:
     """
     Start tool processes.
@@ -41,6 +42,9 @@ def start_tools(
 
     # Track started tools
     started_tools = {}
+
+    # Track the next available port
+    next_port = start_port
 
     # Start each enabled tool
     for tool_id, tool_config in tools_config.items():
@@ -76,6 +80,16 @@ def start_tools(
                     logger.debug(f"Extracted port {port} from URL {tool_url}")
                 except (IndexError, ValueError):
                     logger.debug(f"Could not extract port from URL {tool_url}")
+
+        # If port is still None, use the next available port
+        if port is None:
+            port = next_port
+            next_port += 1
+        # If the port is already in use by another tool we started, increment it
+        elif any(info.get("port") == port for info in started_tools.values()):
+            logger.debug(f"Port {port} is already in use, finding next available port")
+            port = next_port
+            next_port += 1
 
         # Determine if we need to add port parameters based on the command
 
@@ -154,7 +168,7 @@ def start(config, background):
 
     # Start tools
     console.print("[bold]Starting tool services...[/]")
-    started_tools = start_tools(config_manager, process_manager, background)
+    started_tools = start_tools(config_manager, process_manager, background, start_port=8000)
 
     # Print summary
     console.print("\n[bold]Tool services summary:[/]")
