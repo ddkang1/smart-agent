@@ -37,6 +37,14 @@ def run_chat_loop(config_manager: ConfigManager):
     Args:
         config_manager: Configuration manager instance
     """
+    # Set log level for httpx and mcp.client.sse to reduce verbose logging
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("mcp.client.sse").setLevel(logging.WARNING)
+
+    # Suppress asyncio error messages about 'Event loop is closed'
+    import warnings
+    warnings.filterwarnings("ignore", message="Event loop is closed")
+
     # Get API configuration
     api_key = config_manager.get_api_key()
     base_url = config_manager.get_api_base_url()
@@ -218,8 +226,18 @@ def run_chat_loop(config_manager: ConfigManager):
                         logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
 
                 # Connect to all MCP servers
-                for server in mcp_servers_objects:
-                    await server.connect()
+                try:
+                    for server in mcp_servers_objects:
+                        await server.connect()
+                except Exception as e:
+                    logger.error(f"Error connecting to MCP server: {e}")
+                    # Clean up any connected servers
+                    for server in mcp_servers_objects:
+                        try:
+                            await server.disconnect()
+                        except Exception as disconnect_error:
+                            logger.debug(f"Error disconnecting from server: {disconnect_error}")
+                    raise
 
                 try:
                     # Create the agent directly like in research.py
@@ -309,14 +327,19 @@ def run_chat_loop(config_manager: ConfigManager):
                 finally:
                     # Clean up MCP servers
                     for server in mcp_servers_objects:
-                        if hasattr(server, 'cleanup') and callable(server.cleanup):
-                            try:
+                        try:
+                            # First try to disconnect
+                            if hasattr(server, 'disconnect') and callable(server.disconnect):
+                                await server.disconnect()
+                            # Then try cleanup if available
+                            elif hasattr(server, 'cleanup') and callable(server.cleanup):
                                 if asyncio.iscoroutinefunction(server.cleanup):
                                     await server.cleanup()  # Use await for async cleanup
                                 else:
                                     server.cleanup()  # Call directly for sync cleanup
-                            except Exception as e:
-                                print(f"Error during server cleanup: {e}")
+                        except Exception as e:
+                            logger.error(f"Error during server cleanup: {e}")
+                            # Continue with other servers even if one fails
 
             # Run the agent in an event loop
             import asyncio
