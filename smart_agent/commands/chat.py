@@ -145,7 +145,7 @@ def run_chat_loop(config_manager: ConfigManager):
         conversation_history.append({"role": "user", "content": user_input})
 
         # Get assistant response
-        print("\nAssistant: ", end="", flush=True)
+        # print("\nAssistant: ", end="", flush=True)
 
         try:
             # Use the agent for streaming response
@@ -197,8 +197,8 @@ def run_chat_loop(config_manager: ConfigManager):
                     from rich.panel import Panel
                     from rich.markdown import Markdown
 
-                    # Create a console for rich output
-                    rich_console = Console()
+                    # Create a console for rich output with immediate flushing
+                    rich_console = Console(flush=True)
 
                     # Process the stream events with rich colorful output
                     async for event in result.stream_events():
@@ -214,19 +214,24 @@ def run_chat_loop(config_manager: ConfigManager):
                                     if key == "thought":
                                         is_thought = True
                                         rich_console.print(Panel(value, title="Thought", border_style="cyan", title_align="left"))
+                                        rich_console.file.flush()
                                         assistant_reply += "\n[thought]: " + value
                                     else:
                                         is_thought = False
                                         rich_console.print(Panel(value, title=key, border_style="yellow", title_align="left"))
+                                        rich_console.file.flush()
                                 except (json.JSONDecodeError, StopIteration) as e:
                                     rich_console.print(f"[bold red]Error parsing tool call:[/] {e}")
+                                    rich_console.file.flush()
                             elif event.item.type == "tool_call_output_item":
                                 if not is_thought:
                                     try:
                                         output_text = json.loads(event.item.output).get("text", "")
                                         rich_console.print(Panel(output_text, title="Tool Output", border_style="green", title_align="left"))
+                                        rich_console.file.flush()
                                     except json.JSONDecodeError:
                                         rich_console.print(Panel(event.item.output, title="Tool Output", border_style="green", title_align="left"))
+                                        rich_console.file.flush()
                             elif event.item.type == "message_output_item":
                                 role = event.item.raw_item.role
                                 text_message = ItemHelpers.text_message_output(event.item)
@@ -234,11 +239,14 @@ def run_chat_loop(config_manager: ConfigManager):
                                     # Try to render as markdown if possible
                                     try:
                                         rich_console.print(Panel(Markdown(text_message), title="Assistant", border_style="blue", title_align="left"))
+                                        rich_console.file.flush()
                                     except Exception:
                                         rich_console.print(Panel(text_message, title="Assistant", border_style="blue", title_align="left"))
+                                        rich_console.file.flush()
                                     assistant_reply += "\n[response]: " + text_message
                                 else:
                                     rich_console.print(Panel(text_message, title=role.capitalize(), border_style="magenta", title_align="left"))
+                                    rich_console.file.flush()
 
                     return assistant_reply.strip()
                 finally:
