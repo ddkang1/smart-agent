@@ -79,14 +79,22 @@ class TestToolManagement:
             "repository": "search-tool",
         }
 
+        # Create a mock process manager
+        mock_process_manager = MagicMock()
+        # By default, is_tool_running returns True, which means the tool won't be started
+        # Set it to False so that the tool will be started
+        mock_process_manager.is_tool_running.return_value = False
+        # Mock the start_tool_process method to return a PID and port
+        mock_process_manager.start_tool_process.return_value = (12345, 8001)
+
         # Launch tools with mocked environment
         with patch("os.environ", {}):
             with patch("os.path.exists", return_value=True):
                 with patch("shutil.which", return_value="/usr/bin/npx"):
-                    processes = start_tools(mock_config_manager, process_manager=MagicMock())
+                    processes = start_tools(mock_config_manager, process_manager=mock_process_manager)
 
         # Verify tool process was started
-        assert mock_popen.called
+        assert mock_process_manager.start_tool_process.called
 
         # Create agent with mocked components
         with patch("smart_agent.agent.Agent") as mock_agent_class:
