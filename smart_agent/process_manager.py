@@ -109,16 +109,15 @@ class ProcessManager:
                 )
             else:
                 # Unix approach - ensure process is fully detached
-                # Use nohup to ensure the process continues running even if the terminal is closed
-                nohup_command = f"nohup {command} > /dev/null 2>&1 &"
+                # Use nohup and disown to ensure the process continues running even if the terminal is closed
+                # The '&' at the end runs it in the background, and 'disown' detaches it from the shell
+                detached_command = f"nohup {command} > /dev/null 2>&1 & disown"
                 process = subprocess.Popen(
-                    nohup_command,
+                    detached_command,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,  # Close stdin to prevent any interaction
-                    start_new_session=True,    # Start a new session
-                    preexec_fn=os.setpgrp       # Set process group to detach from terminal
+                    stdin=subprocess.DEVNULL  # Close stdin to prevent any interaction
                 )
         else:
             # Foreground process

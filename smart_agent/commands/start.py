@@ -191,7 +191,31 @@ def start(config, background):
 
     # Check if we need to start the LiteLLM proxy
     api_base_url = config_manager.get_api_base_url()
+
+    # Add default LiteLLM configuration if it doesn't exist
+    litellm_config = config_manager.get_litellm_config()
+    if not litellm_config:
+        # Create a default LiteLLM configuration
+        litellm_config = {
+            "enabled": True,
+            "command": "litellm --port {port}",
+            "server": {"port": 4000, "host": "0.0.0.0"},
+            "model_list": [{"model_name": "gpt-4o"}]
+        }
+
+    # Check if we should start the LiteLLM proxy
+    should_start_litellm = False
+
+    # Check if API base URL is localhost
     if api_base_url and ("localhost" in api_base_url or "127.0.0.1" in api_base_url):
+        should_start_litellm = True
+
+    # Check if LiteLLM is explicitly enabled
+    if litellm_config and litellm_config.get("enabled", False):
+        should_start_litellm = True
+
+    if should_start_litellm:
+        console.print("[bold]Starting LiteLLM proxy...[/]")
         from ..commands.setup import launch_litellm_proxy
         launch_litellm_proxy(config_manager, background)
 
