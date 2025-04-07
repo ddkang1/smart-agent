@@ -19,6 +19,58 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def get_litellm_proxy_status() -> Dict[str, Any]:
+    """
+    Get the status of the LiteLLM proxy.
+
+    Returns:
+        Dictionary with LiteLLM proxy status information
+    """
+    container_name = "smart-agent-litellm-proxy"
+    status = {
+        "running": False,
+        "container_id": None,
+        "port": None,
+    }
+
+    try:
+        import subprocess
+        # Check if container is running
+        result = subprocess.run(
+            ["docker", "ps", "-q", "-f", f"name={container_name}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+
+        container_id = result.stdout.strip()
+        if container_id:
+            status["running"] = True
+            status["container_id"] = container_id
+
+            # Get port mapping
+            port_result = subprocess.run(
+                ["docker", "port", container_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+
+            if port_result.stdout:
+                # Parse port from output like "4000/tcp -> 0.0.0.0:4000"
+                for line in port_result.stdout.splitlines():
+                    if "->" in line:
+                        port = line.split(":")[-1].strip()
+                        status["port"] = port
+                        break
+    except Exception as e:
+        logger.debug(f"Error checking LiteLLM proxy status: {e}")
+
+    return status
+
+
 def get_tools_status(
     config_manager: ConfigManager,
     process_manager: ProcessManager,
@@ -110,13 +162,29 @@ def status(config, tools, json):
     # Get tools status
     tools_status = get_tools_status(config_manager, process_manager)
 
+    # Get LiteLLM proxy status
+    litellm_status = get_litellm_proxy_status()
+
+    # Combine status information
+    all_status = {
+        "tools": tools_status,
+        "litellm": litellm_status
+    }
+
     # Output in JSON format if requested
     if json:
         import json as json_lib
-        console.print(json_lib.dumps(tools_status, indent=2))
+        console.print(json_lib.dumps(all_status, indent=2))
         return
 
-    # Create a table for the output
+    # Show LiteLLM proxy status
+    if litellm_status["running"]:
+        console.print(f"[bold green]LiteLLM Proxy:[/] Running on port {litellm_status['port']}")
+    else:
+        console.print("[bold yellow]LiteLLM Proxy:[/] Not running")
+    console.print()
+
+    # Create a table for the tools output
     table = Table(title="Tool Services Status")
     table.add_column("ID", style="cyan")
     table.add_column("Name", style="magenta")

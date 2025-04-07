@@ -23,7 +23,7 @@ def launch_litellm_proxy(
     background: bool = True,
 ) -> Optional[int]:
     """
-    Launch the LiteLLM proxy.
+    Launch LiteLLM proxy using Docker.
 
     Args:
         config_manager: Configuration manager instance
@@ -32,63 +32,111 @@ def launch_litellm_proxy(
     Returns:
         Process ID if successful, None otherwise
     """
-    # Get LiteLLM configuration
-    litellm_config = config_manager.get_litellm_config()
+    console.print("[bold]Launching LiteLLM proxy using Docker...[/]")
 
-    # Check if LiteLLM is enabled
-    if not litellm_config.get("enabled", False):
-        logger.debug("LiteLLM proxy is not enabled, skipping")
-        return None
+    # Check if container already exists and is running
+    container_name = "smart-agent-litellm-proxy"
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["docker", "ps", "-q", "-f", f"name={container_name}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
 
-    # Get the command
-    command = litellm_config.get("command")
-    if not command:
-        console.print("[red]No command specified for LiteLLM proxy, skipping[/]")
-        return None
+        if result.stdout.strip():
+            console.print(f"[green]LiteLLM proxy container '{container_name}' is already running.[/]")
+            # Return a dummy PID to indicate success
+            return 999999  # Using a large number that's unlikely to be a real PID
+    except Exception as e:
+        console.print(f"[yellow]Warning: Error checking for existing LiteLLM proxy container: {str(e)}[/]")
 
-    # Get the port
-    port = litellm_config.get("port", 4000)
+    # Get LiteLLM config path
+    try:
+        litellm_config_path = config_manager.get_litellm_config_path()
+    except Exception as e:
+        litellm_config_path = None
+        console.print(f"[yellow]Warning: Could not get LiteLLM config path: {str(e)}[/]")
+
+    # Get API settings
+    api_base_url = config_manager.get_api_base_url() or "http://localhost:4000"
+    api_port = 4000
 
     try:
-        # Start the process
-        import subprocess
+        from urllib.parse import urlparse
+        parsed_url = urlparse(api_base_url)
+        if parsed_url.port:
+            api_port = parsed_url.port
+    except Exception:
+        pass  # Use default port
 
-        # Replace {port} in the command
-        command = command.replace("{port}", str(port))
+    # Create command
+    cmd = [
+        "docker",
+        "run",
+        "-d",  # Run as daemon
+        "-p",
+        f"{api_port}:{api_port}",
+        "--name",
+        container_name,
+    ]
 
-        # Start the process
+    # Add volume if we have a config file
+    if litellm_config_path and os.path.exists(litellm_config_path):
+        # Mount the config file directly to /app/config.yaml as in docker-compose
+        cmd.extend([
+            "-v",
+            f"{litellm_config_path}:/app/config.yaml",
+        ])
+
+        # Add image
+        cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
+
+        # Add command line arguments as in docker-compose
+        cmd.extend([
+            "--config", "/app/config.yaml",
+            "--port", str(api_port),
+            "--num_workers", "8"
+        ])
+    else:
+        # Add image only if no config file
+        cmd.append("ghcr.io/berriai/litellm:litellm_stable_release_branch-stable")
+        # Add port argument
+        cmd.extend(["--port", str(api_port)])
+
+    # Print the command for debugging
+    logger.debug(f"Launching LiteLLM proxy with command: {' '.join(cmd)}")
+    console.print(f"[dim]Command: {' '.join(cmd)}[/]")
+
+    # Run command
+    try:
         if background:
-            # Use platform-specific approach for background processes
-            import platform
-            if platform.system() == "Windows":
-                # Windows approach
-                process = subprocess.Popen(
-                    command,
-                    shell=True,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                )
-            else:
-                # Unix approach - ensure process is fully detached
-                # Use nohup and disown to ensure the process continues running even if the terminal is closed
-                detached_command = f"nohup {command} > /dev/null 2>&1 & disown"
-                process = subprocess.Popen(
-                    detached_command,
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL  # Close stdin to prevent any interaction
-                )
+            # Start the process in the background
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL
+            )
         else:
-            # Foreground process
-            process = subprocess.Popen(command, shell=True)
+            # Start in foreground for debugging
+            process = subprocess.Popen(cmd)
 
         # Get the PID
         pid = process.pid
 
-        console.print(f"[green]Started LiteLLM proxy with PID {pid} on port {port}[/]")
+        # Save the PID
+        if pid:
+            pid_file = os.path.join(os.path.expanduser("~"), ".litellm_proxy_pid")
+            with open(pid_file, "w") as f:
+                f.write(str(pid))
+
+        console.print(f"[green]Started LiteLLM proxy with PID {pid} on port {api_port}[/]")
         return pid
     except Exception as e:
-        console.print(f"[red]Error starting LiteLLM proxy: {e}[/]")
+        console.print(f"[red]Error launching LiteLLM proxy: {str(e)}[/]")
         return None
 
 
