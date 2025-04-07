@@ -192,7 +192,15 @@ def run_chat_loop(config_manager: ConfigManager):
                     assistant_reply = ""
                     is_thought = False
 
-                    # Process the stream events exactly like in research.py
+                    # Import rich for colorful output
+                    from rich.console import Console
+                    from rich.panel import Panel
+                    from rich.markdown import Markdown
+
+                    # Create a console for rich output
+                    rich_console = Console()
+
+                    # Process the stream events with rich colorful output
                     async for event in result.stream_events():
                         if event.type == "raw_response_event":
                             continue
@@ -205,28 +213,32 @@ def run_chat_loop(config_manager: ConfigManager):
                                     key, value = next(iter(arguments_dict.items()))
                                     if key == "thought":
                                         is_thought = True
-                                        print(f"\n[thought]:\n{value}", flush=True)
+                                        rich_console.print(Panel(value, title="Thought", border_style="cyan", title_align="left"))
                                         assistant_reply += "\n[thought]: " + value
                                     else:
                                         is_thought = False
-                                        print(f"\n[{key}]:\n{value}", flush=True)
+                                        rich_console.print(Panel(value, title=key, border_style="yellow", title_align="left"))
                                 except (json.JSONDecodeError, StopIteration) as e:
-                                    print(f"\n[Error parsing tool call]: {e}", flush=True)
+                                    rich_console.print(f"[bold red]Error parsing tool call:[/] {e}")
                             elif event.item.type == "tool_call_output_item":
                                 if not is_thought:
                                     try:
                                         output_text = json.loads(event.item.output).get("text", "")
-                                        print(f"\n[Tool Output]:\n{output_text}", flush=True)
+                                        rich_console.print(Panel(output_text, title="Tool Output", border_style="green", title_align="left"))
                                     except json.JSONDecodeError:
-                                        print(f"\n[Tool Output]:\n{event.item.output}", flush=True)
+                                        rich_console.print(Panel(event.item.output, title="Tool Output", border_style="green", title_align="left"))
                             elif event.item.type == "message_output_item":
                                 role = event.item.raw_item.role
                                 text_message = ItemHelpers.text_message_output(event.item)
                                 if role == "assistant":
-                                    print(f"\n[{role}]:\n{text_message}", flush=True)
+                                    # Try to render as markdown if possible
+                                    try:
+                                        rich_console.print(Panel(Markdown(text_message), title="Assistant", border_style="blue", title_align="left"))
+                                    except Exception:
+                                        rich_console.print(Panel(text_message, title="Assistant", border_style="blue", title_align="left"))
                                     assistant_reply += "\n[response]: " + text_message
                                 else:
-                                    print(f"\n[{role}]:\n{text_message}", flush=True)
+                                    rich_console.print(Panel(text_message, title=role.capitalize(), border_style="magenta", title_align="left"))
 
                     return assistant_reply.strip()
                 finally:
@@ -300,6 +312,6 @@ def chat(config, tools):
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config, tools_path=tools)
-    
+
     # Run the chat loop
     run_chat_loop(config_manager)
