@@ -11,6 +11,7 @@ from rich.console import Console
 
 from ..tool_manager import ConfigManager
 from ..process_manager import ProcessManager
+from ..proxy_manager import ProxyManager
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -94,8 +95,9 @@ def stop(config, tools, all):
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Create process manager
+    # Create process manager and proxy manager
     process_manager = ProcessManager()
+    proxy_manager = ProxyManager()
 
     # Stop tools
     console.print("[bold]Stopping tool services...[/]")
@@ -122,3 +124,10 @@ def stop(config, tools, all):
                 console.print(f"[green]{tool_id}: Stopped[/]")
             else:
                 console.print(f"[yellow]{tool_id}: Failed to stop[/]")
+
+    # Stop LiteLLM proxy
+    console.print("\n[bold]Stopping LiteLLM proxy...[/]")
+    if proxy_manager.stop_litellm_proxy():
+        console.print("[green]LiteLLM proxy stopped successfully[/]")
+    else:
+        console.print("[yellow]LiteLLM proxy was not running or failed to stop[/]")

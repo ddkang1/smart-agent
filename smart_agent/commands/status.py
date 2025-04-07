@@ -11,6 +11,7 @@ from rich.table import Table
 
 from ..tool_manager import ConfigManager
 from ..process_manager import ProcessManager
+from ..proxy_manager import ProxyManager
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,56 +20,17 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
-def get_litellm_proxy_status() -> Dict[str, Any]:
+def get_litellm_proxy_status(proxy_manager: ProxyManager) -> Dict[str, Any]:
     """
     Get the status of the LiteLLM proxy.
+
+    Args:
+        proxy_manager: Proxy manager instance
 
     Returns:
         Dictionary with LiteLLM proxy status information
     """
-    container_name = "smart-agent-litellm-proxy"
-    status = {
-        "running": False,
-        "container_id": None,
-        "port": None,
-    }
-
-    try:
-        import subprocess
-        # Check if container is running
-        result = subprocess.run(
-            ["docker", "ps", "-q", "-f", f"name={container_name}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-
-        container_id = result.stdout.strip()
-        if container_id:
-            status["running"] = True
-            status["container_id"] = container_id
-
-            # Get port mapping
-            port_result = subprocess.run(
-                ["docker", "port", container_name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-
-            if port_result.stdout:
-                # Parse port from output like "4000/tcp -> 0.0.0.0:4000"
-                for line in port_result.stdout.splitlines():
-                    if "->" in line:
-                        port = line.split(":")[-1].strip()
-                        status["port"] = port
-                        break
-    except Exception as e:
-        logger.debug(f"Error checking LiteLLM proxy status: {e}")
-
-    return status
+    return proxy_manager.get_litellm_proxy_status()
 
 
 def get_tools_status(
@@ -162,8 +124,9 @@ def status(config, tools, json, debug):
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Create process manager with debug mode if requested
+    # Create process manager and proxy manager with debug mode if requested
     process_manager = ProcessManager(debug=debug)
+    proxy_manager = ProxyManager(debug=debug)
 
     if debug:
         # Set up logging for debugging
@@ -176,7 +139,7 @@ def status(config, tools, json, debug):
     tools_status = get_tools_status(config_manager, process_manager)
 
     # Get LiteLLM proxy status
-    litellm_status = get_litellm_proxy_status()
+    litellm_status = get_litellm_proxy_status(proxy_manager)
 
     # Combine status information
     all_status = {

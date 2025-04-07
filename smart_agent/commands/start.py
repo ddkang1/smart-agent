@@ -12,6 +12,7 @@ from rich.console import Console
 
 from ..tool_manager import ConfigManager
 from ..process_manager import ProcessManager
+from ..proxy_manager import ProxyManager
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -174,7 +175,13 @@ def start_tools(
     default=True,
     help="Run in background",
 )
-def start(config, background):
+@click.option(
+    "--debug",
+    is_flag=True,
+    default=False,
+    help="Enable debug mode for verbose logging",
+)
+def start(config, background, debug):
     """
     Start all tool services.
 
@@ -186,8 +193,16 @@ def start(config, background):
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Create process manager
-    process_manager = ProcessManager()
+    # Create process manager and proxy manager with debug mode if requested
+    process_manager = ProcessManager(debug=debug)
+    proxy_manager = ProxyManager(debug=debug)
+
+    if debug:
+        # Set up logging for debugging
+        logging.basicConfig(level=logging.DEBUG)
+        logger = logging.getLogger("smart_agent")
+        logger.setLevel(logging.DEBUG)
+        console.print("[yellow]Debug mode enabled. Verbose logging will be shown.[/]")
 
     # Check if we need to start the LiteLLM proxy
     api_base_url = config_manager.get_api_base_url()
@@ -206,8 +221,7 @@ def start(config, background):
 
     if should_start_litellm:
         console.print("[bold]Starting LiteLLM proxy...[/]")
-        from ..commands.setup import launch_litellm_proxy
-        pid = launch_litellm_proxy(config_manager, background)
+        pid = proxy_manager.launch_litellm_proxy(config_manager, background)
         if pid:
             console.print(f"[green]LiteLLM proxy started successfully[/]")
         else:
