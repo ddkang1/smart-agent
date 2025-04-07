@@ -33,7 +33,7 @@ class ProxyManager:
 
         # Create directories if they don't exist
         os.makedirs(self.pid_dir, exist_ok=True)
-        
+
         # Set up logging level based on debug flag
         if self.debug:
             logger.setLevel(logging.DEBUG)
@@ -157,16 +157,16 @@ class ProxyManager:
             else:
                 # Start in foreground for debugging
                 process = subprocess.Popen(cmd)
-                
+
             # Get the PID
             pid = process.pid
-            
+
             # Save the PID
             if pid:
                 pid_file = os.path.join(self.pid_dir, "litellm_proxy.pid")
                 with open(pid_file, "w") as f:
                     f.write(str(pid))
-                
+
             if self.debug:
                 logger.debug(f"Started LiteLLM proxy with PID {pid} on port {api_port}")
             else:
@@ -242,7 +242,7 @@ class ProxyManager:
             logger.debug("Checking if LiteLLM proxy is running...")
 
         container_name = "smart-agent-litellm-proxy"
-        
+
         try:
             # Check if container exists and is running
             result = subprocess.run(
@@ -254,13 +254,13 @@ class ProxyManager:
             )
 
             is_running = bool(result.stdout.strip())
-            
+
             if self.debug:
                 if is_running:
                     logger.debug(f"LiteLLM proxy container '{container_name}' is running")
                 else:
                     logger.debug(f"LiteLLM proxy container '{container_name}' is not running")
-                    
+
             return is_running
         except Exception as e:
             logger.error(f"Error checking if LiteLLM proxy is running: {str(e)}")
@@ -275,7 +275,7 @@ class ProxyManager:
         """
         if self.debug:
             logger.debug("Getting LiteLLM proxy status...")
-            
+
         container_name = "smart-agent-litellm-proxy"
         status = {
             "running": False,
@@ -283,7 +283,7 @@ class ProxyManager:
             "port": None,
             "image": None,
         }
-        
+
         try:
             # Check if container exists and is running
             result = subprocess.run(
@@ -293,7 +293,7 @@ class ProxyManager:
                 text=True,
                 check=False,
             )
-            
+
             if result.stdout.strip():
                 # Parse the output
                 parts = result.stdout.strip().split("|")
@@ -302,11 +302,11 @@ class ProxyManager:
                     ports = parts[1]
                     image = parts[2]
                     container_status = parts[3]
-                    
+
                     status["container_id"] = container_id
                     status["image"] = image
                     status["running"] = container_status.startswith("Up")
-                    
+
                     # Extract port from ports string (e.g., "0.0.0.0:4000->4000/tcp")
                     if ":" in ports:
                         try:
@@ -314,7 +314,7 @@ class ProxyManager:
                             status["port"] = int(port)
                         except (IndexError, ValueError):
                             pass
-                            
+
                     if self.debug:
                         logger.debug(f"LiteLLM proxy status: {status}")
             else:
@@ -322,5 +322,5 @@ class ProxyManager:
                     logger.debug("LiteLLM proxy container not found")
         except Exception as e:
             logger.error(f"Error getting LiteLLM proxy status: {str(e)}")
-            
+
         return status
