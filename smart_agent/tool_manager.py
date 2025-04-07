@@ -165,7 +165,13 @@ class ConfigManager:
         Returns:
             Tool configuration dictionary
         """
-        return self.tools_config.get(tool_id, {})
+        # First check if the tool is directly in the tools_config (new format)
+        if tool_id in self.tools_config:
+            return self.tools_config.get(tool_id, {})
+
+        # Then check if it's under the 'tools' key (old format)
+        tools = self.tools_config.get("tools", {})
+        return tools.get(tool_id, {})
 
     def get_all_tools(self) -> Dict:
         """
@@ -174,6 +180,12 @@ class ConfigManager:
         Returns:
             Dictionary of all tool configurations
         """
+        # Check if tools are under a 'tools' key (old format) or directly at the root (new format)
+        tools = self.tools_config.get("tools", None)
+        if tools is not None:
+            return tools
+
+        # If no 'tools' key, assume the entire config is the tools dictionary
         return self.tools_config
 
     def get_tools_config(self) -> Dict:
@@ -184,7 +196,7 @@ class ConfigManager:
         Returns:
             Dictionary of all tool configurations
         """
-        return self.tools_config
+        return self.get_all_tools()
 
     def is_tool_enabled(self, tool_id: str) -> bool:
         """
@@ -261,6 +273,29 @@ class ConfigManager:
 
         # Fall back to configuration
         return tool_config.get("repository", "")
+
+    def get_tool_command(self, tool_id: str) -> str:
+        """
+        Get the command to start a tool.
+
+        This method retrieves the explicit command from the tool configuration.
+
+        Args:
+            tool_id: The ID of the tool to get the command for
+
+        Returns:
+            Command to start the tool, or empty string if no command is specified
+        """
+        tool_config = self.get_tool_config(tool_id)
+        env_prefix = self.get_env_prefix(tool_id)
+
+        # Check environment variable override
+        env_command = os.getenv(f"{env_prefix}_COMMAND")
+        if env_command:
+            return env_command
+
+        # Get the command from the configuration
+        return tool_config.get("command", "")
 
     def initialize_tools(self) -> List:
         """

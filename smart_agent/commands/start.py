@@ -56,13 +56,37 @@ def start_tools(
             continue
 
         # Get the tool command
-        command = tool_config.get("command")
+        command = config_manager.get_tool_command(tool_id)
         if not command:
             console.print(f"[red]No command specified for tool {tool_id}, skipping[/]")
+            console.print(f"[yellow]Please add a 'command' field to the {tool_id} configuration in your tools.yaml file[/]")
             continue
 
         # Get the tool port
         port = tool_config.get("port")
+
+        # If port is not specified, try to extract it from the URL
+        if port is None:
+            tool_url = tool_config.get("url", "")
+            if tool_url and "localhost:" in tool_url:
+                # Extract port from URL (e.g., http://localhost:8000/sse)
+                try:
+                    port_str = tool_url.split("localhost:")[1].split("/")[0]
+                    port = int(port_str)
+                    logger.debug(f"Extracted port {port} from URL {tool_url}")
+                except (IndexError, ValueError):
+                    logger.debug(f"Could not extract port from URL {tool_url}")
+
+        # Determine if we need to add port parameters based on the command
+
+        # Modify command to include port parameter if needed
+        if "docker" in command.lower():
+            # For Docker commands, add port mapping
+            if "-p" not in command:
+                command = command.replace("docker run", f"docker run -p {{port}}:{{port}}")
+        elif "--port" not in command and "-p" not in command:
+            # For other commands, add --port parameter if not present
+            command = f"{command} --port {{port}}"
 
         try:
             # Start the tool process
@@ -103,16 +127,11 @@ def start_tools(
     help="Path to configuration file",
 )
 @click.option(
-    "--tools",
-    default=None,
-    help="Path to tools configuration file",
-)
-@click.option(
     "--background/--no-background",
     default=True,
     help="Run in background",
 )
-def start(config, tools, background):
+def start(config, background):
     """
     Start all tool services.
 

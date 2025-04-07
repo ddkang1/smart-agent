@@ -1,32 +1,34 @@
 # Smart Agent Tools Configuration Example
 # Copy this file to tools.yaml and update with your values
 
-tools:
-  mcp_think_tool:
-    enabled: true
-    type: uvx
-    repository: git+https://github.com/ddkang1/mcp-think-tool
-    url: http://localhost:8000/sse
-  ddg_mcp:
-    enabled: true
-    type: uvx
-    repository: git+https://github.com/ddkang1/ddg-mcp
-    url: http://localhost:8001/sse
-  python_repl:
-    enabled: true
-    type: docker
-    image: ghcr.io/ddkang1/mcp-py-repl:latest
-    storage_path: ./storage
-    url: http://localhost:8002/sse
-    
-# Tool configuration schema
-# Each tool should have:
-# - enabled: Whether the tool is enabled (required)
-# - url: URL to access the tool (required)
-# 
-# For local tools that need to be launched:
-# - repository: Git repository or Docker image (REQUIRED for local tools, optional for remote SSE tools)
-# - launch_cmd: Command to launch the tool (REQUIRED for local tools, one of: "docker", "uvx", "npx")
-# 
-# Optional fields:
-# - storage_path: Path for tool data storage (for Docker container tools)
+# Each tool must have:
+# - enabled: Whether the tool is enabled
+# - url: URL to access the tool
+# - command: The installation command for the tool
+
+mcp_think_tool:
+  enabled: true
+  url: http://localhost:8000/sse
+  command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+
+ddg_mcp:
+  enabled: true
+  url: http://localhost:8001/sse
+  command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+
+python_repl:
+  enabled: true
+  url: http://localhost:8002/sse
+  command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+
+# Example of a disabled tool
+custom_tool:
+  enabled: false
+  url: http://localhost:8003/sse
+  command: "python -m my_custom_tool"
+
+# Additional optional fields:
+# - name: Display name for the tool (defaults to the tool ID)
+# - description: Description of the tool
+# - port: Specific port to use (defaults to a free port)
+# - env_prefix: Environment variable prefix for this tool
