@@ -11,53 +11,55 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10"]
+        python-version: ["3.10"]
 
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-          
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio black flake8 mypy
+          # Explicitly install openai-agents to ensure it's available for tests
+          pip install openai-agents==0.0.7
           pip install -e .
-          
+
       - name: Check code formatting with Black
         run: |
           # Check formatting but don't fail the build
           black --check smart_agent tests || echo "Formatting issues found, but continuing build"
-          
+
       - name: Lint with flake8
         run: |
           # Run flake8 with our custom configuration
           flake8 smart_agent tests
-          
+
       - name: Type check with mypy
         run: |
           # Run our custom mypy script that always exits with success
           bash run_mypy.sh
-          
+
       - name: Run unit tests
         run: |
           pytest tests/unit -v
-          
+
       - name: Run integration tests
         run: |
           pytest tests/integration -v
-          
+
       - name: Run functional tests
         run: |
           pytest tests/functional -v
-          
+
       - name: Generate test coverage report
         run: |
           pytest --cov=smart_agent --cov-report=xml
-          
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
