@@ -57,11 +57,15 @@ def get_tools_status(
     for tool_id, tool_config in tools_config.items():
         enabled = tool_config.get("enabled", False)
 
+        # Get the transport type
+        transport_type = tool_config.get("transport", "stdio_to_sse").lower()
+
         # Basic status
         status = {
             "enabled": enabled,
             "name": tool_config.get("name", tool_id),
             "description": tool_config.get("description", ""),
+            "transport": transport_type,
         }
 
         # Skip detailed status for disabled tools
@@ -70,20 +74,35 @@ def get_tools_status(
             tools_status[tool_id] = status
             continue
 
-        # Check if the tool is running
-        running = process_manager.is_tool_running(tool_id)
-        status["running"] = running
+        # Handle different transport types
+        if transport_type == "sse":
+            # For 'sse' transport type, we don't need to check if it's running
+            status["running"] = True  # Assume it's always running
+            status["url"] = tool_config.get("url", "")
+        else:
+            # Check if the tool is running
+            running = process_manager.is_tool_running(tool_id)
+            status["running"] = running
 
-        if running:
-            # Get additional information for running tools
-            port = process_manager.get_tool_port(tool_id)
-            status["port"] = port
+            if running:
+                # For 'stdio' and 'sse_to_stdio' transport types, we don't need port information
+                if transport_type not in ["stdio", "sse_to_stdio"]:
+                    # Get additional information for running tools
+                    port = process_manager.get_tool_port(tool_id)
+                    status["port"] = port
 
-            # Get the tool URL
-            url = tool_config.get("url", "")
-            if url and "{port}" in url and port:
-                url = url.replace("{port}", str(port))
-            status["url"] = url
+                    # Get the tool URL
+                    url = tool_config.get("url", "")
+                    if url and "{port}" in url and port:
+                        url = url.replace("{port}", str(port))
+                    status["url"] = url
+                else:
+                    # For stdio transport, URL is irrelevant
+                    status["url"] = ""  # No URL for stdio transport
+
+                    # For sse_to_stdio, we might want to show the remote URL
+                    if transport_type == "sse_to_stdio":
+                        status["remote_url"] = tool_config.get("url", "")
 
         tools_status[tool_id] = status
 
@@ -166,21 +185,30 @@ def status(config, tools, json, debug):
     table.add_column("Name", style="magenta")
     table.add_column("Enabled", style="green")
     table.add_column("Running", style="green")
+    table.add_column("Transport", style="blue")
     table.add_column("Port", style="blue")
-    table.add_column("URL", style="yellow")
+    table.add_column("URL/Remote URL", style="yellow")
 
     # Add rows to the table
     for tool_id, status in tools_status.items():
         enabled = "✓" if status.get("enabled", False) else "✗"
         running = "✓" if status.get("running", False) else "✗"
+        transport = status.get("transport", "stdio_to_sse")
         port = str(status.get("port", "")) if status.get("running", False) else ""
-        url = status.get("url", "") if status.get("running", False) else ""
+        # Get URL or remote URL
+        url = ""
+        if status.get("running", False):
+            if status.get("transport") == "sse_to_stdio":
+                url = status.get("remote_url", "")
+            else:
+                url = status.get("url", "")
 
         table.add_row(
             tool_id,
             status.get("name", tool_id),
             enabled,
             running,
+            transport,
             port,
             url,
         )
