@@ -2,9 +2,21 @@
 Unit tests for the Agent module.
 """
 
+import pytest
 from unittest.mock import patch, MagicMock
 
+# Check if required classes from agents package are available
+try:
+    from agents.mcp import MCPServerSse
+    from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+    agents_classes_available = True
+except (ImportError, AttributeError):
+    agents_classes_available = False
+
 from smart_agent.agent import SmartAgent
+
+# Skip all tests in this module if required agents classes are not available
+pytestmark = pytest.mark.skipif(not agents_classes_available, reason="Required classes from agents package not available")
 
 
 class TestSmartAgent:
