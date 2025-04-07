@@ -3,32 +3,29 @@
 
 # Each tool must have:
 # - enabled: Whether the tool is enabled
-# - url: URL to access the tool
+# - url: URL to access the tool (port in URL determines where the tool will run)
 # - command: The installation command for the tool
 
+# Option 1: Fixed port in URL (tool will run on port 8000)
 mcp_think_tool:
   enabled: true
   url: http://localhost:8000/sse
   command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
 
+# Option 2: Dynamic port in URL (port will be assigned at runtime)
 ddg_mcp:
   enabled: true
-  url: http://localhost:8001/sse
+  url: http://localhost:{port}/sse
   command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
 
+# Option 3: Fixed port with Docker container
 python_repl:
   enabled: true
   url: http://localhost:8002/sse
   command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
 
-# Example of a disabled tool
-custom_tool:
-  enabled: false
+# Example of a remote tool
+remote_tool:
+  enabled: true
   url: http://localhost:8003/sse
-  command: "python -m my_custom_tool"
 
-# Additional optional fields:
-# - name: Display name for the tool (defaults to the tool ID)
-# - description: Description of the tool
-# - port: Specific port to use (defaults to a free port)
-# - env_prefix: Environment variable prefix for this tool

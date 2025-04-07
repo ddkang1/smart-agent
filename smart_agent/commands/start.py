@@ -66,30 +66,50 @@ def start_tools(
             console.print(f"[yellow]Please add a 'command' field to the {tool_id} configuration in your tools.yaml file[/]")
             continue
 
-        # Get the tool port
-        port = tool_config.get("port")
+        # Get the tool URL
+        tool_url = tool_config.get("url", "")
+        url_port = None
+        url_has_port_placeholder = False
 
-        # If port is not specified, try to extract it from the URL
-        if port is None:
-            tool_url = tool_config.get("url", "")
-            if tool_url and "localhost:" in tool_url:
+        # Check if URL has a port placeholder
+        if "{port}" in tool_url:
+            url_has_port_placeholder = True
+        # Try to extract port from URL if it's a localhost URL
+        elif tool_url and ("localhost:" in tool_url or "127.0.0.1:" in tool_url):
+            try:
                 # Extract port from URL (e.g., http://localhost:8000/sse)
-                try:
+                if "localhost:" in tool_url:
                     port_str = tool_url.split("localhost:")[1].split("/")[0]
-                    port = int(port_str)
-                    logger.debug(f"Extracted port {port} from URL {tool_url}")
-                except (IndexError, ValueError):
-                    logger.debug(f"Could not extract port from URL {tool_url}")
+                else:  # 127.0.0.1:
+                    port_str = tool_url.split("127.0.0.1:")[1].split("/")[0]
+                url_port = int(port_str)
+                logger.debug(f"Extracted port {url_port} from URL {tool_url}")
+            except (IndexError, ValueError):
+                logger.debug(f"Could not extract port from URL {tool_url}")
 
-        # If port is still None, use the next available port
-        if port is None:
+        # Get explicitly configured port (lowest priority)
+        config_port = tool_config.get("port")
+
+        # Determine which port to use (priority: URL port > config port > next available port)
+        if url_port is not None:
+            port = url_port
+        elif config_port is not None:
+            port = config_port
+        else:
             port = next_port
             next_port += 1
-        # If the port is already in use by another tool we started, increment it
-        elif any(info.get("port") == port for info in started_tools.values()):
+
+        # If the port is already in use by another tool we started, use the next available port
+        if any(info.get("port") == port for info in started_tools.values()):
             logger.debug(f"Port {port} is already in use, finding next available port")
             port = next_port
             next_port += 1
+
+        # If URL has a port placeholder, we'll update it later with the actual port
+        # If URL has a hardcoded port that's different from our assigned port, log a warning
+        if url_port is not None and url_port != port and not url_has_port_placeholder:
+            logger.warning(f"Tool {tool_id} URL specifies port {url_port} but will run on port {port}")
+            console.print(f"[yellow]Warning: Tool {tool_id} URL specifies port {url_port} but will run on port {port}[/]")
 
         # Determine if we need to add port parameters based on the command
 
@@ -112,10 +132,19 @@ def start_tools(
             )
 
             # Update the tool URL in the configuration
-            tool_url = tool_config.get("url", "")
-            if tool_url and "{port}" in tool_url:
-                tool_url = tool_url.replace("{port}", str(actual_port))
-                tool_config["url"] = tool_url
+            if url_has_port_placeholder:
+                # Replace {port} placeholder with actual port
+                updated_url = tool_url.replace("{port}", str(actual_port))
+                tool_config["url"] = updated_url
+                logger.debug(f"Updated URL from {tool_url} to {updated_url}")
+            elif url_port is not None and url_port != actual_port:
+                # If URL had a hardcoded port that's different from the actual port, update it
+                if "localhost:" in tool_url:
+                    updated_url = tool_url.replace(f"localhost:{url_port}", f"localhost:{actual_port}")
+                else:  # 127.0.0.1:
+                    updated_url = tool_url.replace(f"127.0.0.1:{url_port}", f"127.0.0.1:{actual_port}")
+                tool_config["url"] = updated_url
+                logger.debug(f"Updated URL from {tool_url} to {updated_url}")
 
             console.print(f"[green]Started tool {tool_id} with PID {pid} on port {actual_port}[/]")
             started_tools[tool_id] = {
