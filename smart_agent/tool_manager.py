@@ -5,11 +5,12 @@ Handles loading, configuration, and initialization of tools from YAML configurat
 
 import os
 import yaml
+import logging
 from typing import Dict, List, Optional, Any
-import importlib
-import subprocess
-import sys
 from pathlib import Path
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 
 class ConfigManager:
@@ -17,15 +18,17 @@ class ConfigManager:
     Manages configuration for Smart Agent based on YAML configuration.
     """
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, tools_path: Optional[str] = None):
         """
         Initialize the ConfigManager.
 
         Args:
             config_path: Path to the YAML configuration file. If None, will look in default locations.
+            tools_path: Path to the tools configuration file. If None, will use the path specified in the config file.
         """
         self.config = {}
         self.config_path = config_path
+        self.tools_path = tools_path
         self.tools_config = {}
         self.litellm_config = {}
         self._load_config()
@@ -54,7 +57,7 @@ class ConfigManager:
                     print(f"Loaded configuration from {path}")
 
                     # Load tools configuration
-                    tools_config_path = self.config.get("tools_config")
+                    tools_config_path = self.tools_path or self.config.get("tools_config")
                     if tools_config_path:
                         if not os.path.isabs(tools_config_path):
                             # Make path relative to the config file
@@ -117,14 +120,14 @@ class ConfigManager:
                 litellm_config_path = os.path.join(os.getcwd(), litellm_config_path)
 
         if not os.path.exists(litellm_config_path):
-            print(f"Warning: LiteLLM config file not found at {litellm_config_path}")
+            logger.warning(f"LiteLLM config file not found at {litellm_config_path}")
             return {}
 
         try:
             with open(litellm_config_path, "r") as f:
                 return yaml.safe_load(f) or {}
         except Exception as e:
-            print(f"Error loading LiteLLM config: {e}")
+            logger.error(f"Error loading LiteLLM config: {e}")
             return {}
 
     def get_config(
@@ -164,7 +167,13 @@ class ConfigManager:
         Returns:
             Tool configuration dictionary
         """
-        return self.tools_config.get(tool_id, {})
+        # First check if the tool is directly in the tools_config (new format)
+        if tool_id in self.tools_config:
+            return self.tools_config.get(tool_id, {})
+
+        # Then check if it's under the 'tools' key (old format)
+        tools = self.tools_config.get("tools", {})
+        return tools.get(tool_id, {})
 
     def get_all_tools(self) -> Dict:
         """
@@ -173,6 +182,12 @@ class ConfigManager:
         Returns:
             Dictionary of all tool configurations
         """
+        # Check if tools are under a 'tools' key (old format) or directly at the root (new format)
+        tools = self.tools_config.get("tools", None)
+        if tools is not None:
+            return tools
+
+        # If no 'tools' key, assume the entire config is the tools dictionary
         return self.tools_config
 
     def get_tools_config(self) -> Dict:
@@ -183,7 +198,7 @@ class ConfigManager:
         Returns:
             Dictionary of all tool configurations
         """
-        return self.tools_config
+        return self.get_all_tools()
 
     def is_tool_enabled(self, tool_id: str) -> bool:
         """
@@ -261,6 +276,29 @@ class ConfigManager:
         # Fall back to configuration
         return tool_config.get("repository", "")
 
+    def get_tool_command(self, tool_id: str) -> str:
+        """
+        Get the command to start a tool.
+
+        This method retrieves the explicit command from the tool configuration.
+
+        Args:
+            tool_id: The ID of the tool to get the command for
+
+        Returns:
+            Command to start the tool, or empty string if no command is specified
+        """
+        tool_config = self.get_tool_config(tool_id)
+        env_prefix = self.get_env_prefix(tool_id)
+
+        # Check environment variable override
+        env_command = os.getenv(f"{env_prefix}_COMMAND")
+        if env_command:
+            return env_command
+
+        # Get the command from the configuration
+        return tool_config.get("command", "")
+
     def initialize_tools(self) -> List:
         """
         Initialize all enabled tools.
@@ -291,15 +329,12 @@ class ConfigManager:
         # Prioritize configuration
         return self.get_config("llm", "api_key", "")
 
-    def get_api_base_url(self, provider=None) -> str:
+    def get_api_base_url(self) -> str:
         """
-        Get API base URL.
-
-        Args:
-            provider: API provider
+        Get API base URL for the LLM provider.
 
         Returns:
-            API base URL
+            API base URL as a string
         """
         # Prioritize configuration
         return self.get_config("llm", "base_url", "http://0.0.0.0:4000")
@@ -522,6 +557,55 @@ class ConfigManager:
                 return os.path.join(os.getcwd(), litellm_config_path)
 
         return litellm_config_path
+
+
+    def init_config(self) -> str:
+        """
+        Initialize the config file.
+
+        Returns:
+            Path to the config file
+        """
+        config_dir = os.path.dirname(self.config_path) if self.config_path else os.path.join(os.getcwd(), "config")
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "config.yaml")
+
+        # Create a default config file if it doesn't exist
+        if not os.path.exists(config_file):
+            with open(config_file, "w") as f:
+                f.write("# Smart Agent Configuration\n")
+                f.write("api:\n")
+                f.write("  key: \"\"  # Your API key\n")
+                f.write("  base_url: \"https://api.openai.com/v1\"\n")
+                f.write("model:\n")
+                f.write("  name: \"gpt-4o\"\n")
+                f.write("  temperature: 0.7\n")
+
+        return config_file
+
+    def init_tools(self) -> str:
+        """
+        Initialize the tools config file.
+
+        Returns:
+            Path to the tools config file
+        """
+        config_dir = os.path.dirname(self.config_path) if self.config_path else os.path.join(os.getcwd(), "config")
+        os.makedirs(config_dir, exist_ok=True)
+        tools_file = os.path.join(config_dir, "tools.yaml")
+
+        # Create a default tools file if it doesn't exist
+        if not os.path.exists(tools_file):
+            with open(tools_file, "w") as f:
+                f.write("# Smart Agent Tools Configuration\n")
+                f.write("search_tool:\n")
+                f.write("  enabled: false\n")
+                f.write("  name: \"Search Tool\"\n")
+                f.write("  description: \"Search the web for information\"\n")
+                f.write("  command: \"npx search-tool --port {port}\"\n")
+                f.write("  url: \"http://localhost:{port}/sse\"\n")
+
+        return tools_file
 
 
 # For backward compatibility

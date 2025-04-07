@@ -53,7 +53,7 @@ This architecture allows Smart Agent to:
 
 ## Prerequisites
 
-- Python 3.9+ 
+- Python 3.9+
 - Node.js and npm (required for running tools via supergateway)
 - Docker (for running LiteLLM proxy and container-based tools)
 - Git (for installation from source)
@@ -112,7 +112,7 @@ Quick setup just copies example files to your config directory. You'll need to e
 
 1. **Edit `config/config.yaml`**:
 2. **Edit `config/tools.yaml`**:
-3. **Edit `config/litellm_config.yaml`**: 
+3. **Edit `config/litellm_config.yaml`**:
 
 # Start required services (this must be done before chatting)
 smart-agent start# Start all required services (both tools and proxy)
@@ -123,7 +123,7 @@ smart-agent chat
 
 Services must be explicitly started before chatting. The Smart Agent follows a 3-step procedure:
 1. **Setup**: Configure your environment
-2. **Start**: Launch the required services  
+2. **Start**: Launch the required services
 3. **Chat**: Begin your conversation with the agent
 
 ### Development Mode (Persistent Services)
@@ -131,7 +131,7 @@ Services must be explicitly started before chatting. The Smart Agent follows a 3
 For development when you need tools to stay running between chat sessions:
 
 ```bash
-# Terminal 1: First setup your configuration 
+# Terminal 1: First setup your configuration
 smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
 
 # Then launch tools and proxy services that keep running
@@ -170,38 +170,33 @@ Smart Agent provides a simple way to manage tools through YAML configuration:
 
 ```yaml
 # Example tools.yaml configuration
-tools:
-  mcp_think_tool:
-    enabled: true
-    repository: "git+https://github.com/ddkang1/mcp-think-tool"
-    url: "http://localhost:8000/sse"
-    launch_cmd: "uvx"
-  
-  ddg_mcp:
-    enabled: true
-    repository: "git+https://github.com/ddkang1/ddg-mcp"
-    url: "http://localhost:8001/sse"
-    launch_cmd: "uvx"
-  
-  # Docker container-based tool example
-  python_repl:
-    enabled: true
-    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
-    url: "http://localhost:8002/sse"
-    storage_path: "/path/to/storage"
-    launch_cmd: "docker"
-    
-  # Remote tool example (no need for repository or launch_cmd)
-  remote_tool:
-    enabled: true
-    url: "https://api.remote-tool.com/sse"
+mcp_think_tool:
+  enabled: true
+  url: "http://localhost:8000/sse"
+  command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+
+ddg_mcp:
+  enabled: true
+  url: "http://localhost:8001/sse"
+  command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+
+# Docker container-based tool example
+python_repl:
+  enabled: true
+  url: "http://localhost:8002/sse"
+  command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+
+# Remote tool example
+remote_tool:
+  enabled: true
+  url: "https://api.remote-tool.com/sse"
 ```
 
 All tool management is done through the configuration files in the `config` directory:
 
 1. **Enable/Disable Tools**: Set `enabled: true` or `enabled: false` in your `tools.yaml` file
 2. **Configure URLs**: Set the appropriate URLs for each tool in `tools.yaml`
-3. **Storage Paths**: Configure where tool data is stored with the `storage_path` property
+3. **Tool Commands**: Specify the exact installation command for each tool
 
 No command-line flags are needed - simply edit your configuration files and run the commands.
 
@@ -215,6 +210,21 @@ Smart Agent uses YAML configuration files located in the `config` directory:
 
 The configuration system has been refactored to eliminate duplication between files. The main config now references the LiteLLM config file for model definitions, creating a single source of truth.
 
+### LiteLLM Proxy
+
+Smart Agent can automatically launch a local LiteLLM proxy when needed. This happens when:
+
+1. The `base_url` in your configuration contains `localhost`, `127.0.0.1`, or `0.0.0.0`
+2. The LiteLLM configuration is explicitly enabled with `enabled: true`
+
+The LiteLLM proxy is configured in `config/litellm_config.yaml` and allows you to:
+
+- Use multiple LLM providers through a single API
+- Route requests to different models based on your needs
+- Add authentication, rate limiting, and other features
+
+By default, the LiteLLM proxy binds to `0.0.0.0:4000`, allowing connections from any IP address.
+
 ### Configuration Structure
 
 The main configuration file (`config/config.yaml`) has the following structure:
@@ -223,6 +233,7 @@ The main configuration file (`config/config.yaml`) has the following structure:
 # API Configuration
 api:
   provider: "proxy"  # Options: anthropic, bedrock, proxy
+  # Using localhost, 127.0.0.1, or 0.0.0.0 in base_url will automatically start a local LiteLLM proxy
   base_url: "http://0.0.0.0:4000"
 
 # Model Configuration
@@ -254,25 +265,21 @@ Tools are configured in `config/tools.yaml` with the following structure:
 tools:
   mcp_think_tool:
     enabled: true
-    repository: "git+https://github.com/ddkang1/mcp-think-tool"
     url: "http://localhost:8000/sse"
-    launch_cmd: "uvx"
-  
+    command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+
   ddg_mcp:
     enabled: true
-    repository: "git+https://github.com/ddkang1/ddg-mcp"
     url: "http://localhost:8001/sse"
-    launch_cmd: "uvx"
-  
+    command: "uvx --from git+https://github.com/example/tool example-tool"
+
   # Docker container-based tool example
   python_repl:
     enabled: true
-    repository: "ghcr.io/ddkang1/mcp-py-repl:latest"
     url: "http://localhost:8002/sse"
-    storage_path: "/path/to/storage"
-    launch_cmd: "docker"
-    
-  # Remote tool example (no need for repository or launch_cmd)
+    command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+
+  # Remote tool example
   remote_tool:
     enabled: true
     url: "https://api.remote-tool.com/sse"
@@ -286,13 +293,12 @@ Each tool in the YAML configuration can have the following properties:
 |----------|-------------|----------|
 | `enabled` | Whether the tool is enabled by default | Yes |
 | `url` | URL for the tool's endpoint | Yes |
-| `repository` | Git repository or Docker image for the tool | **Required** for local tools, optional for remote SSE tools |
-| `launch_cmd` | Command to launch the tool | **Required** for local tools ("docker", "uvx", "npx") |
+| `command` | Installation command for the tool | Yes |
 | `name` | Human-readable name | No (defaults to tool ID) |
-| `storage_path` | Path for tool data storage | No (only for Docker container tools) |
+| `port` | Specific port to use | No (extracted from URL if not specified) |
 | `env_prefix` | Environment variable prefix | No (defaults to SMART_AGENT_TOOL_{TOOL_ID_UPPERCASE}) |
 
-#### Tool Types and Launch Commands
+#### Tool Types
 
 Smart Agent supports two types of tools:
 - **Remote SSE Tools**: Tools that are already running and accessible via a remote URL
@@ -300,10 +306,10 @@ Smart Agent supports two types of tools:
 
 For local stdio tools, Smart Agent uses [supergateway](https://github.com/supercorp-ai/supergateway) to automatically convert them to SSE. This approach allows for seamless integration with various MCP tools without requiring them to natively support SSE.
 
-The `launch_cmd` field specifies how the tool should be launched:
-- **docker**: For container-based tools (e.g., Python REPL)
-- **uvx**: For Python packages that use the uvx launcher
-- **npx**: For Node.js-based tools
+The `command` field specifies the exact installation command for the tool. Smart Agent will automatically add port parameters to this command:
+- For Docker commands: `docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest`
+- For UVX commands: `uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool`
+- For NPX commands: `npx my-tool`
 
 All local tools are treated as stdio tools and converted to SSE using supergateway, regardless of their type setting in the configuration.
 
