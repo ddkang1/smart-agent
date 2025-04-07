@@ -264,11 +264,22 @@ class ProcessManager:
                     # Parse the command line to find the image name
                     parts = docker_cmd_line.split()
                     docker_image = None
+
+                    # Find the position of 'docker run' in the command
+                    docker_run_pos = -1
                     for i, part in enumerate(parts):
-                        # The image name typically comes after the docker run options
-                        if i > 0 and (part.startswith("ghcr.io/") or "/" in part or ":" in part):
-                            # This looks like an image name
-                            docker_image = part
+                        if part == "docker" and i+1 < len(parts) and parts[i+1] == "run":
+                            docker_run_pos = i
+                            break
+
+                    # Look for the image name after 'docker run' and its options
+                    if docker_run_pos >= 0:
+                        for i in range(docker_run_pos + 2, len(parts)):
+                            # Skip options that start with - or have volume mappings
+                            if parts[i].startswith("-") or ":" in parts[i] and "/" in parts[i] and not parts[i].startswith("ghcr.io/"):
+                                continue
+                            # This is likely the image name
+                            docker_image = parts[i]
                             if self.debug:
                                 logger.debug(f"Found Docker image {docker_image} in command line")
                             break
@@ -330,16 +341,30 @@ class ProcessManager:
                         success = True
                         logger.info(f"Stopped Docker containers for {tool_id} by name")
 
-                    # 2. Try by image pattern for common tool images
-                    if not success and "repl" in tool_id.lower():
+                    # 2. Try a more direct approach - find all containers with the image name in their image
+                    if not success:
                         if self.debug:
-                            logger.debug(f"Trying to find Docker containers for {tool_id} by image pattern: mcp-py-repl")
-                        # For python_repl, try to find containers with mcp-py-repl image
-                        find_cmd = "docker ps -q --filter ancestor=ghcr.io/ddkang1/mcp-py-repl:latest | xargs -r docker stop"
-                        stop_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        if stop_result.returncode == 0 and stop_result.stdout.strip():
-                            success = True
-                            logger.info(f"Stopped Docker containers for {tool_id} by image pattern")
+                            logger.debug(f"Trying to find Docker containers by image pattern")
+                        # Get all running containers
+                        find_cmd = "docker ps --format \"{{.ID}}|{{.Image}}\""
+                        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                        if result.stdout.strip():
+                            for line in result.stdout.strip().split('\n'):
+                                parts = line.split('|')
+                                if len(parts) >= 2:
+                                    container_id = parts[0]
+                                    image = parts[1]
+
+                                    # Check if this is a relevant container
+                                    if "mcp-py-repl" in image or "repl" in image.lower():
+                                        if self.debug:
+                                            logger.debug(f"Found container {container_id} with image {image}")
+                                        # Stop this container
+                                        stop_cmd = f"docker stop {container_id}"
+                                        stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                                        if stop_result.returncode == 0:
+                                            success = True
+                                            logger.info(f"Stopped Docker container {container_id} with image {image}")
 
                     # 3. Try a more generic approach - find all containers and check their command lines
                     if not success:
@@ -368,6 +393,40 @@ class ProcessManager:
                                         if stop_result.returncode == 0:
                                             success = True
                                             logger.info(f"Stopped Docker container {container_id} for {tool_id}")
+
+                    # 4. Last resort - kill the docker run process itself
+                    if not success and pid:
+                        if self.debug:
+                            logger.debug(f"Trying to kill the docker run process with PID {pid}")
+                        try:
+                            # Kill the docker run process
+                            if platform.system() == "Windows":
+                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
+                            else:
+                                # Unix approach - send SIGTERM to process group
+                                try:
+                                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                                except ProcessLookupError:
+                                    # If process group not found, try killing just the process
+                                    os.kill(pid, signal.SIGTERM)
+
+                            # Wait a moment for the process to terminate
+                            time.sleep(0.5)
+
+                            # Check if the process is still running
+                            try:
+                                os.kill(pid, 0)  # Signal 0 doesn't kill the process, just checks if it exists
+                                # Process still exists, use SIGKILL
+                                if platform.system() != "Windows":
+                                    os.kill(pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                # Process already gone, good
+                                pass
+
+                            success = True
+                            logger.info(f"Killed docker run process with PID {pid} for {tool_id}")
+                        except Exception as e:
+                            logger.warning(f"Error killing docker run process with PID {pid}: {e}")
             except Exception as e:
                 logger.warning(f"Error stopping Docker container for {tool_id}: {e}")
 
