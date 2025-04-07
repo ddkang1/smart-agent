@@ -106,7 +106,13 @@ class ProcessManager:
             port = self.find_available_port()
 
         # Replace {port} in the command with the actual port
+        original_command = command
         command = command.replace("{port}", str(port))
+
+        if self.debug:
+            logger.debug(f"Command before port replacement: {original_command}")
+            logger.debug(f"Command after port replacement: {command}")
+            logger.debug(f"Final command to be executed: {command}")
 
         # Start the process
         if background:
@@ -123,6 +129,9 @@ class ProcessManager:
                 # We'll use a special marker in the command to help us find it later
                 marker = f"SMART_AGENT_TOOL_{tool_id}"
                 marked_command = f"{command} # {marker}"
+
+                if self.debug:
+                    logger.debug(f"Added marker to command: {marked_command}")
 
                 # Start the process in a way that it continues running but we can still track it
                 process = subprocess.Popen(
