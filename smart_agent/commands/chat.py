@@ -187,8 +187,8 @@ def run_chat_loop(config_manager: ConfigManager):
                     elif transport_type == "stdio":
                         command = tool_config.get("command")
                         if command:
-                            # For MCPServerStdio, we need to provide the command directly
-                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, command=command))
+                            # For MCPServerStdio, we need to provide the command as a parameter
+                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={"command": command}))
                     # For sse_to_stdio transport, always construct the command from the URL
                     elif transport_type == "sse_to_stdio":
                         # Get the URL from the configuration
@@ -197,8 +197,8 @@ def run_chat_loop(config_manager: ConfigManager):
                             # Construct the full supergateway command
                             command = f"npx -y supergateway --sse \"{url}\""
                             logger.debug(f"Constructed command for sse_to_stdio transport: '{command}'")
-                            # For MCPServerStdio, we need to provide the command directly
-                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, command=command))
+                            # For MCPServerStdio, we need to provide the command as a parameter
+                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={"command": command}))
                         else:
                             logger.warning(f"Missing URL for sse_to_stdio transport type for tool {tool_id}")
                     # For any other transport types, log a warning
