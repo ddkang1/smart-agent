@@ -108,16 +108,19 @@ class ProcessManager:
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
             else:
-                # Unix approach - ensure process is fully detached
-                # Use nohup and disown to ensure the process continues running even if the terminal is closed
-                # The '&' at the end runs it in the background, and 'disown' detaches it from the shell
-                detached_command = f"nohup {command} > /dev/null 2>&1 & disown"
+                # Unix approach - ensure process is fully detached but trackable
+                # We'll use a special marker in the command to help us find it later
+                marker = f"SMART_AGENT_TOOL_{tool_id}"
+                marked_command = f"{command} # {marker}"
+
+                # Start the process in a way that it continues running but we can still track it
                 process = subprocess.Popen(
-                    detached_command,
+                    marked_command,
                     shell=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL  # Close stdin to prevent any interaction
+                    stdin=subprocess.DEVNULL,  # Close stdin to prevent any interaction
+                    start_new_session=True     # Start a new session so it's not killed when the parent exits
                 )
         else:
             # Foreground process
@@ -140,36 +143,75 @@ class ProcessManager:
         Returns:
             True if the process was stopped, False otherwise
         """
-        # Get the PID
-        pid_info = self._load_pid(tool_id)
-        if not pid_info:
-            logger.warning(f"No PID found for {tool_id}")
-            return False
+        success = False
+        marker = f"SMART_AGENT_TOOL_{tool_id}"
 
-        pid = pid_info.get("pid")
-        if not pid:
-            logger.warning(f"Invalid PID info for {tool_id}: {pid_info}")
-            return False
-
-        # Stop the process
+        # First try to stop the process using the marker
         try:
             if platform.system() == "Windows":
-                # Windows approach
-                subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
+                # Windows approach - use tasklist, find, and taskkill
+                # Find PIDs with our marker
+                find_cmd = f'tasklist /FO CSV | findstr /C:"{marker}"'
+                result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, text=True, check=False)
+                if result.stdout.strip():
+                    # Extract PIDs and kill them
+                    for line in result.stdout.splitlines():
+                        if marker in line:
+                            parts = line.split(',')
+                            if len(parts) > 1:
+                                pid_str = parts[1].strip('"')
+                                subprocess.call(['taskkill', '/F', '/T', '/PID', pid_str])
+                                success = True
             else:
-                # Unix approach - send SIGTERM to process group
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
-
-            # Remove the PID file
-            self._remove_pid(tool_id)
-            logger.info(f"Stopped {tool_id} process with PID {pid}")
-            return True
-        except ProcessLookupError:
-            logger.warning(f"Process {pid} for {tool_id} not found")
-            self._remove_pid(tool_id)
-            return False
+                # Unix approach - use ps, grep, and kill
+                # Find processes with our marker
+                find_cmd = f"ps -ef | grep '{marker}' | grep -v grep"
+                result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, text=True, check=False)
+                if result.stdout.strip():
+                    # Extract PIDs and kill them
+                    for line in result.stdout.splitlines():
+                        parts = line.split()
+                        if len(parts) > 1:
+                            pid_str = parts[1]
+                            try:
+                                pid = int(pid_str)
+                                os.kill(pid, signal.SIGTERM)
+                                success = True
+                            except (ValueError, ProcessLookupError):
+                                pass
         except Exception as e:
-            logger.error(f"Error stopping {tool_id} process: {e}")
+            logger.warning(f"Error stopping {tool_id} process using marker: {e}")
+
+        # Fallback to PID-based approach
+        pid_info = self._load_pid(tool_id)
+        if pid_info:
+            pid = pid_info.get("pid")
+            if pid:
+                try:
+                    if platform.system() == "Windows":
+                        # Windows approach
+                        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
+                    else:
+                        # Unix approach - send SIGTERM to process group
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        except ProcessLookupError:
+                            # If process group not found, try killing just the process
+                            os.kill(pid, signal.SIGTERM)
+                    success = True
+                except ProcessLookupError:
+                    logger.warning(f"Process {pid} for {tool_id} not found")
+                except Exception as e:
+                    logger.error(f"Error stopping {tool_id} process using PID: {e}")
+
+        # Remove the PID file regardless of success
+        self._remove_pid(tool_id)
+
+        if success:
+            logger.info(f"Stopped {tool_id} process")
+            return True
+        else:
+            logger.warning(f"Failed to stop {tool_id} process")
             return False
 
     def stop_all_processes(self) -> Dict[str, bool]:
@@ -197,7 +239,34 @@ class ProcessManager:
         Returns:
             True if the process is running, False otherwise
         """
-        # Get the PID
+        # First try to find the process using the marker
+        marker = f"SMART_AGENT_TOOL_{tool_id}"
+
+        try:
+            if platform.system() == "Windows":
+                # Windows approach - use tasklist and find
+                result = subprocess.run(
+                    ['tasklist', '/FO', 'CSV'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                return marker in result.stdout
+            else:
+                # Unix approach - use ps and grep
+                result = subprocess.run(
+                    ['ps', '-ef'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                return marker in result.stdout
+        except Exception as e:
+            logger.debug(f"Error checking if tool {tool_id} is running using marker: {e}")
+
+        # Fallback to PID-based check
         pid_info = self._load_pid(tool_id)
         if not pid_info:
             return False
@@ -223,8 +292,9 @@ class ProcessManager:
         except (subprocess.CalledProcessError, ProcessLookupError):
             # Process not found
             return False
-        except Exception:
+        except Exception as e:
             # Other error
+            logger.debug(f"Error checking if tool {tool_id} is running using PID: {e}")
             return False
 
     def get_tool_port(self, tool_id: str) -> Optional[int]:
@@ -237,12 +307,45 @@ class ProcessManager:
         Returns:
             Port number or None if not found
         """
-        # Get the PID info
-        pid_info = self._load_pid(tool_id)
-        if not pid_info:
+        # First check if the tool is running
+        if not self.is_tool_running(tool_id):
             return None
 
-        return pid_info.get("port")
+        # Get the port from the PID file
+        pid_info = self._load_pid(tool_id)
+        if pid_info and pid_info.get("port"):
+            return pid_info.get("port")
+
+        # Try to extract port from command line
+        marker = f"SMART_AGENT_TOOL_{tool_id}"
+        try:
+            if platform.system() != "Windows":
+                # Unix approach - use ps and grep
+                find_cmd = f"ps -ef | grep '{marker}' | grep -v grep"
+                result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, text=True, check=False)
+                if result.stdout.strip():
+                    # Look for --port or -p argument
+                    for line in result.stdout.splitlines():
+                        if "--port" in line:
+                            parts = line.split("--port")
+                            if len(parts) > 1:
+                                port_part = parts[1].strip().split()[0]
+                                try:
+                                    return int(port_part)
+                                except ValueError:
+                                    pass
+                        elif " -p " in line:
+                            parts = line.split(" -p ")
+                            if len(parts) > 1:
+                                port_part = parts[1].strip().split()[0]
+                                try:
+                                    return int(port_part)
+                                except ValueError:
+                                    pass
+        except Exception as e:
+            logger.debug(f"Error extracting port from command line for {tool_id}: {e}")
+
+        return None
 
     def _save_pid(self, tool_id: str, pid: int, port: int) -> None:
         """
