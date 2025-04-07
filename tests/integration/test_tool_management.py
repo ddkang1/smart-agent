@@ -6,7 +6,7 @@ import os
 import pytest
 from unittest.mock import patch, MagicMock
 
-from smart_agent.cli import launch_tools
+from smart_agent.commands.start import start_tools
 from smart_agent.agent import SmartAgent
 
 
@@ -14,7 +14,7 @@ class TestToolManagement:
     """Test suite for tool management integration."""
 
     @pytest.mark.asyncio
-    @patch("smart_agent.cli.subprocess.Popen")  # Patch the specific import path
+    @patch("smart_agent.commands.start.subprocess.Popen")  # Patch the specific import path
     @patch("agents.OpenAIChatCompletionsModel")
     async def test_tool_launch_and_agent_integration(self, mock_model, mock_popen):
         """Test launching tools and using them with the agent."""
@@ -72,7 +72,7 @@ class TestToolManagement:
         with patch("os.environ", {}):
             with patch("os.path.exists", return_value=True):
                 with patch("shutil.which", return_value="/usr/bin/npx"):
-                    processes = launch_tools(mock_config_manager)
+                    processes = start_tools(mock_config_manager, process_manager=MagicMock())
 
         # Verify tool process was started
         assert mock_popen.called
