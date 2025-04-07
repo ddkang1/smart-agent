@@ -3,29 +3,49 @@
 
 # Each tool must have:
 # - enabled: Whether the tool is enabled
-# - url: URL to access the tool (port in URL determines where the tool will run)
-# - command: The installation command for the tool
+# - transport: The transport type for the tool:
+#   - stdio_to_sse: Convert stdio to SSE using supergateway (use MCPServerSse in chat)
+#   - sse_to_stdio: Convert SSE to stdio using supergateway (use MCPServerStdio in chat)
+#   - stdio: Direct stdio communication (use MCPServerStdio in chat, no supergateway, no port/URL needed)
+#   - sse: Remote SSE tools (use MCPServerSse in chat, no local launching needed)
+# - command: The installation command for the tool (needed for 'stdio' and 'stdio_to_sse' transports, not needed for 'sse' and 'sse_to_stdio' transports)
+# - url: URL to access the tool (needed for 'sse', 'sse_to_stdio', and 'stdio_to_sse' transports, not needed for 'stdio' transport)
 
-# Option 1: Fixed port in URL (tool will run on port 8000)
+# Example of local tools
 mcp_think_tool:
   enabled: true
   url: http://localhost:8000/sse
   command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+  transport: stdio_to_sse
 
-# Option 2: Dynamic port in URL (port will be assigned at runtime)
 ddg_mcp:
   enabled: true
-  url: http://localhost:{port}/sse
+  url: http://localhost:{port}/sse # Dynamic port in URL (port will be assigned at runtime)
   command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+  transport: stdio_to_sse
 
-# Option 3: Fixed port with Docker container
 python_repl:
   enabled: true
   url: http://localhost:8002/sse
   command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+  transport: stdio_to_sse
 
-# Example of a remote tool
+# Example of a stdio tool (direct stdio communication)
+stdio_tool:
+  enabled: true
+  command: "python -m my_stdio_tool"
+  transport: stdio
+
+# Example of an sse_to_stdio tool (convert SSE to stdio)
+sse_to_stdio_tool:
+  enabled: true
+  url: "https://mcp-server-example.supermachine.app"  # URL of the remote SSE server
+  transport: sse_to_stdio
+  # Note: No command is needed for sse_to_stdio transport, it will be constructed from the URL
+
+# Example of remote tools (only for SSE)
 remote_tool:
   enabled: true
   url: http://localhost:8003/sse
+  transport: sse
 

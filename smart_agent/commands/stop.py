@@ -46,6 +46,19 @@ def stop_tools(
             logger.debug(f"Tool {tool_id} is not enabled, skipping")
             continue
 
+        # Get the transport type from the configuration
+        transport_type = tool_config.get("transport", "stdio_to_sse").lower()
+
+        # Skip 'sse' transport type (remote tools) as they don't need to be stopped
+        if transport_type == "sse":
+            logger.debug(f"Tool {tool_id} uses 'sse' transport type (remote tool), skipping")
+            stopped_tools[tool_id] = True
+            continue
+
+        # For 'stdio' and 'sse_to_stdio' transport types, the MCPServerStdio class handles the process
+        # We don't need to stop them separately as they're managed by the MCPServerStdio class
+        # But we still need to check if they're running in our process manager
+
         # Check if the tool is running
         if not process_manager.is_tool_running(tool_id):
             console.print(f"[yellow]Tool {tool_id} is not running[/]")

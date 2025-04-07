@@ -4,10 +4,14 @@ Chat command implementation for the Smart Agent CLI.
 
 import json
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional
 
 import click
 from rich.console import Console
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 from ..tool_manager import ConfigManager
 from ..agent import SmartAgent, PromptGenerator
@@ -163,13 +167,55 @@ def run_chat_loop(config_manager: ConfigManager):
                 )
 
                 # Import required classes
-                from agents.mcp import MCPServerSse
+                from agents.mcp import MCPServerSse, MCPServerStdio
                 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
 
-                # Create MCP servers using the same pattern as research.py
+                # Create MCP servers based on transport type
                 mcp_servers_objects = []
-                for url in mcp_urls:
-                    mcp_servers_objects.append(MCPServerSse(params={"url": url}))
+                for tool_id, tool_config in config_manager.get_tools_config().items():
+                    if not config_manager.is_tool_enabled(tool_id):
+                        continue
+
+                    transport_type = tool_config.get("transport", "stdio_to_sse").lower()
+
+                    # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
+                    if transport_type in ["stdio_to_sse", "sse"]:
+                        url = tool_config.get("url")
+                        if url:
+                            mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+                    # For stdio transport, use MCPServerStdio with the command directly
+                    elif transport_type == "stdio":
+                        command = tool_config.get("command")
+                        if command:
+                            # For MCPServerStdio, we need to split the command into command and args
+                            command_parts = command.split()
+                            executable = command_parts[0]
+                            args = command_parts[1:] if len(command_parts) > 1 else []
+                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={
+                                "command": executable,
+                                "args": args
+                            }))
+                    # For sse_to_stdio transport, always construct the command from the URL
+                    elif transport_type == "sse_to_stdio":
+                        # Get the URL from the configuration
+                        url = tool_config.get("url")
+                        if url:
+                            # Construct the full supergateway command
+                            command = f"npx -y supergateway --sse \"{url}\""
+                            logger.debug(f"Constructed command for sse_to_stdio transport: '{command}'")
+                            # For MCPServerStdio, we need to split the command into command and args
+                            command_parts = command.split()
+                            executable = command_parts[0]
+                            args = command_parts[1:] if len(command_parts) > 1 else []
+                            mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={
+                                "command": executable,
+                                "args": args
+                            }))
+                        else:
+                            logger.warning(f"Missing URL for sse_to_stdio transport type for tool {tool_id}")
+                    # For any other transport types, log a warning
+                    else:
+                        logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
 
                 # Connect to all MCP servers
                 for server in mcp_servers_objects:
