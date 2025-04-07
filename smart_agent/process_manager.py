@@ -3,15 +3,13 @@ Process management functionality for the Smart Agent CLI.
 """
 
 import os
-import sys
 import time
 import signal
 import socket
 import subprocess
 import logging
 import platform
-from typing import Dict, List, Optional, Tuple, Any
-from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -349,11 +347,20 @@ class ProcessManager:
                                     container_id = parts[0]
                                     image = parts[1]
 
-                                    # Check if this is a relevant container by comparing with the extracted image
-                                    # or by looking for any similarity with the tool ID
-                                    if (docker_image and docker_image in image) or \
-                                       (tool_id.lower() in image.lower()) or \
-                                       (tool_id.replace("_", "-").lower() in image.lower()):
+                                    # Check if this is a relevant container
+                                    is_relevant = False
+                                    # 1. Check if extracted image matches
+                                    if docker_image and docker_image in image:
+                                        is_relevant = True
+                                        if self.debug:
+                                            logger.debug(f"Container {container_id} matches extracted image {docker_image}")
+                                    # 2. Check if tool ID appears in image name
+                                    elif tool_id.lower() in image.lower() or tool_id.replace("_", "-").lower() in image.lower():
+                                        is_relevant = True
+                                        if self.debug:
+                                            logger.debug(f"Container {container_id} matches tool ID {tool_id}")
+
+                                    if is_relevant:
                                         if self.debug:
                                             logger.debug(f"Found container {container_id} with image {image}")
                                         # Stop this container
@@ -378,11 +385,23 @@ class ProcessManager:
                                     image = parts[1]
                                     command = parts[2]
 
-                                    # Check for any pattern that might match our tool
-                                    # Compare with extracted image or look for tool ID in image name
-                                    if (docker_image and docker_image in image) or \
-                                       (tool_id.lower() in image.lower()) or \
-                                       (tool_id.replace("_", "-").lower() in image.lower()):
+                                    # Use the same logic as before to check if this is a relevant container
+                                    is_relevant = False
+                                    if docker_image and docker_image in image:
+                                        is_relevant = True
+                                        if self.debug:
+                                            logger.debug(f"Container {container_id} matches extracted image {docker_image}")
+                                    elif tool_id.lower() in image.lower() or tool_id.replace("_", "-").lower() in image.lower():
+                                        is_relevant = True
+                                        if self.debug:
+                                            logger.debug(f"Container {container_id} matches tool ID {tool_id}")
+                                    # Also check command for any matches
+                                    elif tool_id.lower() in command.lower() or tool_id.replace("_", "-").lower() in command.lower():
+                                        is_relevant = True
+                                        if self.debug:
+                                            logger.debug(f"Container {container_id} command matches tool ID {tool_id}")
+
+                                    if is_relevant:
                                         if self.debug:
                                             logger.debug(f"Found matching container {container_id} with image {image}")
                                         # Stop this container
