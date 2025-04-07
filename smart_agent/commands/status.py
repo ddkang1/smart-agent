@@ -35,44 +35,44 @@ def get_tools_status(
     """
     # Get tools configuration
     tools_config = config_manager.get_tools_config()
-    
+
     # Track tool status
     tools_status = {}
-    
+
     # Check status of each tool
     for tool_id, tool_config in tools_config.items():
         enabled = tool_config.get("enabled", False)
-        
+
         # Basic status
         status = {
             "enabled": enabled,
             "name": tool_config.get("name", tool_id),
             "description": tool_config.get("description", ""),
         }
-        
+
         # Skip detailed status for disabled tools
         if not enabled:
             status["running"] = False
             tools_status[tool_id] = status
             continue
-            
+
         # Check if the tool is running
         running = process_manager.is_tool_running(tool_id)
         status["running"] = running
-        
+
         if running:
             # Get additional information for running tools
             port = process_manager.get_tool_port(tool_id)
             status["port"] = port
-            
+
             # Get the tool URL
             url = tool_config.get("url", "")
             if url and "{port}" in url and port:
                 url = url.replace("{port}", str(port))
             status["url"] = url
-            
+
         tools_status[tool_id] = status
-            
+
     return tools_status
 
 
@@ -102,20 +102,20 @@ def status(config, tools, json):
         json: Output in JSON format
     """
     # Create configuration manager
-    config_manager = ConfigManager(config_path=config, tools_path=tools)
-    
+    config_manager = ConfigManager(config_path=config)
+
     # Create process manager
     process_manager = ProcessManager()
-    
+
     # Get tools status
     tools_status = get_tools_status(config_manager, process_manager)
-    
+
     # Output in JSON format if requested
     if json:
         import json as json_lib
         console.print(json_lib.dumps(tools_status, indent=2))
         return
-    
+
     # Create a table for the output
     table = Table(title="Tool Services Status")
     table.add_column("ID", style="cyan")
@@ -124,14 +124,14 @@ def status(config, tools, json):
     table.add_column("Running", style="green")
     table.add_column("Port", style="blue")
     table.add_column("URL", style="yellow")
-    
+
     # Add rows to the table
     for tool_id, status in tools_status.items():
         enabled = "✓" if status.get("enabled", False) else "✗"
         running = "✓" if status.get("running", False) else "✗"
         port = str(status.get("port", "")) if status.get("running", False) else ""
         url = status.get("url", "") if status.get("running", False) else ""
-        
+
         table.add_row(
             tool_id,
             status.get("name", tool_id),
@@ -140,6 +140,6 @@ def status(config, tools, json):
             port,
             url,
         )
-    
+
     # Print the table
     console.print(table)
