@@ -114,14 +114,38 @@ def start_tools(
 
         # Determine if we need to add port parameters based on the command
 
-        # Modify command to include port parameter if needed
-        if "docker" in command.lower():
-            # For Docker commands, add port mapping
+        # Get the tool URL to extract hostname
+        hostname = "localhost"
+        if tool_url:
+            try:
+                from urllib.parse import urlparse
+                parsed_url = urlparse(tool_url)
+                hostname = parsed_url.hostname or "localhost"
+            except Exception:
+                pass
+
+        # Get the tool type
+        tool_type = tool_config.get("type", "").lower()
+
+        # Construct the full command based on the tool type
+        if tool_type == "docker":
+            # For Docker commands, first ensure port mapping is included
             if "-p" not in command:
                 command = command.replace("docker run", f"docker run -p {{port}}:{{port}}")
-        elif "--port" not in command and "-p" not in command:
-            # For other commands, add --port parameter if not present
-            command = f"{command} --port {{port}}"
+
+            # Then wrap the command in supergateway
+            command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+        elif tool_type == "uvx":
+            # For UVX commands, first ensure port parameter is included
+            if "--port" not in command and "-p" not in command:
+                command = f"{command} --port {{port}}"
+
+            # Then wrap the command in supergateway
+            command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
+        else:
+            # For other commands, just add port parameter if needed
+            if "--port" not in command and "-p" not in command:
+                command = f"{command} --port {{port}}"
 
         try:
             # Start the tool process
