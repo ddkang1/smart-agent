@@ -23,6 +23,14 @@ from .commands.status import status
 from .commands.init import init
 from .commands.setup import setup, launch_litellm_proxy
 
+# Try to import web command if streamlit is available
+try:
+    import streamlit
+    from .commands.web import web
+    has_streamlit = True
+except ImportError:
+    has_streamlit = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -100,6 +108,21 @@ cli.add_command(stop)
 cli.add_command(status)
 cli.add_command(init)
 cli.add_command(setup)
+
+# Add web command if streamlit is available
+if has_streamlit:
+    cli.add_command(web)
+else:
+    # Create a placeholder command that shows installation instructions
+    @click.command(name="web")
+    def web_placeholder():
+        """Start web interface (requires web dependencies)."""
+        console.print("[bold yellow]Web dependencies not installed.[/]")
+        console.print("To use this command, install web dependencies:")
+        console.print("[bold]pip install 'smart-agent[web]'[/]")
+
+    # Add placeholder command
+    cli.add_command(web_placeholder, name="web")
 
 
 def main():
