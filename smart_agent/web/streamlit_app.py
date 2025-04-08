@@ -144,13 +144,11 @@ if prompt := st.chat_input("You: "):
 
         # Process with agent
         with st.chat_message("assistant"):
-            # Create collapsible sections for different output types
-            thought_expander = st.expander("Thoughts", expanded=False)
-            tool_expander = st.expander("Tool Calls", expanded=False)
-            tool_output_expander = st.expander("Tool Outputs", expanded=False)
+            # Create a container for the sequential output
+            sequence_container = st.container()
 
             # Create a container for the final response
-            response_container = st.container()
+            # response_container = st.empty()
 
             # Process the message with the agent
             async def run_agent():
@@ -245,33 +243,40 @@ if prompt := st.chat_input("You: "):
                                         key, value = next(iter(arguments_dict.items()))
                                         if key == "thought":
                                             is_thought = True
-                                            with thought_expander:
-                                                st.info(f"**Thought**: {value}")
+                                            with sequence_container:
+                                                with st.expander("Thought", expanded=False):
+                                                    st.info(value)
                                             assistant_reply += "\n[thought]: " + value
                                         else:
                                             is_thought = False
-                                            with tool_expander:
-                                                st.warning(f"**Tool ({key})**: {value}")
+                                            with sequence_container:
+                                                with st.expander(f"Tool Call: {key}", expanded=False):
+                                                    st.warning(value)
                                     except (json.JSONDecodeError, StopIteration) as e:
                                         st.error(f"Error parsing tool call: {e}")
                                 elif event.item.type == "tool_call_output_item":
                                     if not is_thought:
                                         try:
                                             output_text = json.loads(event.item.output).get("text", "")
-                                            with tool_output_expander:
-                                                st.success(f"**Tool Output**: {output_text}")
+                                            with sequence_container:
+                                                with st.expander("Tool Output", expanded=False):
+                                                    st.success(output_text)
                                         except json.JSONDecodeError:
-                                            with tool_output_expander:
-                                                st.success(f"**Tool Output**: {event.item.output}")
+                                            with sequence_container:
+                                                with st.expander("Tool Output", expanded=False):
+                                                    st.success(event.item.output)
                                 elif event.item.type == "message_output_item":
                                     role = event.item.raw_item.role
                                     text_message = ItemHelpers.text_message_output(event.item)
+                                    # print(role, text_message, flush=True)
                                     if role == "assistant":
-                                        with response_container:
-                                            st.markdown(text_message)
+                                        with sequence_container:
+                                            with st.expander("Assistant", expanded=True):
+                                                st.markdown(text_message)
+                                        # response_container.markdown(text_message)
                                         assistant_reply += "\n[response]: " + text_message
                                     else:
-                                        with response_container:
+                                        with sequence_container:
                                             st.markdown(f"**{role.capitalize()}**: {text_message}")
 
                         # Add assistant message to conversation history
