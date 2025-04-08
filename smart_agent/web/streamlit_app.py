@@ -148,10 +148,19 @@ if prompt := st.chat_input("You: "):
             sequence_container = st.container()
 
             # Create a container for the final response
-            # response_container = st.empty()
+            response_container = st.empty()
+
+            # Create variables in the session state
+            if "agent_state" not in st.session_state:
+                st.session_state.agent_state = {
+                    "current_agent_container": None,
+                    "last_event_was_assistant": False,
+                    "is_thought": False
+                }
 
             # Process the message with the agent
             async def run_agent():
+
                 try:
                     # Get API configuration
                     api_key = st.session_state.config_manager.get_api_key()
@@ -228,7 +237,6 @@ if prompt := st.chat_input("You: "):
                         # Run the agent with the conversation history
                         result = Runner.run_streamed(agent, st.session_state.conversation_history, max_turns=100)
                         assistant_reply = ""
-                        is_thought = False
 
                         # Process the stream events
                         async for event in result.stream_events():
@@ -237,47 +245,67 @@ if prompt := st.chat_input("You: "):
                             elif event.type == "agent_updated_stream_event":
                                 continue
                             elif event.type == "run_item_stream_event":
-                                if event.item.type == "tool_call_item":
-                                    try:
-                                        arguments_dict = json.loads(event.item.raw_item.arguments)
-                                        key, value = next(iter(arguments_dict.items()))
-                                        if key == "thought":
-                                            is_thought = True
-                                            with sequence_container:
-                                                with st.expander("Thought", expanded=False):
-                                                    st.info(value)
-                                            assistant_reply += "\n[thought]: " + value
-                                        else:
-                                            is_thought = False
-                                            with sequence_container:
-                                                with st.expander(f"Tool Call: {key}", expanded=False):
-                                                    st.warning(value)
-                                    except (json.JSONDecodeError, StopIteration) as e:
-                                        st.error(f"Error parsing tool call: {e}")
-                                elif event.item.type == "tool_call_output_item":
-                                    if not is_thought:
-                                        try:
-                                            output_text = json.loads(event.item.output).get("text", "")
-                                            with sequence_container:
-                                                with st.expander("Tool Output", expanded=False):
-                                                    st.success(output_text)
-                                        except json.JSONDecodeError:
-                                            with sequence_container:
-                                                with st.expander("Tool Output", expanded=False):
-                                                    st.success(event.item.output)
-                                elif event.item.type == "message_output_item":
+                                if event.item.type == "message_output_item":
                                     role = event.item.raw_item.role
                                     text_message = ItemHelpers.text_message_output(event.item)
-                                    # print(role, text_message, flush=True)
+
                                     if role == "assistant":
+                                        # Close previous agent container if it exists
+                                        st.session_state.agent_state["current_agent_container"] = None
+                                        st.session_state.agent_state["last_event_was_assistant"] = True
+
+                                        # Display assistant message
                                         with sequence_container:
                                             with st.expander("Assistant", expanded=True):
                                                 st.markdown(text_message)
-                                        # response_container.markdown(text_message)
+
+                                        # Add to response
                                         assistant_reply += "\n[response]: " + text_message
                                     else:
                                         with sequence_container:
                                             st.markdown(f"**{role.capitalize()}**: {text_message}")
+
+                                # Handle tool calls and outputs
+                                elif event.item.type == "tool_call_item":
+                                    try:
+                                        # Create a new agent container if needed
+                                        if st.session_state.agent_state["current_agent_container"] is None or st.session_state.agent_state["last_event_was_assistant"]:
+                                            # Create an informative title for the agent container
+                                            agent_title = "Agent Reasoning (click to expand)"
+                                            with sequence_container:
+                                                st.session_state.agent_state["current_agent_container"] = st.expander(agent_title, expanded=False)
+                                            st.session_state.agent_state["last_event_was_assistant"] = False
+
+                                        arguments_dict = json.loads(event.item.raw_item.arguments)
+                                        key, value = next(iter(arguments_dict.items()))
+
+                                        if key == "thought":
+                                            st.session_state.agent_state["is_thought"] = True
+                                            # Use the existing container
+
+                                            # Add the thought to the existing container
+                                            with st.session_state.agent_state["current_agent_container"]:
+                                                st.info(f"**Thought**: {value}")
+                                            assistant_reply += "\n[thought]: " + value
+                                        else:
+                                            st.session_state.agent_state["is_thought"] = False
+                                            # Add the tool call to the existing container
+                                            with st.session_state.agent_state["current_agent_container"]:
+                                                st.warning(f"**Tool Call ({key})**: {value}")
+                                    except (json.JSONDecodeError, StopIteration) as e:
+                                        st.error(f"Error parsing tool call: {e}")
+
+                                elif event.item.type == "tool_call_output_item":
+                                    if not st.session_state.agent_state["is_thought"] and st.session_state.agent_state["current_agent_container"] is not None:
+                                        try:
+                                            output_text = json.loads(event.item.output).get("text", "")
+                                            # Add the tool output to the existing container
+                                            with st.session_state.agent_state["current_agent_container"]:
+                                                st.success(f"**Tool Output**: {output_text}")
+                                        except json.JSONDecodeError:
+                                            # Handle raw output
+                                            with st.session_state.agent_state["current_agent_container"]:
+                                                st.success(f"**Tool Output**: {event.item.output}")
 
                         # Add assistant message to conversation history
                         final_response = assistant_reply.strip()
