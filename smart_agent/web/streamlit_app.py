@@ -8,6 +8,7 @@ import sys
 import json
 import asyncio
 import logging
+import re
 
 import streamlit as st
 
@@ -27,6 +28,48 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
+
+
+def format_content_with_code_blocks(content):
+    """Format content to properly display code blocks in Streamlit.
+
+    Args:
+        content (str): The content to format
+
+    Returns:
+        str: Formatted content with proper code block formatting
+    """
+    # Check if content contains code blocks (```)
+    if "```" in content:
+        # Split by code block markers
+        parts = re.split(r'(```(?:\w+)?\n|```)', content)
+        formatted_parts = []
+        in_code_block = False
+        code_lang = ""
+        code_content = ""
+
+        for part in parts:
+            if part.startswith("```") and part.endswith("\n"):
+                # Start of code block with language
+                in_code_block = True
+                code_lang = part[3:-1].strip()
+                code_content = ""
+            elif part == "```":
+                # End of code block
+                in_code_block = False
+                # Add the code block with proper formatting
+                formatted_parts.append(f"```{code_lang}\n{code_content}```")
+            elif in_code_block:
+                # Inside code block, collect content
+                code_content += part
+            else:
+                # Regular text
+                formatted_parts.append(part)
+
+        return "".join(formatted_parts)
+    else:
+        # No code blocks, return as is
+        return content
 
 # Page configuration
 st.set_page_config(
@@ -257,7 +300,7 @@ if prompt := st.chat_input("You: "):
                                         # Display assistant message
                                         with sequence_container:
                                             with st.expander("Assistant", expanded=True):
-                                                st.markdown(text_message)
+                                                st.markdown(f"```{text_message}```")
 
                                         # Add to response
                                         assistant_reply += "\n[response]: " + text_message
@@ -285,13 +328,22 @@ if prompt := st.chat_input("You: "):
 
                                             # Add the thought to the existing container
                                             with st.session_state.agent_state["current_agent_container"]:
-                                                st.info(f"**Thought**: {value}")
+                                                # Add a header for the thought
+                                                thought_preview = value[:50] + "..." if len(value) > 50 else value
+                                                st.markdown(f"### 🤔 Agent Thinking: {thought_preview}")
+                                                # Format the thought content to properly display code blocks
+                                                formatted_value = format_content_with_code_blocks(value)
+                                                st.info(f"```\n{formatted_value}\n```")
                                             assistant_reply += "\n[thought]: " + value
                                         else:
                                             st.session_state.agent_state["is_thought"] = False
                                             # Add the tool call to the existing container
                                             with st.session_state.agent_state["current_agent_container"]:
-                                                st.warning(f"**Tool Call ({key})**: {value}")
+                                                # Add a header for the tool call
+                                                st.markdown(f"### 🔧 Agent Using Tool: {key}")
+                                                # Format the tool call content to properly display code blocks
+                                                formatted_value = format_content_with_code_blocks(value)
+                                                st.warning(f"```\n{formatted_value}\n```")
                                     except (json.JSONDecodeError, StopIteration) as e:
                                         st.error(f"Error parsing tool call: {e}")
 
@@ -301,11 +353,21 @@ if prompt := st.chat_input("You: "):
                                             output_text = json.loads(event.item.output).get("text", "")
                                             # Add the tool output to the existing container
                                             with st.session_state.agent_state["current_agent_container"]:
-                                                st.success(f"**Tool Output**: {output_text}")
+                                                # Add a header for the tool output
+                                                output_preview = output_text[:50] + "..." if len(output_text) > 50 else output_text
+                                                st.markdown(f"### 💾 Agent Got Result: {output_preview}")
+                                                # Format the tool output content to properly display code blocks
+                                                formatted_output = format_content_with_code_blocks(output_text)
+                                                st.success(f"```\n{formatted_output}\n```")
                                         except json.JSONDecodeError:
                                             # Handle raw output
                                             with st.session_state.agent_state["current_agent_container"]:
-                                                st.success(f"**Tool Output**: {event.item.output}")
+                                                # Add a header for the tool output
+                                                output_preview = event.item.output[:50] + "..." if len(event.item.output) > 50 else event.item.output
+                                                st.markdown(f"### 💾 Agent Got Result: {output_preview}")
+                                                # Format the tool output content to properly display code blocks
+                                                formatted_output = format_content_with_code_blocks(event.item.output)
+                                                st.success(f"```\n{formatted_output}\n```")
 
                         # Add assistant message to conversation history
                         final_response = assistant_reply.strip()
