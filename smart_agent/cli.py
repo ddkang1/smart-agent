@@ -33,7 +33,7 @@ except ImportError:
 
 try:
     import chainlit
-    from .commands.chainlit_ui import run_chainlit_ui, setup_parser
+    from .commands.chainlit import run_chainlit_ui, setup_parser
     has_chainlit = True
 except ImportError:
     has_chainlit = False
@@ -131,15 +131,15 @@ else:
     # Add placeholder command
     cli.add_command(web_placeholder, name="web")
 
-# Add chainlit-ui command if chainlit is available
+# Add chainlit command if chainlit is available
 if has_chainlit:
-    @click.command(name="chainlit-ui")
+    @click.command(name="chainlit")
     @click.option("--port", default=8000, help="Port to run the server on")
     @click.option("--host", default="127.0.0.1", help="Host to run the server on")
     @click.option("--debug", is_flag=True, help="Run in debug mode")
     def chainlit_ui(port, host, debug):
         """Start Chainlit web interface."""
-        from .commands.chainlit_ui import run_chainlit_ui
+        from .commands.chainlit import run_chainlit_ui
         class Args:
             def __init__(self, port, host, debug):
                 self.port = port
@@ -147,11 +147,11 @@ if has_chainlit:
                 self.debug = debug
         run_chainlit_ui(Args(port, host, debug))
 
-    # Add chainlit-ui command
-    cli.add_command(chainlit_ui)
+    # Add chainlit command
+    cli.add_command(chainlit_ui, name="chainlit")
 else:
     # Create a placeholder command that shows installation instructions
-    @click.command(name="chainlit-ui")
+    @click.command(name="chainlit")
     def chainlit_ui_placeholder():
         """Start Chainlit web interface (requires chainlit)."""
         console.print("[bold yellow]Chainlit not installed.[/]")
@@ -159,7 +159,7 @@ else:
         console.print("[bold]pip install chainlit[/]")
 
     # Add placeholder command
-    cli.add_command(chainlit_ui_placeholder, name="chainlit-ui")
+    cli.add_command(chainlit_ui_placeholder, name="chainlit")
 
 
 def main():

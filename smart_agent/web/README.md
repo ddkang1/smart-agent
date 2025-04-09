@@ -21,14 +21,14 @@ smart-agent web --config path/to/config.yaml --tools path/to/tools.yaml --port 8
 
 ### Chainlit UI
 
-You can start the Chainlit UI using the `smart-agent chainlit-ui` command:
+You can start the Chainlit UI using the `smart-agent chainlit` command:
 
 ```bash
 # Install Chainlit
 pip install chainlit
 
 # Start the Chainlit UI
-smart-agent chainlit-ui --port 8000 --host 127.0.0.1
+smart-agent chainlit --port 8000 --host 127.0.0.1
 ```
 
 The Chainlit UI provides a more modern interface with better support for displaying code blocks and agent reasoning steps.
@@ -70,6 +70,11 @@ To develop the Chainlit UI:
 2. Run the Chainlit app directly:
    ```bash
    chainlit run smart_agent/web/chainlit_app.py
+   ```
+
+   Or use the Smart Agent CLI:
+   ```bash
+   smart-agent chainlit --debug
    ```
 
 ## Implementation
