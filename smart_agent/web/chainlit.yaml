@@ -1,0 +1,41 @@
+# Chainlit configuration file
+# See https://docs.chainlit.io/configuration/overview for more details
+
+# App configuration
+app:
+  title: "Smart Agent"
+  description: "A powerful AI assistant with tool capabilities"
+  theme:
+    primary_color: "#4F46E5"  # Indigo color
+  # Default page when opening the app
+  default_expanded_messages: false  # Don't expand messages by default
+
+# UI configuration
+ui:
+  # Hide the chain of thought by default
+  hide_cot: false
+  # Custom CSS can be added here
+  custom_css: ""
+
+# Code highlighting theme
+code:
+  theme: "github-dark"
+
+# Features to enable or disable
+features:
+  # Enable or disable multi-modal file upload
+  multi_modal: true
+  # Enable or disable speech to text
+  speech_to_text: false
+  # Enable or disable prompt playground
+  prompt_playground:
+    enabled: false
+
+# User settings
+user:
+  # Enable or disable user authentication
+  auth:
+    enabled: false
+  # Enable or disable user feedback
+  feedback:
+    enabled: true

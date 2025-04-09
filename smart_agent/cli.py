@@ -23,13 +23,20 @@ from .commands.status import status
 from .commands.init import init
 from .commands.setup import setup, launch_litellm_proxy
 
-# Try to import web command if streamlit is available
+# Try to import web commands if dependencies are available
 try:
     import streamlit
     from .commands.web import web
     has_streamlit = True
 except ImportError:
     has_streamlit = False
+
+try:
+    import chainlit
+    from .commands.chainlit_ui import run_chainlit_ui, setup_parser
+    has_chainlit = True
+except ImportError:
+    has_chainlit = False
 
 # Configure logging
 logging.basicConfig(
@@ -116,13 +123,43 @@ else:
     # Create a placeholder command that shows installation instructions
     @click.command(name="web")
     def web_placeholder():
-        """Start web interface (requires web dependencies)."""
-        console.print("[bold yellow]Web dependencies not installed.[/]")
+        """Start Streamlit web interface (requires web dependencies)."""
+        console.print("[bold yellow]Streamlit web dependencies not installed.[/]")
         console.print("To use this command, install web dependencies:")
         console.print("[bold]pip install 'smart-agent[web]'[/]")
 
     # Add placeholder command
     cli.add_command(web_placeholder, name="web")
+
+# Add chainlit-ui command if chainlit is available
+if has_chainlit:
+    @click.command(name="chainlit-ui")
+    @click.option("--port", default=8000, help="Port to run the server on")
+    @click.option("--host", default="127.0.0.1", help="Host to run the server on")
+    @click.option("--debug", is_flag=True, help="Run in debug mode")
+    def chainlit_ui(port, host, debug):
+        """Start Chainlit web interface."""
+        from .commands.chainlit_ui import run_chainlit_ui
+        class Args:
+            def __init__(self, port, host, debug):
+                self.port = port
+                self.host = host
+                self.debug = debug
+        run_chainlit_ui(Args(port, host, debug))
+
+    # Add chainlit-ui command
+    cli.add_command(chainlit_ui)
+else:
+    # Create a placeholder command that shows installation instructions
+    @click.command(name="chainlit-ui")
+    def chainlit_ui_placeholder():
+        """Start Chainlit web interface (requires chainlit)."""
+        console.print("[bold yellow]Chainlit not installed.[/]")
+        console.print("To use this command, install Chainlit:")
+        console.print("[bold]pip install chainlit[/]")
+
+    # Add placeholder command
+    cli.add_command(chainlit_ui_placeholder, name="chainlit-ui")
 
 
 def main():
