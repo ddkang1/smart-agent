@@ -13,23 +13,23 @@ def run_chainlit_ui(args):
     # Get the path to the Chainlit app
     script_dir = Path(__file__).parent
     chainlit_app_path = script_dir.parent / "web" / "chainlit_app.py"
-    
+
     # Check if the Chainlit app exists
     if not chainlit_app_path.exists():
         print(f"Error: Chainlit app not found at {chainlit_app_path}")
         return 1
-    
+
     # Build the command to run Chainlit
     cmd = [
-        "chainlit", "run", 
+        "chainlit", "run",
         str(chainlit_app_path),
         "--port", str(args.port),
         "--host", args.host
     ]
-    
+
     if args.debug:
         cmd.append("--debug")
-    
+
     # Run Chainlit
     try:
         print(f"Starting Chainlit web UI on http://{args.host}:{args.port}")
@@ -47,20 +47,20 @@ def run_chainlit_ui(args):
 def setup_parser(parser):
     """Set up the argument parser for the chainlit-ui command."""
     parser.add_argument(
-        "--port", 
-        type=int, 
-        default=8000, 
+        "--port",
+        type=int,
+        default=8000,
         help="Port to run the Chainlit server on"
     )
     parser.add_argument(
-        "--host", 
-        type=str, 
-        default="127.0.0.1", 
+        "--host",
+        type=str,
+        default="127.0.0.1",
         help="Host to run the Chainlit server on"
     )
     parser.add_argument(
-        "--debug", 
-        action="store_true", 
+        "--debug",
+        action="store_true",
         help="Run in debug mode"
     )
     return parser

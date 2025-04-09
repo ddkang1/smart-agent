@@ -66,8 +66,8 @@ async def handle_settings_update(settings):
 
 # Create translation directory and files if they don't exist
 def create_translation_files():
-    # Create .chainlit directory if it doesn't exist
-    chainlit_dir = pathlib.Path.home() / "test" / ".chainlit"
+    # Create .chainlit directory in the current working directory
+    chainlit_dir = pathlib.Path.cwd() / ".chainlit"
     translations_dir = chainlit_dir / "translations"
 
     # Create directories if they don't exist
