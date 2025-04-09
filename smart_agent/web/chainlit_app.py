@@ -14,11 +14,15 @@ import json
 import asyncio
 import logging
 import pathlib
-import chainlit as cl
-from openai import AsyncOpenAI
 from typing import List, Dict, Any, Optional
-from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
-from agents.mcp import MCPServerSse
+
+import chainlit as cl
+
+# These imports are used dynamically in the code
+# and will be properly imported when needed
+# from openai import AsyncOpenAI
+# from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+# from agents.mcp import MCPServerSse
 
 # Add parent directory to path to import smart_agent modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -29,6 +33,9 @@ from smart_agent.agent import PromptGenerator
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Suppress specific asyncio warnings
+logging.getLogger('asyncio').setLevel(logging.ERROR)
 
 # Disable tracing if agents package is available
 try:
@@ -47,6 +54,9 @@ logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # Global variables
 config_manager = None
+mcp_servers_objects = []
+agent = None
+exit_stack = None
 
 @cl.on_settings_update
 async def handle_settings_update(settings):
@@ -92,7 +102,7 @@ def create_translation_files():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the chat session."""
-    global config_manager
+    global config_manager, mcp_servers_objects, agent, exit_stack
 
     # Create translation files
     create_translation_files()
@@ -103,86 +113,168 @@ async def on_chat_start():
     # Initialize conversation history
     cl.user_session.conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
 
-    # Welcome message
-    await cl.Message(
-        content="Welcome to Smart Agent! I'm ready to help you with your tasks.",
-        author="Smart Agent"
-    ).send()
+    try:
+        # Import required libraries
+        try:
+            import asyncio
+            from contextlib import AsyncExitStack
+            from openai import AsyncOpenAI
+            from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+            from agents.mcp import MCPServerSse
+        except ImportError:
+            await cl.Message(
+                content="Required packages not installed. Run 'pip install openai-agents' to use the agent.",
+                author="System"
+            ).send()
+            return
+
+        # Welcome message - send this before connecting to servers
+        await cl.Message(
+            content="Welcome to Smart Agent! I'm ready to help you with your tasks.",
+            author="Smart Agent"
+        ).send()
+
+        # Initialize OpenAI client
+        client = AsyncOpenAI(base_url=config_manager.get_api_base_url(), api_key=config_manager.get_api_key())
+
+        # Create MCP server objects
+        mcp_servers_objects = []
+
+        # Get enabled tools
+        for tool_id, tool_config in config_manager.get_tools_config().items():
+            if not config_manager.is_tool_enabled(tool_id):
+                continue
+
+            transport_type = tool_config.get("transport", "stdio_to_sse").lower()
+            url = tool_config.get("url")
+
+            # Check if we have a URL (required for client-only mode)
+            if not url:
+                logger.warning(f"Tool {tool_id} has no URL and will be skipped.")
+                continue
+
+            # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
+            if transport_type in ["stdio_to_sse", "sse"]:
+                logger.info(f"Adding {tool_id} at {url} to agent")
+                mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+
+        # Check if we have any MCP servers
+        if not mcp_servers_objects:
+            await cl.Message(
+                content="No tools are enabled or available. Please check your configuration.",
+                author="System"
+            ).send()
+            return
+
+        # Create an AsyncExitStack to manage server connections
+        exit_stack = AsyncExitStack()
+
+        # Connect to MCP servers using the exit stack
+        connected_servers = []
+        for server in mcp_servers_objects:
+            try:
+                # Use the exit stack to ensure proper cleanup
+                await exit_stack.enter_async_context(server)
+                logger.info(f"Connected to MCP server: {server.name}")
+                connected_servers.append(server)
+            except Exception as e:
+                logger.error(f"Error connecting to MCP server: {e}")
+                await cl.Message(
+                    content=f"Error connecting to tool {server.name}: {e}",
+                    author="System"
+                ).send()
+                # Don't return here, continue with other servers
+
+        # Check if we have any connected servers
+        if not connected_servers:
+            await cl.Message(
+                content="Could not connect to any tools. Please check your configuration.",
+                author="System"
+            ).send()
+            # Close the exit stack to clean up any resources
+            await exit_stack.aclose()
+            exit_stack = None
+            return
+
+        # Update the mcp_servers_objects list to only include connected servers
+        mcp_servers_objects = connected_servers
+
+        try:
+            # Debug: Log what we're about to do
+            logger.info("About to create agent with %d MCP servers", len(mcp_servers_objects))
+            for i, server in enumerate(mcp_servers_objects):
+                logger.info("Server %d: %s", i+1, server.name)
+
+            # Create the model
+            model = OpenAIChatCompletionsModel(
+                model=config_manager.get_model_name(),
+                openai_client=client,
+            )
+            logger.info("Model created successfully")
+
+            # Create the agent with MCP servers
+            logger.info("Creating agent...")
+            agent = Agent(
+                name="Assistant",
+                instructions=cl.user_session.conversation_history[0]["content"],
+                model=model,
+                mcp_servers=mcp_servers_objects,
+            )
+
+            logger.info("Agent created successfully")
+        except Exception as e:
+            logger.error(f"Error creating agent: {e}")
+            await cl.Message(
+                content=f"Error initializing agent: {e}",
+                author="System"
+            ).send()
+            # Close the exit stack to clean up any resources
+            await exit_stack.aclose()
+            exit_stack = None
+            return
+
+    except Exception as e:
+        # Handle any errors during initialization
+        error_message = f"An error occurred during initialization: {str(e)}"
+        logger.exception(error_message)
+        await cl.Message(content=error_message, author="System").send()
+
+        # Make sure to clean up resources
+        if exit_stack:
+            await exit_stack.aclose()
+            exit_stack = None
 
 @cl.on_message
 async def on_message(message: cl.Message):
     """Process user messages."""
+    global agent, mcp_servers_objects
+
     # Get user input
     user_input = message.content
+
+    # Check if agent is initialized
+    if agent is None or not hasattr(agent, 'mcp_servers') or not agent.mcp_servers:
+        await cl.Message(
+            content="Agent is not properly initialized. Please refresh the page and try again.",
+            author="System"
+        ).send()
+        return
 
     # Create an agent steps element to track reasoning
     async with cl.Step(name="Agent Reasoning") as agent_steps:
         try:
-
-            # Add user message to conversation history
-            cl.user_session.conversation_history.append({"role": "user", "content": user_input})
-
-            # Initialize OpenAI client
-            client = AsyncOpenAI(base_url=config_manager.get_api_base_url(), api_key=config_manager.get_api_key())
-
-            # Create MCP server objects
-            mcp_servers_objects = []
-
-            # Get enabled tools
-            for tool_id, tool_config in config_manager.get_tools_config().items():
-                if not config_manager.is_tool_enabled(tool_id):
-                    continue
-
-                transport_type = tool_config.get("transport", "stdio_to_sse").lower()
-                url = tool_config.get("url")
-
-                # Check if we have a URL (required for client-only mode)
-                if not url:
-                    logger.warning(f"Tool {tool_id} has no URL and will be skipped.")
-                    continue
-
-                # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
-                if transport_type in ["stdio_to_sse", "sse"]:
-                    logger.info(f"Adding {tool_id} at {url} to agent")
-                    mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
-
-            # Check if we have any MCP servers
-            if not mcp_servers_objects:
+            # Import required libraries
+            try:
+                from agents import Runner, ItemHelpers
+            except ImportError:
                 await cl.Message(
-                    content="No tools are enabled or available. Please check your configuration.",
+                    content="Required packages not installed. Run 'pip install openai-agents' to use the agent.",
                     author="System"
                 ).send()
                 return
 
-            # Create the agent
-            agent = Agent(
-                name="Assistant",
-                instructions=cl.user_session.conversation_history[0]["content"],
-                model=OpenAIChatCompletionsModel(
-                    model=config_manager.get_model_name(),
-                    openai_client=client,
-                ),
-                mcp_servers=mcp_servers_objects,
-            )
-
-            # Connect to MCP servers
-            for server in mcp_servers_objects:
-                try:
-                    await server.connect()
-                except Exception as e:
-                    logger.error(f"Error connecting to MCP server: {e}")
-                    await cl.Message(
-                        content=f"Error connecting to a tool: {e}",
-                        author="System"
-                    ).send()
-                    # Clean up already connected servers
-                    for s in mcp_servers_objects:
-                        try:
-                            if hasattr(s, 'cleanup') and callable(s.cleanup):
-                                await s.cleanup()
-                        except Exception as cleanup_error:
-                            logger.error(f"Error during server cleanup: {cleanup_error}")
-                    return
+            # Add user message to conversation history
+            cl.user_session.conversation_history.append({"role": "user", "content": user_input})
 
             try:
                 # Display a processing message
@@ -257,20 +349,41 @@ async def on_message(message: cl.Message):
                     author="System"
                 ).send()
 
-            finally:
-                # Clean up MCP servers
-                for server in mcp_servers_objects:
-                    if hasattr(server, 'cleanup') and callable(server.cleanup):
-                        try:
-                            await server.cleanup()
-                        except Exception as e:
-                            logger.error(f"Error during server cleanup: {e}")
-
         except Exception as e:
             # Handle any errors
             error_message = f"An error occurred: {str(e)}"
             logger.exception(error_message)
             await cl.Message(content=f"I encountered an error: {error_message}", author="Smart Agent").send()
+
+@cl.on_chat_end
+async def on_chat_end():
+    """Clean up resources when the chat session ends."""
+    global mcp_servers_objects, agent, exit_stack
+
+    logger.info("Cleaning up resources...")
+
+    # Use the exit stack to clean up all resources
+    if exit_stack:
+        try:
+            logger.info("Closing exit stack...")
+            await exit_stack.aclose()
+            logger.info("Exit stack closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing exit stack: {e}")
+        finally:
+            exit_stack = None
+
+    # Clear the list of MCP servers
+    mcp_servers_objects = []
+
+    # Reset the agent
+    agent = None
+
+    # Force garbage collection to clean up any remaining resources
+    import gc
+    gc.collect()
+
+    logger.info("Cleanup complete")
 
 if __name__ == "__main__":
     # This is used when running locally with `chainlit run`
