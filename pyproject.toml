@@ -32,6 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 web = [
     "streamlit>=1.32.0",
+    "chainlit",
 ]
 monitoring = [
     "langfuse>=2.0.0",
