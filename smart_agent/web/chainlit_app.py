@@ -52,22 +52,22 @@ logging.getLogger("mcp.client.sse").setLevel(logging.WARNING)
 # These are not critical and just add noise to the logs
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-# Global variables
-config_manager = None
-mcp_servers_objects = []
-agent = None
-exit_stack = None
+# We'll use cl.user_session to store user-specific variables instead of global variables
 
 @cl.on_settings_update
 async def handle_settings_update(settings):
     """Handle settings updates from the UI."""
+    # Make sure config_manager is initialized
+    if not hasattr(cl.user_session, 'config_manager') or cl.user_session.config_manager is None:
+        cl.user_session.config_manager = ConfigManager()
+
     # Update API key and other settings
-    config_manager.set_api_base_url(settings.get("api_base_url", ""))
-    config_manager.set_model_name(settings.get("model_name", ""))
-    config_manager.set_api_key(settings.get("api_key", ""))
+    cl.user_session.config_manager.set_api_base_url(settings.get("api_base_url", ""))
+    cl.user_session.config_manager.set_model_name(settings.get("model_name", ""))
+    cl.user_session.config_manager.set_api_key(settings.get("api_key", ""))
 
     # Save settings to config file
-    config_manager.save_config()
+    cl.user_session.config_manager.save_config()
 
     await cl.Message(
         content="Settings updated successfully!",
@@ -102,13 +102,17 @@ def create_translation_files():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the chat session."""
-    global config_manager, mcp_servers_objects, agent, exit_stack
+    # Initialize user session variables
+    cl.user_session.config_manager = None
+    cl.user_session.mcp_servers_objects = []
+    cl.user_session.agent = None
+    cl.user_session.exit_stack = None
 
     # Create translation files
     create_translation_files()
 
     # Initialize config manager
-    config_manager = ConfigManager()
+    cl.user_session.config_manager = ConfigManager()
 
     # Initialize conversation history
     cl.user_session.conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
@@ -135,14 +139,14 @@ async def on_chat_start():
         ).send()
 
         # Initialize OpenAI client
-        client = AsyncOpenAI(base_url=config_manager.get_api_base_url(), api_key=config_manager.get_api_key())
+        client = AsyncOpenAI(base_url=cl.user_session.config_manager.get_api_base_url(), api_key=cl.user_session.config_manager.get_api_key())
 
         # Create MCP server objects
-        mcp_servers_objects = []
+        cl.user_session.mcp_servers_objects = []
 
         # Get enabled tools
-        for tool_id, tool_config in config_manager.get_tools_config().items():
-            if not config_manager.is_tool_enabled(tool_id):
+        for tool_id, tool_config in cl.user_session.config_manager.get_tools_config().items():
+            if not cl.user_session.config_manager.is_tool_enabled(tool_id):
                 continue
 
             transport_type = tool_config.get("transport", "stdio_to_sse").lower()
@@ -156,10 +160,10 @@ async def on_chat_start():
             # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
             if transport_type in ["stdio_to_sse", "sse"]:
                 logger.info(f"Adding {tool_id} at {url} to agent")
-                mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+                cl.user_session.mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
 
         # Check if we have any MCP servers
-        if not mcp_servers_objects:
+        if not cl.user_session.mcp_servers_objects:
             await cl.Message(
                 content="No tools are enabled or available. Please check your configuration.",
                 author="System"
@@ -167,14 +171,14 @@ async def on_chat_start():
             return
 
         # Create an AsyncExitStack to manage server connections
-        exit_stack = AsyncExitStack()
+        cl.user_session.exit_stack = AsyncExitStack()
 
         # Connect to MCP servers using the exit stack
         connected_servers = []
-        for server in mcp_servers_objects:
+        for server in cl.user_session.mcp_servers_objects:
             try:
                 # Use the exit stack to ensure proper cleanup
-                await exit_stack.enter_async_context(server)
+                await cl.user_session.exit_stack.enter_async_context(server)
                 logger.info(f"Connected to MCP server: {server.name}")
                 connected_servers.append(server)
             except Exception as e:
@@ -192,33 +196,33 @@ async def on_chat_start():
                 author="System"
             ).send()
             # Close the exit stack to clean up any resources
-            await exit_stack.aclose()
-            exit_stack = None
+            await cl.user_session.exit_stack.aclose()
+            cl.user_session.exit_stack = None
             return
 
         # Update the mcp_servers_objects list to only include connected servers
-        mcp_servers_objects = connected_servers
+        cl.user_session.mcp_servers_objects = connected_servers
 
         try:
             # Debug: Log what we're about to do
-            logger.info("About to create agent with %d MCP servers", len(mcp_servers_objects))
-            for i, server in enumerate(mcp_servers_objects):
+            logger.info("About to create agent with %d MCP servers", len(cl.user_session.mcp_servers_objects))
+            for i, server in enumerate(cl.user_session.mcp_servers_objects):
                 logger.info("Server %d: %s", i+1, server.name)
 
             # Create the model
             model = OpenAIChatCompletionsModel(
-                model=config_manager.get_model_name(),
+                model=cl.user_session.config_manager.get_model_name(),
                 openai_client=client,
             )
             logger.info("Model created successfully")
 
             # Create the agent with MCP servers
             logger.info("Creating agent...")
-            agent = Agent(
+            cl.user_session.agent = Agent(
                 name="Assistant",
                 instructions=cl.user_session.conversation_history[0]["content"],
                 model=model,
-                mcp_servers=mcp_servers_objects,
+                mcp_servers=cl.user_session.mcp_servers_objects,
             )
 
             logger.info("Agent created successfully")
@@ -229,8 +233,8 @@ async def on_chat_start():
                 author="System"
             ).send()
             # Close the exit stack to clean up any resources
-            await exit_stack.aclose()
-            exit_stack = None
+            await cl.user_session.exit_stack.aclose()
+            cl.user_session.exit_stack = None
             return
 
     except Exception as e:
@@ -240,20 +244,29 @@ async def on_chat_start():
         await cl.Message(content=error_message, author="System").send()
 
         # Make sure to clean up resources
-        if exit_stack:
-            await exit_stack.aclose()
-            exit_stack = None
+        if hasattr(cl.user_session, 'exit_stack') and cl.user_session.exit_stack:
+            try:
+                logger.info("Closing exit stack...")
+                await cl.user_session.exit_stack.aclose()
+                logger.info("Exit stack closed successfully")
+            except Exception as e:
+                # Ignore the specific error about exiting cancel scope in a different task
+                if "Attempted to exit cancel scope in a different task" in str(e):
+                    logger.debug(f"Ignoring expected error during exit stack cleanup: {e}")
+                else:
+                    logger.error(f"Error closing exit stack: {e}")
+            finally:
+                cl.user_session.exit_stack = None
 
 @cl.on_message
 async def on_message(message: cl.Message):
     """Process user messages."""
-    global agent, mcp_servers_objects
 
     # Get user input
     user_input = message.content
 
     # Check if agent is initialized
-    if agent is None or not hasattr(agent, 'mcp_servers') or not agent.mcp_servers:
+    if not hasattr(cl.user_session, 'agent') or cl.user_session.agent is None or not hasattr(cl.user_session.agent, 'mcp_servers') or not cl.user_session.agent.mcp_servers:
         await cl.Message(
             content="Agent is not properly initialized. Please refresh the page and try again.",
             author="System"
@@ -281,7 +294,7 @@ async def on_message(message: cl.Message):
                 processing_msg = await cl.Message(content="Processing your request...", author="Smart Agent").send()
 
                 # Run the agent
-                result = Runner.run_streamed(agent, cl.user_session.conversation_history, max_turns=100)
+                result = Runner.run_streamed(cl.user_session.agent, cl.user_session.conversation_history, max_turns=100)
 
                 # Remove the processing message
                 await processing_msg.remove()
@@ -358,26 +371,31 @@ async def on_message(message: cl.Message):
 @cl.on_chat_end
 async def on_chat_end():
     """Clean up resources when the chat session ends."""
-    global mcp_servers_objects, agent, exit_stack
 
     logger.info("Cleaning up resources...")
 
     # Use the exit stack to clean up all resources
-    if exit_stack:
+    if hasattr(cl.user_session, 'exit_stack') and cl.user_session.exit_stack:
         try:
             logger.info("Closing exit stack...")
-            await exit_stack.aclose()
+            await cl.user_session.exit_stack.aclose()
             logger.info("Exit stack closed successfully")
         except Exception as e:
-            logger.error(f"Error closing exit stack: {e}")
+            # Ignore the specific error about exiting cancel scope in a different task
+            if "Attempted to exit cancel scope in a different task" in str(e):
+                logger.debug(f"Ignoring expected error during exit stack cleanup: {e}")
+            else:
+                logger.error(f"Error closing exit stack: {e}")
         finally:
-            exit_stack = None
+            cl.user_session.exit_stack = None
 
     # Clear the list of MCP servers
-    mcp_servers_objects = []
+    if hasattr(cl.user_session, 'mcp_servers_objects'):
+        cl.user_session.mcp_servers_objects = []
 
     # Reset the agent
-    agent = None
+    if hasattr(cl.user_session, 'agent'):
+        cl.user_session.agent = None
 
     # Force garbage collection to clean up any remaining resources
     import gc
