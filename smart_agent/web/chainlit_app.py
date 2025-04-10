@@ -7,12 +7,7 @@ It mirrors the functionality of the CLI chat client but in a web interface.
 # Standard library imports
 import os
 import sys
-import json
-import asyncio
 import logging
-import pathlib
-from typing import List, Dict, Any, Optional, Union
-from contextlib import AsyncExitStack
 
 # Set environment variables to suppress warnings
 os.environ["GRPC_VERBOSITY"] = "ERROR"
@@ -24,6 +19,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
+from smart_agent.web.helpers import (
+    create_agent,
+    initialize_mcp_servers,
+    safely_close_exit_stack,
+    process_agent_event,
+    extract_response_from_assistant_reply,
+    create_translation_files
+)
 
 # Chainlit import
 import chainlit as cl
@@ -70,278 +73,7 @@ async def handle_settings_update(settings):
         author="System"
     ).send()
 
-# Helper functions
 
-def create_translation_files():
-    """Create translation directory and files if they don't exist.
-
-    This function ensures that the necessary Chainlit configuration files
-    are present in the .chainlit directory.
-    """
-    # Create .chainlit directory in the current working directory
-    chainlit_dir = pathlib.Path.cwd() / ".chainlit"
-    translations_dir = chainlit_dir / "translations"
-
-    # Create directories if they don't exist
-    translations_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create en.json translation file
-    en_file = translations_dir / "en.json"
-    if not en_file.exists():
-        # Copy content from en-US.json if it exists, otherwise create a minimal file
-        en_us_file = translations_dir / "en-US.json"
-        if en_us_file.exists():
-            en_file.write_text(en_us_file.read_text())
-        else:
-            # Create a minimal translation file
-            en_file.write_text('{}')
-
-    # Create chainlit.md file if it doesn't exist
-    chainlit_md = chainlit_dir / "chainlit.md"
-    if not chainlit_md.exists():
-        chainlit_md.write_text("# Welcome to Smart Agent\n\nThis is a Chainlit UI for Smart Agent.")
-
-
-async def initialize_mcp_servers(config_manager):
-    """Initialize and connect to MCP servers.
-
-    Args:
-        config_manager: The configuration manager instance
-
-    Returns:
-        tuple: (exit_stack, connected_servers) or (None, None) if no servers could be connected
-    """
-    from contextlib import AsyncExitStack
-    from agents.mcp import MCPServerSse
-
-    # Create MCP server objects
-    mcp_servers = []
-
-    # Get enabled tools
-    for tool_id, tool_config in config_manager.get_tools_config().items():
-        if not config_manager.is_tool_enabled(tool_id):
-            continue
-
-        transport_type = tool_config.get("transport", "stdio_to_sse").lower()
-        url = tool_config.get("url")
-
-        # Check if we have a URL (required for client-only mode)
-        if not url:
-            logger.warning(f"Tool {tool_id} has no URL and will be skipped.")
-            continue
-
-        # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
-        if transport_type in ["stdio_to_sse", "sse"]:
-            logger.info(f"Adding {tool_id} at {url} to agent")
-            mcp_servers.append(MCPServerSse(name=tool_id, params={"url": url}))
-
-    # Check if we have any MCP servers
-    if not mcp_servers:
-        await cl.Message(
-            content="No tools are enabled or available. Please check your configuration.",
-            author="System"
-        ).send()
-        return None, None
-
-    # Create an AsyncExitStack to manage server connections
-    exit_stack = AsyncExitStack()
-
-    # Connect to MCP servers using the exit stack
-    connected_servers = []
-    for server in mcp_servers:
-        try:
-            # Use the exit stack to ensure proper cleanup
-            await exit_stack.enter_async_context(server)
-            logger.info(f"Connected to MCP server: {server.name}")
-            connected_servers.append(server)
-        except Exception as e:
-            logger.error(f"Error connecting to MCP server: {e}")
-            await cl.Message(
-                content=f"Error connecting to tool {server.name}: {e}",
-                author="System"
-            ).send()
-            # Don't return here, continue with other servers
-
-    # Check if we have any connected servers
-    if not connected_servers:
-        await cl.Message(
-            content="Could not connect to any tools. Please check your configuration.",
-            author="System"
-        ).send()
-        # Close the exit stack to clean up any resources
-        try:
-            await exit_stack.aclose()
-        except Exception as e:
-            # Ignore the error and just log it at debug level
-            logger.debug(f"Ignoring error during cleanup: {e}")
-        return None, None
-
-    return exit_stack, connected_servers
-
-
-async def create_agent(conversation_history, config_manager, mcp_servers):
-    """Create an agent with the given configuration.
-
-    Args:
-        conversation_history: The conversation history
-        config_manager: The configuration manager instance
-        mcp_servers: The list of MCP servers to use
-
-    Returns:
-        The created agent or None if creation failed
-    """
-    from openai import AsyncOpenAI
-    from agents import Agent, OpenAIChatCompletionsModel
-
-    try:
-        # Debug: Log what we're about to do
-        logger.info(f"About to create agent with {len(mcp_servers)} MCP servers")
-        for i, server in enumerate(mcp_servers):
-            logger.info(f"Server {i+1}: {server.name}")
-
-        # Initialize OpenAI client
-        client = AsyncOpenAI(
-            base_url=config_manager.get_api_base_url(),
-            api_key=config_manager.get_api_key()
-        )
-
-        # Create the model
-        model = OpenAIChatCompletionsModel(
-            model=config_manager.get_model_name(),
-            openai_client=client,
-        )
-        logger.info("Model created successfully")
-
-        # Create the agent with MCP servers
-        logger.info("Creating agent...")
-        agent = Agent(
-            name="Assistant",
-            instructions=conversation_history[0]["content"],
-            model=model,
-            mcp_servers=mcp_servers,
-        )
-
-        logger.info("Agent created successfully")
-        return agent
-    except Exception as e:
-        logger.error(f"Error creating agent: {e}")
-        await cl.Message(
-            content=f"Error initializing agent: {e}",
-            author="System"
-        ).send()
-        return None
-
-
-async def safely_close_exit_stack(exit_stack):
-    """Safely close an AsyncExitStack, ignoring specific errors.
-
-    Args:
-        exit_stack: The AsyncExitStack to close
-    """
-    if exit_stack is None:
-        return
-
-    logger.info("Closing exit stack...")
-    try:
-        await exit_stack.aclose()
-        logger.info("Exit stack closed successfully")
-    except Exception as e:
-        # Ignore the error and just log it at debug level
-        logger.debug(f"Ignoring error during cleanup: {e}")
-
-
-async def process_agent_event(event, agent_steps, is_thought, assistant_reply):
-    """Process a single event from the agent's stream.
-
-    Args:
-        event: The event to process
-        agent_steps: The Chainlit step object for streaming tokens
-        is_thought: Whether the current event is a thought
-        assistant_reply: The accumulated assistant reply
-
-    Returns:
-        tuple: (is_thought, assistant_reply) - Updated values
-    """
-    from agents import ItemHelpers
-
-    if event.type == "raw_response_event" or event.type == "agent_updated_stream_event":
-        # Skip these event types
-        return is_thought, assistant_reply
-
-    if event.type != "run_item_stream_event":
-        # Unknown event type
-        return is_thought, assistant_reply
-
-    # Process run_item_stream_event
-    if event.item.type == "tool_call_item":
-        try:
-            arguments_dict = json.loads(event.item.raw_item.arguments)
-            key, value = next(iter(arguments_dict.items()))
-
-            if key == "thought":
-                is_thought = True
-                await agent_steps.stream_token(f"### 🤔 Thinking\n```\n{value}\n```\n\n")
-                assistant_reply += "\n[thought]: " + value
-            else:
-                is_thought = False
-                await agent_steps.stream_token(f"### 🔧 Using Tool: {key}\n```\n{value}\n```\n\n")
-        except (json.JSONDecodeError, StopIteration) as e:
-            await agent_steps.stream_token(f"Error parsing tool call: {e}\n\n")
-
-    elif event.item.type == "tool_call_output_item":
-        if not is_thought:
-            try:
-                parsed_output = json.loads(event.item.output)
-                # Handle both dictionary and list outputs
-                if isinstance(parsed_output, dict):
-                    output_text = parsed_output.get("text", "")
-                elif isinstance(parsed_output, list):
-                    # For list outputs, join the elements if they're strings
-                    if all(isinstance(item, str) for item in parsed_output):
-                        output_text = "\n".join(parsed_output)
-                    else:
-                        # Otherwise, convert the list to a formatted string
-                        output_text = json.dumps(parsed_output, indent=2)
-                else:
-                    # For any other type, convert to string
-                    output_text = str(parsed_output)
-
-                await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{output_text}\n```\n\n")
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.debug(f"Error parsing tool output: {e}. Using raw output.")
-                await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{event.item.output}\n```\n\n")
-
-    elif event.item.type == "message_output_item":
-        role = event.item.raw_item.role
-        text_message = ItemHelpers.text_message_output(event.item)
-
-        if role == "assistant":
-            assistant_reply += "\n[response]: " + text_message
-            await cl.Message(content=text_message, author="Smart Agent").send()
-        else:
-            await agent_steps.stream_token(f"**{role.capitalize()}**: {text_message}\n\n")
-
-    return is_thought, assistant_reply
-
-
-async def extract_response_from_assistant_reply(assistant_reply):
-    """Extract the response part from the assistant's reply.
-
-    Args:
-        assistant_reply: The full assistant reply including thoughts and responses
-
-    Returns:
-        str: The extracted response
-    """
-    response = ""
-    for line in assistant_reply.split("\n"):
-        if line.startswith("[response]:"):
-            response += line[len("[response]:"):].strip() + "\n"
-
-    if not response.strip():
-        response = assistant_reply.strip()
-
-    return response
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -513,10 +245,6 @@ async def on_chat_end():
     # Reset the agent
     if hasattr(cl.user_session, 'agent'):
         cl.user_session.agent = None
-
-    # Force garbage collection to clean up any remaining resources
-    import gc
-    gc.collect()
 
     logger.info("Cleanup complete")
 
