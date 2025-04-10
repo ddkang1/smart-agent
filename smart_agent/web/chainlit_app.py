@@ -4,11 +4,6 @@ This is a direct reflection of the CLI chat client.
 """
 
 import os
-# Suppress gRPC fork warnings
-os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
-# Suppress absl logging warnings
-os.environ["ABSL_LOGGING_LOG_TO_STDERR"] = "false"
-
 import sys
 import json
 import asyncio
@@ -245,18 +240,14 @@ async def on_chat_start():
 
         # Make sure to clean up resources
         if hasattr(cl.user_session, 'exit_stack') and cl.user_session.exit_stack:
+            logger.info("Closing exit stack...")
             try:
-                logger.info("Closing exit stack...")
                 await cl.user_session.exit_stack.aclose()
                 logger.info("Exit stack closed successfully")
             except Exception as e:
-                # Ignore the specific error about exiting cancel scope in a different task
-                if "Attempted to exit cancel scope in a different task" in str(e):
-                    logger.debug(f"Ignoring expected error during exit stack cleanup: {e}")
-                else:
-                    logger.error(f"Error closing exit stack: {e}")
-            finally:
-                cl.user_session.exit_stack = None
+                # Ignore the error and just log it at debug level
+                logger.debug(f"Ignoring error during cleanup: {e}")
+            cl.user_session.exit_stack = None
 
 @cl.on_message
 async def on_message(message: cl.Message):
@@ -328,9 +319,24 @@ async def on_message(message: cl.Message):
                         elif event.item.type == "tool_call_output_item":
                             if not is_thought:
                                 try:
-                                    output_text = json.loads(event.item.output).get("text", "")
+                                    parsed_output = json.loads(event.item.output)
+                                    # Handle both dictionary and list outputs
+                                    if isinstance(parsed_output, dict):
+                                        output_text = parsed_output.get("text", "")
+                                    elif isinstance(parsed_output, list):
+                                        # For list outputs, join the elements if they're strings
+                                        if all(isinstance(item, str) for item in parsed_output):
+                                            output_text = "\n".join(parsed_output)
+                                        else:
+                                            # Otherwise, convert the list to a formatted string
+                                            output_text = json.dumps(parsed_output, indent=2)
+                                    else:
+                                        # For any other type, convert to string
+                                        output_text = str(parsed_output)
+
                                     await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{output_text}\n```\n\n")
-                                except json.JSONDecodeError:
+                                except (json.JSONDecodeError, AttributeError) as e:
+                                    logger.debug(f"Error parsing tool output: {e}. Using raw output.")
                                     await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{event.item.output}\n```\n\n")
 
                         elif event.item.type == "message_output_item":
@@ -376,18 +382,14 @@ async def on_chat_end():
 
     # Use the exit stack to clean up all resources
     if hasattr(cl.user_session, 'exit_stack') and cl.user_session.exit_stack:
+        logger.info("Closing exit stack...")
         try:
-            logger.info("Closing exit stack...")
             await cl.user_session.exit_stack.aclose()
             logger.info("Exit stack closed successfully")
         except Exception as e:
-            # Ignore the specific error about exiting cancel scope in a different task
-            if "Attempted to exit cancel scope in a different task" in str(e):
-                logger.debug(f"Ignoring expected error during exit stack cleanup: {e}")
-            else:
-                logger.error(f"Error closing exit stack: {e}")
-        finally:
-            cl.user_session.exit_stack = None
+            # Ignore the error and just log it at debug level
+            logger.debug(f"Ignoring error during cleanup: {e}")
+        cl.user_session.exit_stack = None
 
     # Clear the list of MCP servers
     if hasattr(cl.user_session, 'mcp_servers_objects'):
