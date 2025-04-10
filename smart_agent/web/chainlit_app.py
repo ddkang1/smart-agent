@@ -8,6 +8,8 @@ It mirrors the functionality of the CLI chat client but in a web interface.
 import os
 import sys
 import logging
+from agents import Runner, set_tracing_disabled
+set_tracing_disabled(disabled=True)
 
 # Set environment variables to suppress warnings
 os.environ["GRPC_VERBOSITY"] = "ERROR"
@@ -44,15 +46,6 @@ logging.getLogger('asyncio').setLevel(logging.ERROR)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('mcp.client.sse').setLevel(logging.WARNING)
 
-# Disable tracing if agents package is available
-try:
-    from agents import set_tracing_disabled
-    set_tracing_disabled(disabled=True)
-except ImportError:
-    logger.debug("Agents package not installed. Tracing will not be disabled.")
-
-# We'll use cl.user_session to store user-specific variables instead of global variables
-
 @cl.on_settings_update
 async def handle_settings_update(settings):
     """Handle settings updates from the UI."""
@@ -72,8 +65,6 @@ async def handle_settings_update(settings):
         content="Settings updated successfully!",
         author="System"
     ).send()
-
-
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -98,22 +89,10 @@ async def on_chat_start():
     cl.user_session.conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
 
     try:
-        # Check if required packages are installed
-        try:
-            # Just try to import one of the required packages to check if they're installed
-            from agents import Agent
-        except ImportError:
-            await cl.Message(
-                content="Required packages not installed. Run 'pip install openai-agents' to use the agent.",
-                author="System"
-            ).send()
-            return
-
-        # Welcome message - send this before connecting to servers
-        await cl.Message(
-            content="Welcome to Smart Agent! I'm ready to help you with your tasks.",
-            author="Smart Agent"
-        ).send()
+        # await cl.Message(
+        #     content="Welcome to Smart Agent! I'm ready to help you with your tasks.",
+        #     author="Smart Agent"
+        # ).send()
 
         # Initialize and connect to MCP servers
         exit_stack, connected_servers = await initialize_mcp_servers(cl.user_session.config_manager)
@@ -172,15 +151,6 @@ async def on_message(message: cl.Message):
     # Create an agent steps element to track reasoning
     async with cl.Step(name="Agent Reasoning") as agent_steps:
         try:
-            # Import required libraries
-            try:
-                from agents import Runner
-            except ImportError:
-                await cl.Message(
-                    content="Required packages not installed. Run 'pip install openai-agents' to use the agent.",
-                    author="System"
-                ).send()
-                return
 
             # Add user message to conversation history
             cl.user_session.conversation_history.append({"role": "user", "content": user_input})
