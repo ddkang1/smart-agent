@@ -126,8 +126,6 @@ async def on_chat_start():
     # Initialize user session variables
     cl.user_session.config_manager = None
     cl.user_session.mcp_servers_objects = []
-    cl.user_session.agent = None
-    cl.user_session.exit_stack = None
 
     # Create translation files
     create_translation_files()
@@ -150,18 +148,7 @@ async def on_chat_start():
             return
 
         # Store the exit stack and connected servers in the user session
-        try:
-            cl.user_session.exit_stack = exit_stack
-        except RuntimeError as e:
-            # If there's an error related to async generators, log it and continue
-            if "async generator" in str(e):
-                logger.debug(f"Caught async generator error when setting exit_stack: {e}")
-                # Still set the exit_stack
-                cl.user_session.exit_stack = exit_stack
-            else:
-                # For other runtime errors, re-raise
-                raise
-                
+        cl.user_session.exit_stack = exit_stack
         cl.user_session.mcp_servers_objects = connected_servers
 
         # Create the agent
@@ -186,18 +173,7 @@ async def on_chat_start():
             return
 
         # Store the agent in the user session
-        # Wrap this in a try-except block to handle any async generator issues
-        try:
-            cl.user_session.agent = agent
-        except RuntimeError as e:
-            # If there's an error related to async generators, log it and continue
-            if "async generator" in str(e):
-                logger.warning(f"Caught async generator error when setting agent: {e}")
-                # The agent is still created, we just need to handle the error
-                cl.user_session.agent = agent
-            else:
-                # For other runtime errors, re-raise
-                raise
+        cl.user_session.agent = agent
 
     except Exception as e:
         # Handle any errors during initialization
