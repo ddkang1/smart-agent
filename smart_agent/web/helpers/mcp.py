@@ -95,6 +95,13 @@ async def safely_close_exit_stack(exit_stack):
     try:
         await exit_stack.aclose()
         logger.info("Exit stack closed successfully")
+    except RuntimeError as e:
+        # For RuntimeError related to cancel scopes, just log at debug level
+        if "cancel scope" in str(e):
+            logger.debug(f"Ignoring cancel scope error during cleanup: {e}")
+        else:
+            # For other RuntimeErrors, log at warning level
+            logger.warning(f"RuntimeError during cleanup: {e}")
     except Exception as e:
-        # Ignore the error and just log it at debug level
+        # Ignore other errors and just log them at debug level
         logger.debug(f"Ignoring error during cleanup: {e}")
