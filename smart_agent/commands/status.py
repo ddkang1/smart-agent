@@ -76,8 +76,21 @@ def get_tools_status(
 
         # Handle different transport types
         if transport_type == "sse":
-            # For 'sse' transport type, we don't need to check if it's running
-            status["running"] = True  # Assume it's always running
+            # Check if there's a command for this 'sse' tool
+            command = config_manager.get_tool_command(tool_id)
+            if command:
+                # If there's a command, check if it's running locally
+                running = process_manager.is_tool_running(tool_id)
+                status["running"] = running
+                
+                if running:
+                    # Get port information for locally running 'sse' tools
+                    port = process_manager.get_tool_port(tool_id)
+                    status["port"] = port
+            else:
+                # For remote 'sse' tools without a command, assume they're always running
+                status["running"] = True
+            
             status["url"] = tool_config.get("url", "")
         else:
             # Check if the tool is running

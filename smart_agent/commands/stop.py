@@ -49,9 +49,9 @@ def stop_tools(
         # Get the transport type from the configuration
         transport_type = tool_config.get("transport", "stdio_to_sse").lower()
 
-        # Skip 'sse' transport type (remote tools) as they don't need to be stopped
-        if transport_type == "sse":
-            logger.debug(f"Tool {tool_id} uses 'sse' transport type (remote tool), skipping")
+        # Skip 'sse' transport type only if no command is provided (remote tools)
+        if transport_type == "sse" and not tool_config.get("command"):
+            logger.debug(f"Tool {tool_id} uses 'sse' transport type with no command (remote tool), skipping")
             stopped_tools[tool_id] = True
             continue
 

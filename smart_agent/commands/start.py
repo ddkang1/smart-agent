@@ -64,9 +64,9 @@ def start_tools(
         # Get the transport type first
         transport_type = tool_config.get("transport", "stdio_to_sse").lower()
 
-        # For sse transport type, we don't need a command
+        # For sse transport type, check if a command is provided
         if transport_type == "sse":
-            command = ""
+            command = config_manager.get_tool_command(tool_id)
         # For sse_to_stdio transport type, we construct the command from the URL
         elif transport_type == "sse_to_stdio":
             tool_url = tool_config.get("url")
@@ -90,6 +90,25 @@ def start_tools(
         tool_url = tool_config.get("url", "")
         url_port = None
         url_has_port_placeholder = False
+        command_port = None
+
+        # For 'sse' transport type, try to extract port from command if it exists
+        if transport_type == "sse" and command:
+            # Try to extract port from command (e.g., --port 8003 or -p 8003)
+            if "--port" in command:
+                try:
+                    port_str = command.split("--port")[1].strip().split()[0]
+                    command_port = int(port_str)
+                    logger.debug(f"Extracted port {command_port} from command {command}")
+                except (IndexError, ValueError):
+                    logger.debug(f"Could not extract port from command {command}")
+            elif " -p " in command:
+                try:
+                    port_str = command.split(" -p ")[1].strip().split()[0]
+                    command_port = int(port_str)
+                    logger.debug(f"Extracted port {command_port} from command {command}")
+                except (IndexError, ValueError):
+                    logger.debug(f"Could not extract port from command {command}")
 
         # Check if URL has a port placeholder
         if "{port}" in tool_url:
@@ -110,8 +129,10 @@ def start_tools(
         # Get explicitly configured port (lowest priority)
         config_port = tool_config.get("port")
 
-        # Determine which port to use (priority: URL port > config port > next available port)
-        if url_port is not None:
+        # Determine which port to use (priority: command port > URL port > config port > next available port)
+        if command_port is not None:
+            port = command_port
+        elif url_port is not None:
             port = url_port
         elif config_port is not None:
             port = config_port
@@ -119,8 +140,18 @@ def start_tools(
             port = next_port
             next_port += 1
 
-        # If the port is already in use by another tool we started, use the next available port
-        if any(info.get("port") == port for info in started_tools.values()):
+        # For 'sse' transport type with a command-specified port, don't allow automatic port reassignment
+        if transport_type == "sse" and command_port is not None:
+            # Check if the port is already in use by another tool we started
+            if any(info.get("port") == port for info in started_tools.values()):
+                error_msg = f"Port {port} specified in command for {tool_id} is already in use by another tool"
+                logger.error(error_msg)
+                console.print(f"[red]Error: {error_msg}[/]")
+                console.print(f"[yellow]Please modify the command to use a different port or stop the other tool first[/]")
+                started_tools[tool_id] = {"status": "error", "error": error_msg}
+                continue
+        # For other transport types, use the next available port if the port is already in use
+        elif any(info.get("port") == port for info in started_tools.values()):
             logger.debug(f"Port {port} is already in use, finding next available port")
             port = next_port
             next_port += 1
@@ -138,9 +169,9 @@ def start_tools(
             logger.debug(f"Transport type for {tool_id}: '{transport_type}'")
             logger.debug(f"Original command for {tool_id}: '{command}'")
 
-        # Skip tool launching for 'sse' transport type (remote tools)
-        if transport_type == "sse":
-            logger.info(f"Skipping launch for {tool_id} as it uses 'sse' transport type (remote tool)")
+        # Skip tool launching for 'sse' transport type only if no command is provided
+        if transport_type == "sse" and not command:
+            logger.info(f"Skipping launch for {tool_id} as it uses 'sse' transport type with no command (remote tool)")
             console.print(f"[yellow]Skipping tool {tool_id} (remote tool)[/]")
             continue
 
@@ -168,6 +199,11 @@ def start_tools(
                 command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
                 if process_manager.debug:
                     logger.debug(f"Using stdio_to_sse transport with command: '{command}'")
+            # For 'sse' transport type, use the command as is
+            elif transport_type == "sse":
+                # Use the command as is, without any modifications
+                if process_manager.debug:
+                    logger.debug(f"Using sse transport with command: '{command}'")
             # stdio_to_ws transport type is no longer supported
             # elif transport_type == "stdio_to_ws":
             #     command = f"npx -y supergateway --stdio \"{command}\" --outputTransport ws --port {{port}} --cors"
@@ -181,13 +217,24 @@ def start_tools(
                     logger.debug(f"Using default stdio_to_sse transport with command: '{command}'")
 
         try:
-            # Start the tool process
-            pid, actual_port = process_manager.start_tool_process(
-                tool_id=tool_id,
-                command=command,
-                port=port,
-                background=background,
-            )
+            # For 'sse' transport type, we need to handle the process differently
+            if transport_type == "sse":
+                # Start the tool process with special handling for 'sse' transport type
+                pid, actual_port = process_manager.start_tool_process(
+                    tool_id=tool_id,
+                    command=command,
+                    port=port,
+                    background=background,
+                    redirect_io=False  # Don't redirect stdin/stdout/stderr for 'sse' transport type
+                )
+            else:
+                # Start the tool process normally for other transport types
+                pid, actual_port = process_manager.start_tool_process(
+                    tool_id=tool_id,
+                    command=command,
+                    port=port,
+                    background=background,
+                )
 
             # Update the tool URL in the configuration
             if url_has_port_placeholder:

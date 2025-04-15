@@ -87,7 +87,8 @@ class ProcessManager:
         tool_id: str,
         command: str,
         port: Optional[int] = None,
-        background: bool = True
+        background: bool = True,
+        redirect_io: bool = True
     ) -> Tuple[int, int]:
         """
         Start a tool process.
@@ -97,6 +98,7 @@ class ProcessManager:
             command: Command to run
             port: Port to use (if None, find an available port)
             background: Whether to run in background
+            redirect_io: Whether to redirect stdin/stdout/stderr to DEVNULL
 
         Returns:
             Tuple of (process ID, port)
@@ -134,14 +136,22 @@ class ProcessManager:
                     logger.debug(f"Added marker to command: {marked_command}")
 
                 # Start the process in a way that it continues running but we can still track it
-                process = subprocess.Popen(
-                    marked_command,
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    stdin=subprocess.DEVNULL,  # Close stdin to prevent any interaction
-                    start_new_session=True     # Start a new session so it's not killed when the parent exits
-                )
+                if redirect_io:
+                    process = subprocess.Popen(
+                        marked_command,
+                        shell=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        stdin=subprocess.DEVNULL,  # Close stdin to prevent any interaction
+                        start_new_session=True     # Start a new session so it's not killed when the parent exits
+                    )
+                else:
+                    # Don't redirect stdin/stdout/stderr for processes that need them
+                    process = subprocess.Popen(
+                        marked_command,
+                        shell=True,
+                        start_new_session=True     # Start a new session so it's not killed when the parent exits
+                    )
         else:
             # Foreground process
             process = subprocess.Popen(command, shell=True)
