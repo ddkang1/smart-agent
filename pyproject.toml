@@ -27,6 +27,7 @@ dependencies = [
     "uv",
     "openai-agents==0.0.11",
     "rich",
+    "mcp[cli]>=1.6"
 ]
 
 [project.optional-dependencies]

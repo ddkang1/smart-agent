@@ -262,13 +262,13 @@ def run_chat_loop(config_manager: ConfigManager):
                                     key, value = next(iter(arguments_dict.items()))
                                     if key == "thought":
                                         is_thought = True
-                                        rich_console.print(Panel(value, title="Thought", border_style="cyan", title_align="left"))
+                                        rich_console.print(Panel(str(value), title="Thought", border_style="cyan", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                                         assistant_reply += "\n[thought]: " + value
                                     else:
                                         is_thought = False
-                                        rich_console.print(Panel(value, title=key, border_style="yellow", title_align="left"))
+                                        rich_console.print(Panel(str(value), title=key, border_style="yellow", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                                 except (json.JSONDecodeError, StopIteration) as e:
@@ -279,11 +279,11 @@ def run_chat_loop(config_manager: ConfigManager):
                                 if not is_thought:
                                     try:
                                         output_text = json.loads(event.item.output).get("text", "")
-                                        rich_console.print(Panel(output_text, title="Tool Output", border_style="green", title_align="left"))
+                                        rich_console.print(Panel(str(output_text), title="Tool Output", border_style="green", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                                     except json.JSONDecodeError:
-                                        rich_console.print(Panel(event.item.output, title="Tool Output", border_style="green", title_align="left"))
+                                        rich_console.print(Panel(str(event.item.output), title="Tool Output", border_style="green", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                             elif event.item.type == "message_output_item":
@@ -292,16 +292,16 @@ def run_chat_loop(config_manager: ConfigManager):
                                 if role == "assistant":
                                     # Try to render as markdown if possible
                                     try:
-                                        rich_console.print(Panel(Markdown(text_message), title="Assistant", border_style="blue", title_align="left"))
+                                        rich_console.print(Panel(Markdown(str(text_message)), title="Assistant", border_style="blue", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                                     except Exception:
-                                        rich_console.print(Panel(text_message, title="Assistant", border_style="blue", title_align="left"))
+                                        rich_console.print(Panel(str(text_message), title="Assistant", border_style="blue", title_align="left"))
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
                                     assistant_reply += "\n[response]: " + text_message
                                 else:
-                                    rich_console.print(Panel(text_message, title=role.capitalize(), border_style="magenta", title_align="left"))
+                                    rich_console.print(Panel(str(text_message), title=role.capitalize(), border_style="magenta", title_align="left"))
                                     # Ensure output is flushed immediately
                                     sys.stdout.flush()
 

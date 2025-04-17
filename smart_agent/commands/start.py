@@ -113,32 +113,46 @@ def start_tools(
         # Check if URL has a port placeholder
         if "{port}" in tool_url:
             url_has_port_placeholder = True
-        # Try to extract port from URL if it's a localhost URL
-        elif tool_url and ("localhost:" in tool_url or "127.0.0.1:" in tool_url):
+        # Try to extract port from URL using urllib.parse for any hostname
+        elif tool_url:
             try:
-                # Extract port from URL (e.g., http://localhost:8000/sse)
-                if "localhost:" in tool_url:
-                    port_str = tool_url.split("localhost:")[1].split("/")[0]
-                else:  # 127.0.0.1:
-                    port_str = tool_url.split("127.0.0.1:")[1].split("/")[0]
-                url_port = int(port_str)
-                logger.debug(f"Extracted port {url_port} from URL {tool_url}")
-            except (IndexError, ValueError):
-                logger.debug(f"Could not extract port from URL {tool_url}")
+                # Parse the URL properly
+                parsed_url = urllib.parse.urlparse(tool_url)
+                # Extract port from parsed URL
+                if parsed_url.port:
+                    url_port = parsed_url.port
+                    logger.debug(f"Extracted port {url_port} from URL {tool_url}")
+                # If no explicit port in URL but hostname is present, try to extract from hostname:port format
+                elif ":" in parsed_url.netloc:
+                    try:
+                        hostname, port_str = parsed_url.netloc.split(":", 1)
+                        url_port = int(port_str)
+                        logger.debug(f"Extracted port {url_port} from URL netloc {parsed_url.netloc}")
+                    except (ValueError, IndexError):
+                        logger.debug(f"Could not extract port from URL netloc {parsed_url.netloc}")
+            except Exception as e:
+                logger.debug(f"Could not extract port from URL {tool_url}: {e}")
 
         # Get explicitly configured port (lowest priority)
         config_port = tool_config.get("port")
 
-        # Determine which port to use (priority: command port > URL port > config port > next available port)
-        if command_port is not None:
-            port = command_port
-        elif url_port is not None:
+        # Determine which port to use (priority: URL port > command port > config port > next available port)
+        # This ensures we honor the URL port if provided
+        if url_port is not None:
             port = url_port
+        elif command_port is not None:
+            port = command_port
         elif config_port is not None:
             port = config_port
         else:
             port = next_port
             next_port += 1
+            
+        # Special handling for pubmed tool which has no port argument in command
+        if tool_id == "pubmed" and transport_type == "sse":
+            # For pubmed, always use the port from URL if available
+            if url_port is not None:
+                port = url_port
 
         # For 'sse' transport type with a command-specified port, don't allow automatic port reassignment
         if transport_type == "sse" and command_port is not None:
@@ -150,11 +164,21 @@ def start_tools(
                 console.print(f"[yellow]Please modify the command to use a different port or stop the other tool first[/]")
                 started_tools[tool_id] = {"status": "error", "error": error_msg}
                 continue
-        # For other transport types, use the next available port if the port is already in use
+        # For other transport types, check if port is already in use
         elif any(info.get("port") == port for info in started_tools.values()):
-            logger.debug(f"Port {port} is already in use, finding next available port")
-            port = next_port
-            next_port += 1
+            # If URL port is specified, we should honor it and report an error if it's in use
+            if url_port is not None:
+                error_msg = f"Port {port} specified in URL for {tool_id} is already in use by another tool"
+                logger.error(error_msg)
+                console.print(f"[red]Error: {error_msg}[/]")
+                console.print(f"[yellow]Please modify the URL to use a different port or stop the other tool first[/]")
+                started_tools[tool_id] = {"status": "error", "error": error_msg}
+                continue
+            else:
+                # Only use next available port if URL port wasn't specified
+                logger.debug(f"Port {port} is already in use, finding next available port")
+                port = next_port
+                next_port += 1
 
         # If URL has a port placeholder, we'll update it later with the actual port
         # If URL has a hardcoded port that's different from our assigned port, log a warning
@@ -199,11 +223,18 @@ def start_tools(
                 command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
                 if process_manager.debug:
                     logger.debug(f"Using stdio_to_sse transport with command: '{command}'")
-            # For 'sse' transport type, use the command as is
+            # For 'sse' transport type, add port parameter if not present
             elif transport_type == "sse":
-                # Use the command as is, without any modifications
-                if process_manager.debug:
-                    logger.debug(f"Using sse transport with command: '{command}'")
+                # Check if command already has a port parameter
+                if "--port" not in command and " -p " not in command:
+                    # Add port parameter to the command
+                    command = f"{command} --port {port}"
+                    if process_manager.debug:
+                        logger.debug(f"Added port parameter to sse command: '{command}'")
+                else:
+                    # Use the command as is
+                    if process_manager.debug:
+                        logger.debug(f"Using sse transport with command: '{command}'")
             # stdio_to_ws transport type is no longer supported
             # elif transport_type == "stdio_to_ws":
             #     command = f"npx -y supergateway --stdio \"{command}\" --outputTransport ws --port {{port}} --cors"
@@ -236,20 +267,13 @@ def start_tools(
                     background=background,
                 )
 
-            # Update the tool URL in the configuration
+            # Update the tool URL in the configuration only if it has a port placeholder
             if url_has_port_placeholder:
                 # Replace {port} placeholder with actual port
                 updated_url = tool_url.replace("{port}", str(actual_port))
                 tool_config["url"] = updated_url
                 logger.debug(f"Updated URL from {tool_url} to {updated_url}")
-            elif url_port is not None and url_port != actual_port:
-                # If URL had a hardcoded port that's different from the actual port, update it
-                if "localhost:" in tool_url:
-                    updated_url = tool_url.replace(f"localhost:{url_port}", f"localhost:{actual_port}")
-                else:  # 127.0.0.1:
-                    updated_url = tool_url.replace(f"127.0.0.1:{url_port}", f"127.0.0.1:{actual_port}")
-                tool_config["url"] = updated_url
-                logger.debug(f"Updated URL from {tool_url} to {updated_url}")
+            # Don't update URLs with hardcoded ports to maintain consistency between server and client configs
 
             console.print(f"[green]Started tool {tool_id} with PID {pid} on port {actual_port}[/]")
             started_tools[tool_id] = {
