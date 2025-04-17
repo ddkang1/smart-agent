@@ -1,100 +1,87 @@
-"""Helper functions for processing agent events."""
+import json, logging, chainlit as cl
+from agents import ItemHelpers
 
-import json
-import logging
-import chainlit as cl
+log = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
-async def process_agent_event(event, agent_steps, is_thought, assistant_reply):
-    """Process a single event from the agent's stream.
-    
-    Args:
-        event: The event to process
-        agent_steps: The Chainlit step object for streaming tokens
-        is_thought: Whether the current event is a thought
-        assistant_reply: The accumulated assistant reply
-        
-    Returns:
-        tuple: (is_thought, assistant_reply) - Updated values
+async def handle_event(event, state):
     """
-    from agents import ItemHelpers
-    
-    if event.type == "raw_response_event" or event.type == "agent_updated_stream_event":
-        # Skip these event types
-        return is_thought, assistant_reply
-        
-    if event.type != "run_item_stream_event":
-        # Unknown event type
-        return is_thought, assistant_reply
-    
-    # Process run_item_stream_event
-    if event.item.type == "tool_call_item":
-        try:
-            arguments_dict = json.loads(event.item.raw_item.arguments)
-            key, value = next(iter(arguments_dict.items()))
+    state = {
+        "assistant_msg": cl.Message  # the one long-lived streamed message
+    }
+    """
+    try:
+        # ── token delta from the LLM ────────────────────────────────────────────
+        if event.type == "raw_response_event":
+            delta = getattr(event.data, "delta", None)
+            token = getattr(delta, "content", None)
+            if token:
+                await state["assistant_msg"].stream_token(token)
+            return
 
-            if key == "thought":
-                is_thought = True
-                await agent_steps.stream_token(f"### 🤔 Thinking\n```\n{value}\n```\n\n")
-                assistant_reply += "\n[thought]: " + value
-            else:
-                is_thought = False
-                await agent_steps.stream_token(f"### 🔧 Using Tool: {key}\n```\n{value}\n```\n\n")
-        except (json.JSONDecodeError, StopIteration) as e:
-            await agent_steps.stream_token(f"Error parsing tool call: {e}\n\n")
+        if event.type != "run_item_stream_event":
+            return
 
-    elif event.item.type == "tool_call_output_item":
-        if not is_thought:
+        item = event.item
+
+        # ── model called the special 'thought' function tool ───────────────────
+        if item.type == "tool_call_item":
             try:
-                parsed_output = json.loads(event.item.output)
-                # Handle both dictionary and list outputs
-                if isinstance(parsed_output, dict):
-                    output_text = parsed_output.get("text", "")
-                elif isinstance(parsed_output, list):
-                    # For list outputs, join the elements if they're strings
-                    if all(isinstance(item, str) for item in parsed_output):
-                        output_text = "\n".join(parsed_output)
-                    else:
-                        # Otherwise, convert the list to a formatted string
-                        output_text = json.dumps(parsed_output, indent=2)
+                arg = json.loads(item.raw_item.arguments)
+                key, value = next(iter(arg.items()))
+                
+                # Log the tool call for debugging
+                log.debug(f"Tool call: {key} with value: {value}")
+                
+                if key == "thought":
+                    # Keep thoughts hidden in the UI but available in the message content
+                    # This creates a seamless experience while preserving the thought process
+                    pass
                 else:
-                    # For any other type, convert to string
-                    output_text = str(parsed_output)
+                    # Don't show tool calls in the UI to maintain the seamless experience
+                    # But log them for debugging purposes
+                    log.info(f"Tool called: {key}")
+            except Exception as e:
+                log.error(f"Error processing tool call: {e}")
+                return
 
-                await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{output_text}\n```\n\n")
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.debug(f"Error parsing tool output: {e}. Using raw output.")
-                await agent_steps.stream_token(f"### 💾 Tool Result\n```\n{event.item.output}\n```\n\n")
+        # ── tool result ────────────────────────────────────────────────────────
+        elif item.type == "tool_call_output_item":
+            try:
+                # Log the raw tool output for debugging
+                log.debug(f"Tool output: {item.output}")
+                
+                # Try to parse as JSON for better handling
+                output_json = json.loads(item.output)
+                
+                # If it's a text response, integrate it seamlessly
+                if isinstance(output_json, dict) and "text" in output_json:
+                    # Extract just the text content for a seamless experience
+                    await state["assistant_msg"].stream_token(f"\n\n{output_json['text']}\n\n")
+                    log.info(f"Integrated text output: {output_json['text'][:50]}...")
+                else:
+                    # For other types of results, log them but don't display directly
+                    # They will be processed by the model and incorporated into its response
+                    log.info(f"Non-text JSON output received: {str(output_json)[:50]}...")
+                    
+            except json.JSONDecodeError:
+                # For non-JSON outputs, integrate them seamlessly if they seem like text
+                if isinstance(item.output, str) and len(item.output) > 0 and not item.output.startswith('{'):
+                    await state["assistant_msg"].stream_token(f"\n\n{item.output}\n\n")
+                    log.info(f"Integrated non-JSON output: {item.output[:50]}...")
+                else:
+                    log.warning(f"Unhandled tool output format: {item.output[:50]}...")
 
-    elif event.item.type == "message_output_item":
-        role = event.item.raw_item.role
-        text_message = ItemHelpers.text_message_output(event.item)
-
-        if role == "assistant":
-            assistant_reply += "\n[response]: " + text_message
-            await cl.Message(content=text_message, author="Smart Agent").send()
-        else:
-            await agent_steps.stream_token(f"**{role.capitalize()}**: {text_message}\n\n")
-    
-    return is_thought, assistant_reply
-
-
-async def extract_response_from_assistant_reply(assistant_reply):
-    """Extract the response part from the assistant's reply.
-    
-    Args:
-        assistant_reply: The full assistant reply including thoughts and responses
-        
-    Returns:
-        str: The extracted response
-    """
-    response = ""
-    for line in assistant_reply.split("\n"):
-        if line.startswith("[response]:"):
-            response += line[len("[response]:"):].strip() + "\n"
-
-    if not response.strip():
-        response = assistant_reply.strip()
-        
-    return response
+        # ── final assistant chunk that is not streamed as delta ────────────────
+        elif item.type == "message_output_item":
+            txt = ItemHelpers.text_message_output(item)
+            await state["assistant_msg"].stream_token(txt)
+            log.debug(f"Message output: {txt[:50]}...")
+            
+    except Exception as e:
+        # Catch any exceptions to prevent the event handling from crashing
+        log.exception(f"Error in handle_event: {e}")
+        # Try to notify the user about the error
+        try:
+            await state["assistant_msg"].stream_token(f"\n\n[Error processing response: {str(e)}]\n\n")
+        except Exception:
+            pass

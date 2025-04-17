@@ -237,7 +237,7 @@ if prompt := st.chat_input("You: "):
 
                     # Import required classes
                     try:
-                        from agents.mcp import MCPServerSse
+                        from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
                         from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
                     except ImportError:
                         st.error("Required packages not installed. Run 'pip install openai-agents' to use the agent.")
@@ -257,13 +257,31 @@ if prompt := st.chat_input("You: "):
                             st.warning(f"Tool {tool_id} has no URL and will be skipped.")
                             continue
 
-                        # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
+                        # For SSE-based transports (stdio_to_sse, sse), use ReconnectingMCP
                         if transport_type in ["stdio_to_sse", "sse"]:
-                            mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+                            mcp_servers_objects.append(ReconnectingMCP(name=tool_id, params={"url": url}))
 
-                    # Connect to all MCP servers
+                    # Connect to all MCP servers using async context managers
+                    connected_servers = []
                     for server in mcp_servers_objects:
-                        await server.connect()
+                        try:
+                            # Use a timeout for connection
+                            connection_task = asyncio.create_task(server.connect())
+                            await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
+                            connected_servers.append(server)
+                        except asyncio.TimeoutError:
+                            st.warning(f"Timeout connecting to MCP server {server.name}")
+                            # Cancel the connection task
+                            connection_task.cancel()
+                            try:
+                                await connection_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                        except Exception as e:
+                            st.warning(f"Error connecting to MCP server {server.name}: {e}")
+                    
+                    # Update the list with only connected servers
+                    mcp_servers_objects = connected_servers
 
                     try:
                         # Create the agent directly like in CLI chat
@@ -391,12 +409,13 @@ if prompt := st.chat_input("You: "):
                         for server in mcp_servers_objects:
                             if hasattr(server, 'cleanup') and callable(server.cleanup):
                                 try:
-                                    if asyncio.iscoroutinefunction(server.cleanup):
-                                        await server.cleanup()  # Use await for async cleanup
-                                    else:
-                                        server.cleanup()  # Call directly for sync cleanup
+                                    # Use a timeout for cleanup to prevent hanging
+                                    cleanup_task = asyncio.create_task(server.cleanup())
+                                    await asyncio.wait_for(cleanup_task, timeout=5)  # 5 seconds timeout
+                                except asyncio.TimeoutError:
+                                    st.warning(f"Timeout during cleanup of server {server.name}")
                                 except Exception as e:
-                                    st.error(f"Error during server cleanup: {e}")
+                                    st.warning(f"Error during server cleanup: {e}")
 
                 except Exception as e:
                     st.error(f"Error: {e}")
