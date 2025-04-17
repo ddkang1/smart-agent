@@ -26,7 +26,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pytest-asyncio black flake8 mypy
           # Explicitly install openai-agents to ensure it's available for tests
-          pip install openai-agents
+          pip install openai-agents==0.0.11
           pip install -e .
 
       - name: Check code formatting with Black
