@@ -360,15 +360,12 @@ def run_chat_loop(config_manager: ConfigManager):
                     await server.connect()
                 
                 try:
-                    # Create the agent directly like in research.py
-                    agent = Agent(
-                        name="Assistant",
-                        instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
-                        model=OpenAIChatCompletionsModel(
-                            model=model_name,
-                            openai_client=client,
-                        ),
+                    # Create the SmartAgent instead of direct Agent
+                    agent = SmartAgent(
+                        model_name=model_name,
+                        openai_client=client,
                         mcp_servers=mcp_servers_objects,
+                        system_prompt=history[0]["content"] if history and history[0]["role"] == "system" else None,
                     )
                     
                     # Print the assistant prefix with rich styling
@@ -380,7 +377,8 @@ def run_chat_loop(config_manager: ConfigManager):
                     )
                     
                     # Run the agent with the conversation history
-                    result = Runner.run_streamed(agent, history, max_turns=100)
+                    # Access the underlying Agent instance from SmartAgent
+                    result = Runner.run_streamed(agent.agent, history, max_turns=100)
                     is_thought = False
                     
                     # Process the stream events with a holistic output approach
