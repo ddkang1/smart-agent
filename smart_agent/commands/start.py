@@ -325,11 +325,20 @@ def start(config, background, debug):
     process_manager = ProcessManager(debug=debug)
     proxy_manager = ProxyManager(debug=debug)
 
+    # Configure logging using the config_manager
+    from ..cli import configure_logging
+    configure_logging(config_manager)
+    
     if debug:
-        # Set up logging for debugging
-        logging.basicConfig(level=logging.DEBUG)
-        logger = logging.getLogger("smart_agent")
-        logger.setLevel(logging.DEBUG)
+        # Override logging level to DEBUG for all loggers
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger("smart_agent").setLevel(logging.DEBUG)
+        logging.getLogger("litellm").setLevel(logging.DEBUG)
+        logging.getLogger("openai").setLevel(logging.DEBUG)
+        
+        # Keep backoff logger at WARNING level even in debug mode
+        logging.getLogger("backoff").setLevel(logging.WARNING)
+        
         console.print("[yellow]Debug mode enabled. Verbose logging will be shown.[/]")
 
     # Check if we need to start the LiteLLM proxy

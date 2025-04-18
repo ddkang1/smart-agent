@@ -38,7 +38,10 @@ try:
 except ImportError:
     has_chainlit = False
 
-# Configure logging
+# Import ConfigManager for type hints
+from .tool_manager import ConfigManager
+
+# Default logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -46,49 +49,92 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def configure_logging(config_manager=None):
+    """Configure logging based on settings from config_manager.
+    
+    Args:
+        config_manager: Optional ConfigManager instance. If not provided,
+                       default logging settings will be used.
+    """
+    if config_manager:
+        log_level_str = config_manager.get_log_level()
+        log_file = config_manager.get_log_file()
+        
+        # Convert string log level to logging constant
+        log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+        
+        # Configure logging
+        handlers = [logging.StreamHandler()]
+        if log_file:
+            handlers.append(logging.FileHandler(log_file))
+        
+        # Reset root logger handlers
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+            
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            handlers=handlers,
+        )
+        
+        # Configure specific loggers
+        litellm_logger = logging.getLogger('litellm')
+        litellm_logger.setLevel(log_level)
+        
+        # Always keep backoff logger at WARNING or higher to suppress retry messages
+        backoff_logger = logging.getLogger('backoff')
+        backoff_logger.setLevel(logging.WARNING)
+
 # Configure logging for various libraries to suppress specific error messages
 openai_agents_logger = logging.getLogger('openai.agents')
 asyncio_logger = logging.getLogger('asyncio')
 httpx_logger = logging.getLogger('httpx')
 httpcore_logger = logging.getLogger('httpcore')
 mcp_client_sse_logger = logging.getLogger('mcp.client.sse')
+backoff_logger = logging.getLogger('backoff')
+
+# Set backoff logger to WARNING to suppress retry messages
+backoff_logger.setLevel(logging.WARNING)
 
 # Set log levels to reduce verbosity
 httpx_logger.setLevel(logging.WARNING)
 mcp_client_sse_logger.setLevel(logging.WARNING)
+# Set openai.agents logger to CRITICAL to suppress ERROR messages
+openai_agents_logger.setLevel(logging.CRITICAL)
 
 # Create a filter to suppress specific error messages
-class SuppressSpecificErrorFilter(logging.Filter):
-    """Filter to suppress specific error messages in logs.
+# class SuppressSpecificErrorFilter(logging.Filter):
+#     """Filter to suppress specific error messages in logs.
 
-    This filter checks log messages against a list of patterns and
-    filters out any messages that match, preventing them from being
-    displayed to the user.
-    """
-    def filter(self, record) -> bool:
-        # Get the message from the record
-        message = record.getMessage()
+#     This filter checks log messages against a list of patterns and
+#     filters out any messages that match, preventing them from being
+#     displayed to the user.
+#     """
+#     def filter(self, record) -> bool:
+#         # Get the message from the record
+#         message = record.getMessage()
 
-        # List of error patterns to suppress
-        suppress_patterns = [
-            'Error cleaning up server: Attempted to exit a cancel scope',
-            'Event loop is closed',
-            'Task exception was never retrieved',
-            'AsyncClient.aclose',
-        ]
+#         # List of error patterns to suppress
+#         suppress_patterns = [
+#             'Error cleaning up server: Attempted to exit a cancel scope',
+#             'Event loop is closed',
+#             'Task exception was never retrieved',
+#             'AsyncClient.aclose',
+#         ]
 
-        # Check if any of the patterns are in the message
-        for pattern in suppress_patterns:
-            if pattern in message:
-                return False  # Filter out this message
+#         # Check if any of the patterns are in the message
+#         for pattern in suppress_patterns:
+#             if pattern in message:
+#                 return False  # Filter out this message
 
-        return True  # Keep this message
+#         return True  # Keep this message
 
-# Add the filter to various loggers
-openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
-asyncio_logger.addFilter(SuppressSpecificErrorFilter())
-httpx_logger.addFilter(SuppressSpecificErrorFilter())
-httpcore_logger.addFilter(SuppressSpecificErrorFilter())
+# # Add the filter to various loggers
+# openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
+# asyncio_logger.addFilter(SuppressSpecificErrorFilter())
+# httpx_logger.addFilter(SuppressSpecificErrorFilter())
+# httpcore_logger.addFilter(SuppressSpecificErrorFilter())
 
 # Initialize console for rich output
 console = Console()

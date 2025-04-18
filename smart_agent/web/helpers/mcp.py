@@ -155,11 +155,11 @@ async def initialize_mcp_servers(config_manager):
         return exit_stack, connected_servers
         
     except Exception as e:
-        logger.exception(f"Error initializing MCP servers: {e}")
-        await cl.Message(
-            content=f"Error initializing tools: {str(e)}",
-            author="System"
-        ).send()
+        # logger.exception(f"Error initializing MCP servers: {e}")
+        # await cl.Message(
+        #     content=f"Error initializing tools: {str(e)}",
+        #     author="System"
+        # ).send()
         # Clean up resources if an error occurs
         if exit_stack:
             try:

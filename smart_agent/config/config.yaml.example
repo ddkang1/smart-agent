@@ -3,23 +3,23 @@
 
 # LLM API Configuration
 llm:
-  base_url: "http://localhost:4000"          # Use localhost, 127.0.0.1, or 0.0.0.0 to automatically start a local LiteLLM proxy
-  model: "claude-3-7-sonnet-20250219"        # Model to use for generation
-  api_key: "sk-any-key"                      # API key for local LiteLLM proxy
-  temperature: 1.0                           # Temperature for generation (0.0-1.0)
+  base_url: "http://localhost:4000"            # Base URL for LLM API (local LiteLLM proxy)
+  model: "claude-3-7-sonnet-20250219"          # Model to use for generation
+  api_key: "api_key"                           # API key for local LiteLLM proxy
+  temperature: 1.0                             # Temperature for generation (0.0-1.0)
 
 # Tools Configuration
-tools_config: "config/tools.yaml"            # Path to tools configuration file
+tools_config: "tools.yaml"                     # Path to tools configuration file
 
 # Logging Configuration
 logging:
-  level: "INFO"                              # Logging level (DEBUG, INFO, WARNING, ERROR)
-  file: null                                 # Set to a path to log to a file
+  level: "WARNING"                             # Logging level (DEBUG, INFO, WARNING, ERROR)
+  file: null                                   # Set to a path to log to a file
 
 # Monitoring Configuration
-monitoring:
-  langfuse:
-    enabled: false                           # Set to true to enable Langfuse monitoring
-    host: "https://cloud.langfuse.com"       # Langfuse host URL
-    public_key: ""                           # Your Langfuse public key
-    secret_key: ""                           # Your Langfuse secret key
+# monitoring:
+#   langfuse:
+#     enabled: false                           # Set to true to enable Langfuse monitoring
+#     host: "https://cloud.langfuse.com"       # Langfuse host URL
+#     public_key: ""                           # Your Langfuse public key
+#     secret_key: ""                           # Your Langfuse secret key

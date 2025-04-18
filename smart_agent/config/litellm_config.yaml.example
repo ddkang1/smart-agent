@@ -1,15 +1,17 @@
 model_list:
   - model_name: claude-3-7-sonnet-20250219
     litellm_params:
-      model: anthropic/claude-3-7-sonnet-20250219
-      api_key: api_key
-
-  - model_name: claude-3-7-sonnet-20250219
-    litellm_params:
       model: bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0
       aws_access_key_id: aws_access_key_id  
       aws_secret_access_key: aws_secret_access_key
       aws_region_name: aws_region
+
+  - model_name: cohere.rerank-v3-5
+    litellm_params:
+      model: bedrock/arn:aws:bedrock:us-west-2::foundation-model/cohere.rerank-v3-5:0
+      aws_region_name: us-west-2
+    model_info:
+      mode: rerank
 
   - model_name: gpt-4o
     litellm_params:
@@ -36,3 +38,4 @@ litellm_settings:
   num_retries: 3
   request_timeout: 360
   telemetry: False
+  verify_ssl: False

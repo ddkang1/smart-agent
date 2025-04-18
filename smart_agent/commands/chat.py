@@ -18,6 +18,10 @@ from rich.live import Live
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Configure OpenAI client logger to suppress retry messages
+openai_logger = logging.getLogger("openai")
+openai_logger.setLevel(logging.WARNING)
+
 from ..tool_manager import ConfigManager
 from ..agent import SmartAgent, PromptGenerator
 
@@ -597,6 +601,10 @@ def chat(config, tools):
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config, tools_path=tools)
+    
+    # Configure logging using the config_manager
+    from ..cli import configure_logging
+    configure_logging(config_manager)
 
     # Run the chat loop
     run_chat_loop(config_manager)
