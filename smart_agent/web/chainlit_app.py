@@ -161,7 +161,7 @@ async def on_chat_start():
         # Create MCP server list for the agent
         mcp_servers = []
         for tool_id, tool_name, tool_url in enabled_tools:
-            await cl.Message(content=f"Adding {tool_name} at {tool_url} to agent", author="System").send()
+            # await cl.Message(content=f"Adding {tool_name} at {tool_url} to agent", author="System").send()
             mcp_servers.append(tool_url)
 
         # Initialize conversation history with system prompt
@@ -239,11 +239,11 @@ async def on_chat_start():
                     # Wait for ping to verify connection
                     await asyncio.sleep(1)
                     if not server._connected:
-                        await cl.Message(content=f"Connection to {server.name} not fully established. Skipping.", author="System").send()
+                        # await cl.Message(content=f"Connection to {server.name} not fully established. Skipping.", author="System").send()
                         continue
                 
                 connected_servers.append(server)
-                await cl.Message(content=f"Connected to {server.name}", author="System").send()
+                # await cl.Message(content=f"Connected to {server.name}", author="System").send()
             except asyncio.TimeoutError:
                 await cl.Message(content=f"Timeout connecting to MCP server {server.name}", author="System").send()
                 # Cancel the connection task
@@ -269,10 +269,10 @@ async def on_chat_start():
         # Store the agent in user session
         cl.user_session.smart_agent = smart_agent
 
-        await cl.Message(
-            content=f"Agent initialized with {len(connected_servers)} tools",
-            author="System"
-        ).send()
+        # await cl.Message(
+        #     content=f"Agent initialized with {len(connected_servers)} tools",
+        #     author="System"
+        # ).send()
 
     except ImportError:
         await cl.Message(
@@ -311,42 +311,11 @@ async def handle_event(event, state):
     """
     try:
         # ── token delta from the LLM ────────────────────────────────────────────
-        if event.type == "raw_response_event":
-            try:
-                # Handle different types of raw response events
-                from openai.types.responses import ResponseTextDeltaEvent
-                
-                # Process token-by-token for text delta events
-                if isinstance(event.data, ResponseTextDeltaEvent):
-                    if hasattr(event.data.delta, 'content') and event.data.delta.content:
-                        # Stream token-by-token like CLI
-                        token = event.data.delta.content
-                        await state["assistant_msg"].stream_token(token)
-                        
-                        # Add to buffer for consistent output
-                        if "buffer" in state:
-                            state["buffer"].append((token, "assistant"))
-                # For other event types, extract content if available
-                elif hasattr(event.data, 'delta'):
-                    delta = event.data.delta
-                    if hasattr(delta, 'content') and delta.content:
-                        # Stream token-by-token like CLI
-                        token = delta.content
-                        await state["assistant_msg"].stream_token(token)
-                        
-                        # Add to buffer for consistent output
-                        if "buffer" in state:
-                            state["buffer"].append((token, "assistant"))
-            except Exception as e:
-                # Log the error but don't crash the event handler
-                logger.debug(f"Error processing raw response event: {e}")
-            return
 
         if event.type != "run_item_stream_event":
             return
 
         item = event.item
-
 
         # ── model called a tool ───────────────────
         if item.type == "tool_call_item":
@@ -355,6 +324,7 @@ async def handle_event(event, state):
                 key, value = next(iter(arg.items()))
                 
                 if key == "thought":
+                    state["is_thought"] = True
                     # Format thought like CLI does
                     thought_opening = "\n<thought>\n"
                     thought_closing = "\n</thought>"
@@ -423,6 +393,9 @@ async def handle_event(event, state):
 
         # ── tool result ────────────────────────────────────────────────────────
         elif item.type == "tool_call_output_item":
+            if state.get("is_thought"):
+                state["is_thought"] = False          # skip duplicate, reset
+                return
             try:
                 try:
                     # Try to parse as JSON for better handling
@@ -530,7 +503,8 @@ async def on_message(msg: cl.Message):
     state = {
         "assistant_msg": assistant_msg,
         "buffer": [],  # Buffer for token streaming like CLI
-        "current_type": "assistant"  # Default type is assistant message
+        "current_type": "assistant",  # Default type is assistant message
+        "is_thought": False           # Track pending <thought> output
     }
 
     try:
