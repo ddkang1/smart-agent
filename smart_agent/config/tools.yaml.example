@@ -10,6 +10,12 @@
 #   - sse: Remote SSE tools (use MCPServerSse in chat, no local launching needed)
 # - command: The installation command for the tool (needed for 'stdio' and 'stdio_to_sse' transports, not needed for 'sse' and 'sse_to_stdio' transports)
 # - url: URL to access the tool (needed for 'sse', 'sse_to_stdio', and 'stdio_to_sse' transports, not needed for 'stdio' transport)
+#
+# For SSE-based transports (sse, stdio_to_sse), you can configure reconnection behavior with:
+# - max_reconnect_attempts: Maximum number of reconnection attempts before giving up (default: 10)
+# - reconnect_base_delay: Base delay for reconnection attempts in seconds (default: 1.0)
+# - reconnect_max_delay: Maximum delay between reconnection attempts in seconds (default: 60.0)
+# - ping_interval: Interval between ping attempts in seconds (default: 5.0)
 
 # Example of local tools
 mcp_think_tool:
@@ -48,4 +54,9 @@ remote_tool:
   enabled: true
   url: http://localhost:8003/sse
   transport: sse
+  # Reconnection configuration (optional)
+  max_reconnect_attempts: 15  # Try up to 15 times before giving up
+  reconnect_base_delay: 2.0   # Start with 2 second delay
+  reconnect_max_delay: 120.0  # Maximum delay of 2 minutes between attempts
+  ping_interval: 10.0         # Check connection every 10 seconds
 

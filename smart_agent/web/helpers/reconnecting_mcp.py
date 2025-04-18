@@ -16,18 +16,30 @@ class ReconnectingMCP(MCPServerSse):
     using exponential backoff when the connection is lost.
     """
     
-    def __init__(self, name=None, params=None):
+    def __init__(self, name=None, params=None,
+                 max_reconnect_attempts=10,
+                 reconnect_base_delay=1.0,
+                 reconnect_max_delay=60.0,
+                 ping_interval=5.0):
         """Initialize the ReconnectingMCP server.
         
         Args:
             name: The name of the server
             params: The parameters for the server
+            max_reconnect_attempts: Maximum number of reconnection attempts before giving up
+            reconnect_base_delay: Base delay for reconnection attempts in seconds
+            reconnect_max_delay: Maximum delay between reconnection attempts in seconds
+            ping_interval: Interval between ping attempts in seconds
         """
         super().__init__(name=name, params=params)
         self._ping_task = None
         self._task_group = None
         self._connected = False
         self._exit_stack = AsyncExitStack()
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._reconnect_base_delay = reconnect_base_delay
+        self._reconnect_max_delay = reconnect_max_delay
+        self._ping_interval = ping_interval
     
     @backoff.on_exception(backoff.expo, Exception, max_time=None,
                          giveup=lambda e: isinstance(e, asyncio.CancelledError))
@@ -63,11 +75,43 @@ class ReconnectingMCP(MCPServerSse):
             await self.cleanup()
             raise
 
+    async def _attempt_reconnect(self):
+        """Attempt to reconnect to the MCP server with exponential backoff.
+        
+        This method will try multiple times to reconnect with increasing delays
+        between attempts, up to a maximum number of attempts or until successful.
+        
+        Returns:
+            bool: True if reconnection was successful, False otherwise
+        """
+        attempts = 0
+        while attempts < self._max_reconnect_attempts:
+            try:
+                delay = min(self._reconnect_base_delay * (2 ** attempts), self._reconnect_max_delay)
+                attempts += 1
+                
+                log.info(f"Reconnection attempt {attempts}/{self._max_reconnect_attempts} (delay: {delay:.1f}s)")
+                await anyio.sleep(delay)
+                
+                await self.cleanup(keep_task_group=True)
+                await self._connect_once()
+                log.info(f"Successfully reconnected to MCP server after {attempts} attempts")
+                return True
+                
+            except asyncio.CancelledError:
+                log.debug("Reconnection attempt cancelled")
+                raise
+            except Exception as e:
+                log.warning(f"Reconnection attempt {attempts} failed: {e}")
+        
+        log.error(f"Failed to reconnect after {self._max_reconnect_attempts} attempts")
+        return False
+
     async def _ping(self):
         """Periodically ping the server to detect disconnections.
         
         If the ping fails, the connection is considered lost and a reconnection
-        is attempted.
+        is attempted with exponential backoff.
         """
         try:
             while True:
@@ -78,19 +122,21 @@ class ReconnectingMCP(MCPServerSse):
                     if isinstance(e, asyncio.CancelledError):
                         log.debug("Ping task cancelled")
                         break
-                    log.warning("Lost connection to MCP server: %s -- reconnecting", e)
+                    
+                    log.warning(f"Lost connection to MCP server: {e} -- attempting to reconnect")
                     self._connected = False
+                    
                     try:
-                        await self.cleanup(keep_task_group=True)
-                        await self._connect_once()
-                        self._connected = True
+                        reconnected = await self._attempt_reconnect()
+                        if reconnected:
+                            self._connected = True
+                        else:
+                            log.error("Maximum reconnection attempts reached, will try again in next ping cycle")
                     except asyncio.CancelledError:
-                        log.debug("Reconnection attempt cancelled")
+                        log.debug("Reconnection process cancelled")
                         break
-                    except Exception as reconnect_error:
-                        log.warning("Failed to reconnect: %s", reconnect_error)
                 
-                await anyio.sleep(5)
+                await anyio.sleep(self._ping_interval)
         except asyncio.CancelledError:
             log.debug("Ping task cancelled")
             raise

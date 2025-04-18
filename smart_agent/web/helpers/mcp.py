@@ -41,8 +41,24 @@ async def initialize_mcp_servers(config_manager):
             
             # For SSE-based transports (stdio_to_sse, sse), use ReconnectingMCP
             if transport_type in ["stdio_to_sse", "sse"]:
-                logger.info(f"Adding {tool_id} at {url} to agent with reconnection capability")
-                mcp_servers.append(ReconnectingMCP(name=tool_id, params={"url": url}))
+                # Get reconnection configuration parameters if available
+                max_reconnect_attempts = tool_config.get("max_reconnect_attempts", 10)
+                reconnect_base_delay = tool_config.get("reconnect_base_delay", 1.0)
+                reconnect_max_delay = tool_config.get("reconnect_max_delay", 60.0)
+                ping_interval = tool_config.get("ping_interval", 5.0)
+                
+                logger.info(f"Adding {tool_id} at {url} to agent with reconnection capability "
+                           f"(max_attempts={max_reconnect_attempts}, base_delay={reconnect_base_delay}s, "
+                           f"max_delay={reconnect_max_delay}s, ping_interval={ping_interval}s)")
+                
+                mcp_servers.append(ReconnectingMCP(
+                    name=tool_id,
+                    params={"url": url},
+                    max_reconnect_attempts=max_reconnect_attempts,
+                    reconnect_base_delay=reconnect_base_delay,
+                    reconnect_max_delay=reconnect_max_delay,
+                    ping_interval=ping_interval
+                ))
             # For stdio transport, use MCPServerStdio with the command directly
             elif transport_type == "stdio":
                 command = tool_config.get("command")
