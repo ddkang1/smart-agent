@@ -12,10 +12,22 @@ async def handle_event(event, state):
     try:
         # ── token delta from the LLM ────────────────────────────────────────────
         if event.type == "raw_response_event":
-            delta = getattr(event.data, "delta", None)
-            token = getattr(delta, "content", None)
-            if token:
-                await state["assistant_msg"].stream_token(token)
+            try:
+                # Handle different types of raw response events
+                from openai.types.responses import ResponseTextDeltaEvent
+                
+                # Process token-by-token for text delta events
+                if isinstance(event.data, ResponseTextDeltaEvent):
+                    if hasattr(event.data.delta, 'content') and event.data.delta.content:
+                        await state["assistant_msg"].stream_token(event.data.delta.content)
+                # For other event types, extract content if available
+                elif hasattr(event.data, 'delta'):
+                    delta = event.data.delta
+                    if hasattr(delta, 'content') and delta.content:
+                        await state["assistant_msg"].stream_token(delta.content)
+            except Exception as e:
+                # Log the error but don't crash the event handler
+                log.debug(f"Error processing raw response event: {e}")
             return
 
         if event.type != "run_item_stream_event":
