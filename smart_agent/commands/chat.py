@@ -305,7 +305,8 @@ def run_chat_loop(config_manager: ConfigManager):
                 mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
                 
                 # Import required classes for MCP
-                from agents.mcp import MCPServerSse, MCPServerStdio
+                from agents.mcp import MCPServerStdio
+                from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
                 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
                 
                 # Create MCP servers based on transport type
@@ -316,11 +317,11 @@ def run_chat_loop(config_manager: ConfigManager):
                     
                     transport_type = tool_config.get("transport", "stdio_to_sse").lower()
                     
-                    # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
+                    # For SSE-based transports (stdio_to_sse, sse), use ReconnectingMCP
                     if transport_type in ["stdio_to_sse", "sse"]:
                         url = tool_config.get("url")
                         if url:
-                            mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+                            mcp_servers_objects.append(ReconnectingMCP(name=tool_id, params={"url": url}))
                     # For stdio transport, use MCPServerStdio with the command directly
                     elif transport_type == "stdio":
                         command = tool_config.get("command")
