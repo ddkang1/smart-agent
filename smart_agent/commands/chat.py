@@ -537,7 +537,7 @@ def run_chat_loop(config_manager: ConfigManager):
                                 else:
                                     server.cleanup()  # Call directly for sync cleanup
                             except Exception as e:
-                                print(f"Error during server cleanup: {e}")
+                                pass
 
             # Run the agent in an event loop
             assistant_response = asyncio.run(run_agent())

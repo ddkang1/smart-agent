@@ -109,7 +109,7 @@ class ReconnectingMCP(MCPServerSse):
         try:
             await super().cleanup()
         except Exception as e:
-            log.warning("Error during parent cleanup: %s", e)
+            pass
         
         # Clean up the task group if it exists and we're not keeping it
         if self._task_group is not None and not keep_task_group:
@@ -117,13 +117,13 @@ class ReconnectingMCP(MCPServerSse):
                 await self._task_group.__aexit__(None, None, None)
                 self._task_group = None
             except Exception as e:
-                log.warning("Error closing task group: %s", e)
+                pass
         
         # Close the exit stack
         try:
             await self._exit_stack.aclose()
         except Exception as e:
-            log.warning("Error closing exit stack: %s", e)
+            pass
 
     async def __aenter__(self):
         """Enter the async context manager."""
