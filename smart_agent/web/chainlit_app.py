@@ -347,62 +347,6 @@ async def handle_event(event, state):
 
         item = event.item
 
-        # Function to detect code and its language
-        def detect_code_language(text):
-            # Common code patterns and their languages
-            patterns = {
-                r'^\s*<\?php': 'php',
-                r'^\s*import\s+[a-zA-Z0-9_\.]+\s*;': 'java',
-                r'^\s*import\s+[a-zA-Z0-9_\.]+': 'python',
-                r'^\s*from\s+[a-zA-Z0-9_\.]+\s+import': 'python',
-                r'^\s*def\s+[a-zA-Z0-9_]+\s*\(': 'python',
-                r'^\s*class\s+[a-zA-Z0-9_]+\s*[\(:]': 'python',
-                r'^\s*function\s+[a-zA-Z0-9_]+\s*\(': 'javascript',
-                r'^\s*const\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                r'^\s*let\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                r'^\s*var\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                r'^\s*#include': 'cpp',
-                r'^\s*using\s+namespace': 'cpp',
-                r'^\s*package\s+[a-zA-Z0-9_\.]+;': 'java',
-                r'^\s*public\s+class': 'java',
-                r'^\s*<!DOCTYPE\s+html>': 'html',
-                r'^\s*<html>': 'html',
-                r'^\s*@Component': 'typescript',
-                r'^\s*@Injectable': 'typescript',
-                r'^\s*interface\s+[a-zA-Z0-9_]+\s*{': 'typescript',
-                r'^\s*type\s+[a-zA-Z0-9_]+\s*=': 'typescript',
-                r'^\s*SELECT\s+.*\s+FROM': 'sql',
-                r'^\s*CREATE\s+TABLE': 'sql',
-                r'^\s*ALTER\s+TABLE': 'sql',
-                r'^\s*\[\s*[a-zA-Z0-9_]+\s*:': 'json',
-                r'^\s*{\s*"[a-zA-Z0-9_]+"\s*:': 'json',
-                r'^\s*<\?xml': 'xml',
-                r'^\s*<[a-zA-Z0-9_]+>': 'xml',
-                r'^\s*\(\s*defun': 'lisp',
-                r'^\s*\(\s*define': 'lisp',
-                r'^\s*module\s+[a-zA-Z0-9_]+': 'ruby',
-                r'^\s*class\s+[a-zA-Z0-9_]+\s*<': 'ruby',
-                r'^\s*def\s+[a-zA-Z0-9_]+\s*$': 'ruby',
-                r'^\s*#!\s*/bin/bash': 'bash',
-                r'^\s*#!\s*/usr/bin/env\s+bash': 'bash',
-                r'^\s*#!\s*/bin/sh': 'bash',
-                r'^\s*\$\s*\(': 'bash',
-                r'^\s*\$\s*\{': 'bash',
-            }
-            
-            import re
-            lines = text.split('\n')
-            for line in lines:
-                if line.strip():  # Skip empty lines
-                    for pattern, language in patterns.items():
-                        if re.search(pattern, line):
-                            return True, language
-            
-            # Check if it has multiple lines and contains common code characters
-            if len(lines) > 1 and re.search(r'[{}()\[\];=><]', text):
-                return True, 'code'  # Generic code
-            
-            return False, None
 
         # ── model called a tool ───────────────────
         if item.type == "tool_call_item":
@@ -431,13 +375,12 @@ async def handle_event(event, state):
                         state["buffer"].append((char, "thought"))
                         await asyncio.sleep(0.001)  # Small delay for visual effect
                 else:
-                    # Check if this is code and format appropriately
-                    is_code, language = detect_code_language(str(value))
-                    
-                    if is_code:
-                        # Format tool call with code like CLI does
-                        tool_opening = f"\n<tool name=\"{key}\">\n```{language or ''}\n"
-                        tool_closing = "\n```</tool>"
+                    # Format code without language specification
+                    # Assume any value in a code key is code
+                    if key == "code":
+                        # Format tool call with code block (no language specification)
+                        tool_opening = f"\n ``` \n"
+                        tool_closing = "\n ``` \n"
                         
                         # Stream tokens character by character like CLI
                         for char in tool_opening:
@@ -456,8 +399,8 @@ async def handle_event(event, state):
                             await asyncio.sleep(0.001)  # Small delay for visual effect
                     else:
                         # Format regular tool call like CLI does
-                        tool_opening = f"\n<tool name=\"{key}\">\n"
-                        tool_closing = "\n</tool>"
+                        tool_opening = f"\n ``` \n"
+                        tool_closing = "\n ``` \n"
                         
                         # Stream tokens character by character like CLI
                         for char in tool_opening:
@@ -488,19 +431,19 @@ async def handle_event(event, state):
                     # If it's a text response, format it appropriately
                     if isinstance(output_json, dict) and "text" in output_json:
                         # Format tool output like CLI does
-                        output_opening = "\n<tool_output>\n"
+                        output_opening = "\n ``` \n"
                         output_content = output_json['text']
-                        output_closing = "\n</tool_output>"
+                        output_closing = "\n ``` \n"
                     else:
                         # Format JSON output like CLI does
-                        output_opening = "\n<tool_output>\n"
+                        output_opening = "\n ``` \n"
                         output_content = json.dumps(output_json)
-                        output_closing = "\n</tool_output>"
+                        output_closing = "\n ``` \n"
                 except json.JSONDecodeError:
                     # For non-JSON outputs, show as plain text like CLI does
-                    output_opening = "\n<tool_output>\n"
+                    output_opening = "\n ``` \n"
                     output_content = item.output
-                    output_closing = "\n</tool_output>"
+                    output_closing = "\n ``` \n"
                 
                 # Stream tokens character by character like CLI
                 for char in output_opening:

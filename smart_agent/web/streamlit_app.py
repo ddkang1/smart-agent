@@ -251,62 +251,6 @@ if prompt := st.chat_input("You: "):
                         "system": "magenta"
                     }
                     
-                    # Function to detect code and its language
-                    def detect_code_language(text):
-                        # Common code patterns and their languages
-                        patterns = {
-                            r'^\s*<\?php': 'php',
-                            r'^\s*import\s+[a-zA-Z0-9_\.]+\s*;': 'java',
-                            r'^\s*import\s+[a-zA-Z0-9_\.]+': 'python',
-                            r'^\s*from\s+[a-zA-Z0-9_\.]+\s+import': 'python',
-                            r'^\s*def\s+[a-zA-Z0-9_]+\s*\(': 'python',
-                            r'^\s*class\s+[a-zA-Z0-9_]+\s*[\(:]': 'python',
-                            r'^\s*function\s+[a-zA-Z0-9_]+\s*\(': 'javascript',
-                            r'^\s*const\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                            r'^\s*let\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                            r'^\s*var\s+[a-zA-Z0-9_]+\s*=': 'javascript',
-                            r'^\s*#include': 'cpp',
-                            r'^\s*using\s+namespace': 'cpp',
-                            r'^\s*package\s+[a-zA-Z0-9_\.]+;': 'java',
-                            r'^\s*public\s+class': 'java',
-                            r'^\s*<!DOCTYPE\s+html>': 'html',
-                            r'^\s*<html>': 'html',
-                            r'^\s*@Component': 'typescript',
-                            r'^\s*@Injectable': 'typescript',
-                            r'^\s*interface\s+[a-zA-Z0-9_]+\s*{': 'typescript',
-                            r'^\s*type\s+[a-zA-Z0-9_]+\s*=': 'typescript',
-                            r'^\s*SELECT\s+.*\s+FROM': 'sql',
-                            r'^\s*CREATE\s+TABLE': 'sql',
-                            r'^\s*ALTER\s+TABLE': 'sql',
-                            r'^\s*\[\s*[a-zA-Z0-9_]+\s*:': 'json',
-                            r'^\s*{\s*"[a-zA-Z0-9_]+"\s*:': 'json',
-                            r'^\s*<\?xml': 'xml',
-                            r'^\s*<[a-zA-Z0-9_]+>': 'xml',
-                            r'^\s*\(\s*defun': 'lisp',
-                            r'^\s*\(\s*define': 'lisp',
-                            r'^\s*module\s+[a-zA-Z0-9_]+': 'ruby',
-                            r'^\s*class\s+[a-zA-Z0-9_]+\s*<': 'ruby',
-                            r'^\s*def\s+[a-zA-Z0-9_]+\s*$': 'ruby',
-                            r'^\s*#!\s*/bin/bash': 'bash',
-                            r'^\s*#!\s*/usr/bin/env\s+bash': 'bash',
-                            r'^\s*#!\s*/bin/sh': 'bash',
-                            r'^\s*\$\s*\(': 'bash',
-                            r'^\s*\$\s*\{': 'bash',
-                        }
-                        
-                        import re
-                        lines = text.split('\n')
-                        for line in lines:
-                            if line.strip():  # Skip empty lines
-                                for pattern, language in patterns.items():
-                                    if re.search(pattern, line):
-                                        return True, language
-                        
-                        # Check if it has multiple lines and contains common code characters
-                        if len(lines) > 1 and re.search(r'[{}()\[\];=><]', text):
-                            return True, 'code'  # Generic code
-                        
-                        return False, None
                     
                     # Function to add content to buffer with type information
                     def add_to_buffer(content, content_type="assistant"):
@@ -514,30 +458,28 @@ if prompt := st.chat_input("You: "):
                                             
                                             # Check if this is a code tool
                                             if key == "code":
-                                                # Detect language for code formatting
+                                                # Get code string
                                                 code_str = str(value)
-                                                is_code, language = detect_code_language(code_str)
-                                                lang_tag = language if language and is_code else ""
                                                 
                                                 # Display tool call directly in the sequence container like CLI
                                                 with sequence_container:
                                                     st.markdown(f"<div style='color: yellow'>&lt;tool name=\"{key}\"&gt;</div>", unsafe_allow_html=True)
-                                                    st.code(code_str, language=lang_tag if lang_tag else None)
+                                                    st.code(code_str, language=None)  # No language specification
                                                     st.markdown(f"<div style='color: yellow'>&lt;/tool&gt;</div>", unsafe_allow_html=True)
                                                 
                                                 # Add tool call to buffer with tool type
                                                 tool_opening = f"\n<tool name=\"{key}\">\n"
                                                 add_to_buffer(tool_opening, "tool")
                                                 
-                                                # Add code with markdown formatting
-                                                add_to_buffer(f"```{lang_tag}\n", "tool")
+                                                # Add code with markdown formatting (no language specification)
+                                                add_to_buffer(f"```\n", "tool")
                                                 add_to_buffer(code_str, "tool")
                                                 add_to_buffer("\n```", "tool")
                                                 
                                                 add_to_buffer("\n</tool>", "tool")
                                                 
-                                                # Update assistant reply with formatted code
-                                                assistant_reply += f"\n<tool name=\"{key}\">\n```{lang_tag}\n{code_str}\n```\n</tool>"
+                                                # Update assistant reply with formatted code (no language specification)
+                                                assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```\n</tool>"
                                             else:
                                                 # Display tool call directly in the sequence container like CLI
                                                 with sequence_container:
