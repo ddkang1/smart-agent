@@ -12,6 +12,43 @@ from pathlib import Path
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Use direct print statements during initialization, then switch to logger
+# This avoids the chicken-and-egg problem of needing to log before we know the log level
+USE_PRINT_DURING_INIT = True
+
+def update_logger_level(level_str: str):
+    """Update the logger level based on the config."""
+    log_level = getattr(logging, level_str.upper(), logging.INFO)
+    
+    # Update the root logger level
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Update this module's logger level
+    logger.setLevel(log_level)
+    
+    # Update handlers format to ensure consistent logging
+    for handler in root_logger.handlers:
+        handler.setLevel(log_level)
+
+def log_message(message: str, level: str = "INFO"):
+    """
+    Log a message at the specified level, respecting the configured log level.
+    
+    Args:
+        message: The message to log
+        level: The level to log at (INFO, WARNING, ERROR, DEBUG)
+    """
+    # During initialization, use print for WARNING and above
+    if USE_PRINT_DURING_INIT:
+        if level.upper() in ["WARNING", "ERROR", "CRITICAL"]:
+            print(message)
+        return
+        
+    # After initialization, use the logger
+    log_method = getattr(logger, level.lower(), logger.info)
+    log_method(message)
+
 
 class ConfigManager:
     """
@@ -54,7 +91,7 @@ class ConfigManager:
                 try:
                     with open(path, "r") as f:
                         self.config = yaml.safe_load(f) or {}
-                    print(f"Loaded configuration from {path}")
+                    log_message(f"Loaded configuration from {path}", "INFO")
 
                     # Load tools configuration
                     tools_config_path = self.tools_path or self.config.get("tools_config")
@@ -75,30 +112,56 @@ class ConfigManager:
                         if os.path.exists(tools_config_path):
                             with open(tools_config_path, "r") as f:
                                 self.tools_config = yaml.safe_load(f).get("tools", {})
-                            print(
-                                f"Loaded tools configuration from {tools_config_path}"
+                            log_message(
+                                f"Loaded tools configuration from {tools_config_path}", "INFO"
                             )
                         else:
-                            print(
-                                f"Warning: Tools configuration file not found: {tools_config_path}"
+                            log_message(
+                                f"Tools configuration file not found: {tools_config_path}", "WARNING"
                             )
                             # Try an alternative path construction as fallback
                             alternate_path = os.path.join(os.path.dirname(config_dir), tools_config_path)
                             if os.path.exists(alternate_path):
                                 with open(alternate_path, "r") as f:
                                     self.tools_config = yaml.safe_load(f).get("tools", {})
-                                print(
-                                    f"Loaded tools configuration from alternate path: {alternate_path}"
+                                log_message(
+                                    f"Loaded tools configuration from alternate path: {alternate_path}", "INFO"
                                 )
 
                     # Load LiteLLM configuration if available
                     self.litellm_config = self._load_litellm_config()
+                    
+                    # Now that we've loaded the config, we can switch to using the logger
+                    global USE_PRINT_DURING_INIT
+                    USE_PRINT_DURING_INIT = False
+                    
+                    # Update logger level based on config - do this before any logging
+                    log_level = self.get_log_level()
+                    update_logger_level(log_level)
+                    
+                    # Force reconfiguration of logging
+                    handlers = [logging.StreamHandler()]
+                    log_file = self.get_log_file()
+                    if log_file:
+                        handlers.append(logging.FileHandler(log_file))
+                    
+                    # Reset root logger handlers
+                    for handler in logging.root.handlers[:]:
+                        logging.root.removeHandler(handler)
+                    
+                    # Set up basic config with the correct level
+                    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+                    logging.basicConfig(
+                        level=numeric_level,
+                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        handlers=handlers,
+                    )
 
                     return
                 except Exception as e:
-                    print(f"Error loading configuration from {path}: {e}")
+                    log_message(f"Error loading configuration from {path}: {e}", "ERROR")
 
-        print("Warning: No configuration file found. Using default settings.")
+        log_message("No configuration file found. Using default settings.", "WARNING")
         self.config = {}
 
     def _load_litellm_config(self):
@@ -120,14 +183,14 @@ class ConfigManager:
                 litellm_config_path = os.path.join(os.getcwd(), litellm_config_path)
 
         if not os.path.exists(litellm_config_path):
-            logger.warning(f"LiteLLM config file not found at {litellm_config_path}")
+            log_message(f"LiteLLM config file not found at {litellm_config_path}", "WARNING")
             return {}
 
         try:
             with open(litellm_config_path, "r") as f:
                 return yaml.safe_load(f) or {}
         except Exception as e:
-            logger.error(f"Error loading LiteLLM config: {e}")
+            log_message(f"Error loading LiteLLM config: {e}", "ERROR")
             return {}
 
     def get_config(
@@ -313,7 +376,7 @@ class ConfigManager:
                 continue
 
             tool_name = tool_config.get("name", tool_id)
-            print(f"Initializing {tool_name}...")
+            log_message(f"Initializing {tool_name}...", "INFO")
 
             # TODO: Implement tool initialization
 
@@ -367,7 +430,8 @@ class ConfigManager:
             Log level
         """
         # Prioritize configuration
-        return self.get_config("logging", "level", "INFO")
+        log_level = self.get_config("logging", "level", "INFO")
+        return log_level
 
     def get_log_file(self) -> Optional[str]:
         """

@@ -103,7 +103,7 @@ def run_chat_loop(config_manager: ConfigManager):
         # Create MCP server list for the agent
         mcp_servers = []
         for tool_id, tool_name, tool_url in enabled_tools:
-            print(f"Adding {tool_name} at {tool_url} to agent")
+            logger.info(f"Adding {tool_name} at {tool_url} to agent")
             mcp_servers.append(tool_url)
 
         # Create the agent - using SmartAgent wrapper class
@@ -114,10 +114,10 @@ def run_chat_loop(config_manager: ConfigManager):
             system_prompt=PromptGenerator.create_system_prompt(),
         )
 
-        print(f"Agent initialized with {len(mcp_servers)} tools")
+        logger.info(f"Agent initialized with {len(mcp_servers)} tools")
 
     except ImportError:
-        print(
+        logger.error(
             "Required packages not installed. Run 'pip install openai agent' to use the agent."
         )
         return
@@ -563,7 +563,7 @@ def run_chat_loop(config_manager: ConfigManager):
                         completion=assistant_response,
                     )
                 except Exception as e:
-                    print(f"Langfuse logging error: {e}")
+                    logger.error(f"Langfuse logging error: {e}")
 
         except KeyboardInterrupt:
             print("\nOperation interrupted by user.")
@@ -572,7 +572,7 @@ def run_chat_loop(config_manager: ConfigManager):
             print("\nOperation cancelled.")
             continue
         except Exception as e:
-            print(f"\nError: {e}")
+            logger.error(f"Error: {e}")
             import traceback
             traceback.print_exc()
 
