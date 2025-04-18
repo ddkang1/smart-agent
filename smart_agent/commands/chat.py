@@ -166,23 +166,76 @@ def run_chat_loop(config_manager: ConfigManager):
                 import sys
                 sys.stdout.reconfigure(line_buffering=True)
                 
-                # Create a buffer for tokens
+                # Create a buffer for tokens with type information
                 buffer = deque()
                 stream_ended = asyncio.Event()
+                current_type = "assistant"  # Default type is assistant message
                 
                 # Define constants for consistent output
                 output_interval = 0.05  # 50ms between outputs
                 output_size = 6  # Output 6 characters at a time
                 
-                # Function to stream output at a consistent rate
+                # Define colors for different content types
+                type_colors = {
+                    "assistant": "green",
+                    "thought": "cyan",
+                    "tool_output": "bright_green",
+                    "tool": "yellow",
+                    "error": "red",
+                    "system": "magenta"
+                }
+                
+                # Function to add content to buffer with type information
+                def add_to_buffer(content, content_type="assistant"):
+                    # Add special marker for type change
+                    if buffer and buffer[-1][1] != content_type:
+                        buffer.append(("TYPE_CHANGE", content_type))
+                    
+                    # Add each character with its type
+                    for char in content:
+                        buffer.append((char, content_type))
+                
+                # Function to stream output at a consistent rate with different colors
                 async def stream_output(buffer, interval, size, end_event):
+                    nonlocal current_type
                     try:
                         while not end_event.is_set() or buffer:  # Continue until signaled and buffer is empty
                             if buffer:
                                 # Get a batch of tokens from the buffer
-                                to_flush = ''.join([buffer.popleft() for _ in range(min(size, len(buffer)))])
-                                # Print the batch with styling
-                                rich_console.print(to_flush, end="", style="green")
+                                batch = []
+                                current_batch_type = None
+                                
+                                for _ in range(min(size, len(buffer))):
+                                    if not buffer:
+                                        break
+                                        
+                                    item = buffer.popleft()
+                                    
+                                    # Handle type change marker
+                                    if item[0] == "TYPE_CHANGE":
+                                        if batch:  # Print current batch before changing type
+                                            rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                                            batch = []
+                                        current_type = item[1]
+                                        current_batch_type = current_type
+                                        continue
+                                    
+                                    # Initialize batch type if not set
+                                    if current_batch_type is None:
+                                        current_batch_type = item[1]
+                                    
+                                    # If type changes within batch, print current batch and start new one
+                                    if item[1] != current_batch_type:
+                                        rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                                        batch = [item[0]]
+                                        current_batch_type = item[1]
+                                    else:
+                                        batch.append(item[0])
+                                
+                                # Print any remaining batch content
+                                if batch:
+                                    rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                            
                             await asyncio.sleep(interval)
                     except asyncio.CancelledError:
                         # Task cancellation is expected on completion
@@ -262,7 +315,7 @@ def run_chat_loop(config_manager: ConfigManager):
                     )
                     
                     # Print the assistant prefix with rich styling
-                    rich_console.print("\nAssistant: ", end="", style="bold cyan")
+                    rich_console.print("\nAssistant: ", end="", style="bold green")
                     
                     # Start the streaming task
                     streaming_task = asyncio.create_task(
@@ -273,7 +326,7 @@ def run_chat_loop(config_manager: ConfigManager):
                     result = Runner.run_streamed(agent, history, max_turns=100)
                     is_thought = False
                     
-                    # Process the stream events with rich colorful output
+                    # Process the stream events with a holistic output approach
                     async for event in result.stream_events():
                         if event.type == "raw_response_event":
                             continue
@@ -286,70 +339,57 @@ def run_chat_loop(config_manager: ConfigManager):
                                     key, value = next(iter(arguments_dict.items()))
                                     if key == "thought":
                                         is_thought = True
-                                        # Pause token streaming
-                                        stream_ended.set()
-                                        await streaming_task
                                         
-                                        # Display thought panel
-                                        rich_console.print("\n")
-                                        rich_console.print(Panel(str(value), title="Thought", border_style="cyan", title_align="left"))
+                                        # Add the opening thought tag to the buffer with thought type
+                                        add_to_buffer("\n<thought>", "thought")
                                         
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
-                                        assistant_reply += "\n[thought]: " + value
+                                        # Add the thought content with thought type
+                                        add_to_buffer(str(value), "thought")
                                         
-                                        # Reset for continued streaming
-                                        stream_ended.clear()
-                                        streaming_task = asyncio.create_task(
-                                            stream_output(buffer, output_interval, output_size, stream_ended)
-                                        )
+                                        # Add the closing thought tag with thought type
+                                        add_to_buffer("</thought>", "thought")
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<thought>{value}</thought>"
                                     else:
                                         is_thought = False
-                                        # Pause token streaming
-                                        stream_ended.set()
-                                        await streaming_task
                                         
-                                        # Display tool call panel
-                                        rich_console.print("\n")
-                                        rich_console.print(Panel(str(value), title=key, border_style="yellow", title_align="left"))
+                                        # Add tool call to buffer with tool type
+                                        tool_opening = f"\n<tool name=\"{key}\">"
+                                        add_to_buffer(tool_opening, "tool")
+                                        add_to_buffer(str(value), "tool")
+                                        add_to_buffer("</tool>", "tool")
                                         
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
-                                        
-                                        # Reset for continued streaming
-                                        stream_ended.clear()
-                                        streaming_task = asyncio.create_task(
-                                            stream_output(buffer, output_interval, output_size, stream_ended)
-                                        )
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
                                 except (json.JSONDecodeError, StopIteration) as e:
-                                    # Pause token streaming
-                                    stream_ended.set()
-                                    await streaming_task
+                                    # Add error to buffer with error type
+                                    error_text = f"Error parsing tool call: {e}"
+                                    add_to_buffer("\n<error>", "error")
+                                    add_to_buffer(error_text, "error")
+                                    add_to_buffer("</error>", "error")
                                     
-                                    rich_console.print("\n")
-                                    rich_console.print(f"[bold red]Error parsing tool call:[/] {e}")
-                                    
-                                    # Ensure output is flushed immediately
-                                    sys.stdout.flush()
-                                    
-                                    # Reset for continued streaming
-                                    stream_ended.clear()
-                                    streaming_task = asyncio.create_task(
-                                        stream_output(buffer, output_interval, output_size, stream_ended)
-                                    )
+                                    # Update assistant reply
+                                    assistant_reply += f"\n<error>{error_text}</error>"
                             elif event.item.type == "tool_call_output_item":
                                 if not is_thought:
                                     try:
+                                        output_text = json.loads(event.item.output).get("text", "")
+                                        
                                         # Pause token streaming
                                         stream_ended.set()
                                         await streaming_task
                                         
-                                        output_text = json.loads(event.item.output).get("text", "")
-                                        rich_console.print("\n")
-                                        rich_console.print(Panel(str(output_text), title="Tool Output", border_style="green", title_align="left"))
+                                        # Print tool output all at once
+                                        rich_console.print("\n<tool_output>", end="", style="bright_green bold")
+                                        rich_console.print(str(output_text), style="bright_green", end="")
+                                        rich_console.print("</tool_output>", style="bright_green bold")
                                         
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
                                         
                                         # Reset for continued streaming
                                         stream_ended.clear()
@@ -361,11 +401,16 @@ def run_chat_loop(config_manager: ConfigManager):
                                         stream_ended.set()
                                         await streaming_task
                                         
-                                        rich_console.print("\n")
-                                        rich_console.print(Panel(str(event.item.output), title="Tool Output", border_style="green", title_align="left"))
+                                        # Print tool output all at once
+                                        rich_console.print("\n<tool_output>", end="", style="bright_green bold")
+                                        rich_console.print(str(event.item.output), style="bright_green", end="")
+                                        rich_console.print("</tool_output>", style="bright_green bold")
                                         
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
                                         
                                         # Reset for continued streaming
                                         stream_ended.clear()
@@ -376,19 +421,17 @@ def run_chat_loop(config_manager: ConfigManager):
                                 role = event.item.raw_item.role
                                 text_message = ItemHelpers.text_message_output(event.item)
                                 if role == "assistant":
-                                    # Add tokens to buffer for streaming
-                                    buffer.extend(text_message)
+                                    # Add tokens to buffer for streaming with assistant type
+                                    add_to_buffer(text_message, "assistant")
                                     assistant_reply += text_message
                                 else:
-                                    # Pause token streaming
-                                    stream_ended.set()
-                                    await streaming_task
+                                    # Add system message to buffer with system type
+                                    add_to_buffer(f"\n<{role}>", "system")
+                                    add_to_buffer(str(text_message), "system")
+                                    add_to_buffer(f"</{role}>", "system")
                                     
-                                    rich_console.print("\n")
-                                    rich_console.print(Panel(str(text_message), title=role.capitalize(), border_style="magenta", title_align="left"))
-                                    
-                                    # Ensure output is flushed immediately
-                                    sys.stdout.flush()
+                                    # Update assistant reply
+                                    assistant_reply += f"\n<{role}>{text_message}</{role}>"
                                     
                                     # Reset for continued streaming
                                     stream_ended.clear()
