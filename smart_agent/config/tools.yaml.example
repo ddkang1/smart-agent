@@ -21,7 +21,7 @@
 mcp_think_tool:
   enabled: true
   url: http://localhost:8000/sse
-  command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+  command: "uvx mcp-think --sse --host 0.0.0.0"
   transport: stdio_to_sse
 
 ddg_mcp:

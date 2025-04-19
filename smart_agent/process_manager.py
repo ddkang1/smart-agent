@@ -111,6 +111,23 @@ class ProcessManager:
         original_command = command
         command = command.replace("{port}", str(port))
 
+        # Check if this is a Docker run command and add a consistent name
+        if "docker run" in command:
+            # Create a consistent container name based on tool_id
+            container_name = f"smart_agent_{tool_id}"
+            
+            # Add the --name flag to the Docker command
+            # We need to insert it after "docker run" but before the image name
+            docker_run_pos = command.find("docker run")
+            if docker_run_pos >= 0:
+                # Find the position after "docker run"
+                insert_pos = docker_run_pos + len("docker run")
+                # Insert the --name flag
+                command = f"{command[:insert_pos]} --name {container_name}{command[insert_pos:]}"
+                
+                if self.debug:
+                    logger.debug(f"Added consistent name to Docker command: {container_name}")
+
         if self.debug:
             logger.debug(f"Command before port replacement: {original_command}")
             logger.debug(f"Command after port replacement: {command}")
@@ -175,6 +192,9 @@ class ProcessManager:
         """
         success = False
         marker = f"SMART_AGENT_TOOL_{tool_id}"
+        
+        # Timeout for graceful termination before force kill (seconds)
+        termination_timeout = 3.0
 
         # First try to stop the process using the marker
         try:
@@ -222,249 +242,102 @@ class ProcessManager:
                         # Windows approach
                         subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
                     else:
-                        # Unix approach - send SIGTERM to process group
+                        # Unix approach - first send SIGTERM to process group, then SIGKILL if needed
                         try:
+                            # Always start with SIGTERM for graceful shutdown
                             os.killpg(os.getpgid(pid), signal.SIGTERM)
+                            logger.info(f"Sent SIGTERM to process group for {tool_id}")
+                            
+                            # Wait for the process to terminate gracefully
+                            termination_start = time.time()
+                            process_terminated = False
+                            
+                            while time.time() - termination_start < termination_timeout:
+                                try:
+                                    # Check if process still exists
+                                    os.killpg(os.getpgid(pid), 0)  # Signal 0 just checks if process exists
+                                    # Process still exists, wait a bit
+                                    time.sleep(0.1)
+                                except ProcessLookupError:
+                                    # Process terminated
+                                    process_terminated = True
+                                    break
+                            
+                            # If process is still running after timeout, send SIGKILL
+                            if not process_terminated:
+                                logger.warning(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
+                                try:
+                                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                                    logger.info(f"Sent SIGKILL to process group for {tool_id}")
+                                except ProcessLookupError:
+                                    # Process terminated between check and kill
+                                    pass
                         except ProcessLookupError:
                             # If process group not found, try killing just the process
                             os.kill(pid, signal.SIGTERM)
+                            logger.info(f"Sent SIGTERM to process {pid} for {tool_id}")
+                            
+                            # Wait for the process to terminate gracefully
+                            termination_start = time.time()
+                            process_terminated = False
+                            
+                            while time.time() - termination_start < termination_timeout:
+                                try:
+                                    # Check if process still exists
+                                    os.kill(pid, 0)  # Signal 0 just checks if process exists
+                                    # Process still exists, wait a bit
+                                    time.sleep(0.1)
+                                except ProcessLookupError:
+                                    # Process terminated
+                                    process_terminated = True
+                                    break
+                            
+                            # If process is still running after timeout, send SIGKILL
+                            if not process_terminated:
+                                logger.warning(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                    logger.info(f"Sent SIGKILL to process {pid} for {tool_id}")
+                                except ProcessLookupError:
+                                    # Process terminated between check and kill
+                                    pass
                     success = True
                 except ProcessLookupError:
                     logger.warning(f"Process {pid} for {tool_id} not found")
                 except Exception as e:
                     logger.error(f"Error stopping {tool_id} process using PID: {e}")
 
-        # Check if this is a Docker-based tool
-        is_docker_tool = False
-        docker_cmd_line = None
-
-        if pid:
-            try:
-                # Get the command line for this PID
-                if platform.system() != "Windows":
-                    # Unix approach - use ps to get the command line
-                    ps_cmd = f"ps -p {pid} -o command= || ps -p {pid} -o args="
-                    ps_result = subprocess.run(ps_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                    if ps_result.stdout.strip():
-                        cmd_line = ps_result.stdout.strip()
-                        if "docker run" in cmd_line:
-                            is_docker_tool = True
-                            docker_cmd_line = cmd_line
-                            if self.debug:
-                                logger.debug(f"Tool {tool_id} is a Docker-based tool")
-            except Exception as e:
-                logger.debug(f"Error checking if {tool_id} is a Docker tool: {e}")
-
-        # If this is a Docker-based tool, we need to find and stop the Docker container
-        if is_docker_tool:
-            try:
-                # First, try to find the Docker container ID
-                if self.debug:
-                    logger.debug(f"Stopping Docker container for {tool_id}")
-
-                # Try different approaches to find the Docker container
-                container_found = False
-                docker_container_id = None
-
-                # We won't rely on container names as they can be randomly generated
-                # Instead, focus on extracting the image name from the command line
-                # and using that to find containers
-
-                # 2. Try to extract the Docker image name from the command line
-                if not container_found and docker_cmd_line:
-                    # Parse the command line to find the image name
-                    parts = docker_cmd_line.split()
-                    docker_image = None
-
-                    # Find the position of 'docker run' in the command
-                    docker_run_pos = -1
-                    for i, part in enumerate(parts):
-                        if part == "docker" and i+1 < len(parts) and parts[i+1] == "run":
-                            docker_run_pos = i
-                            break
-
-                    # Look for the image name after 'docker run' and its options
-                    if docker_run_pos >= 0:
-                        for i in range(docker_run_pos + 2, len(parts)):
-                            # Skip options that start with - or have volume mappings
-                            if parts[i].startswith("-") or ":" in parts[i] and "/" in parts[i] and not parts[i].startswith("ghcr.io/"):
-                                continue
-                            # This is likely the image name
-                            docker_image = parts[i]
-                            if self.debug:
-                                logger.debug(f"Found Docker image {docker_image} in command line")
-                            break
-
-                    if docker_image:
-                        # Try to find containers using that image
-                        find_cmd = f"docker ps -q --filter ancestor={docker_image}"
-                        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        if result.stdout.strip():
-                            docker_container_id = result.stdout.strip()
-                            container_found = True
-                            if self.debug:
-                                logger.debug(f"Found Docker container {docker_container_id} using image {docker_image}")
-
-                # 3. Try to find containers by looking at the command line in 'docker ps'
-                if not container_found:
-                    # Get all running containers with their command lines
-                    find_cmd = "docker ps --format \"{{.ID}}|{{.Command}}|{{.Image}}\""
-                    result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                    if result.stdout.strip():
-                        for line in result.stdout.strip().split('\n'):
-                            parts = line.split('|')
-                            if len(parts) >= 3:
-                                container_id = parts[0]
-                                command = parts[1]
-                                image = parts[2]
-
-                                # Check if the tool ID or name appears in the command or image
-                                if tool_id in command or tool_id in image or tool_name in command or tool_name in image:
-                                    docker_container_id = container_id
-                                    container_found = True
-                                    if self.debug:
-                                        logger.debug(f"Found Docker container {docker_container_id} with matching command/image for {tool_id}")
-                                    break
-
-                # If we found a container ID, stop it
-                if container_found and docker_container_id:
-                    if self.debug:
-                        logger.debug(f"Stopping Docker container {docker_container_id} for {tool_id}")
-                    stop_cmd = f"docker stop {docker_container_id}"
-                    stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                    if stop_result.returncode == 0:
-                        success = True
-                        logger.info(f"Stopped Docker container {docker_container_id} for {tool_id}")
-                    else:
-                        logger.warning(f"Failed to stop Docker container {docker_container_id} for {tool_id}: {stop_result.stderr}")
+        # Try to stop Docker container with our consistent naming pattern
+        container_name = f"smart_agent_{tool_id}"
+        
+        # Try to find and stop the Docker container with our consistent name
+        find_cmd = f"docker ps -q --filter name={container_name}"
+        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+        
+        if result.stdout.strip():
+            # Found a container with our naming pattern
+            docker_container_id = result.stdout.strip()
+            if self.debug:
+                logger.debug(f"Found Docker container {docker_container_id} with name {container_name}")
+                
+            # Try to stop the container
+            stop_cmd = f"docker stop {docker_container_id}"
+            stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            
+            if stop_result.returncode == 0:
+                success = True
+                logger.info(f"Stopped Docker container {docker_container_id} for {tool_id}")
+            else:
+                # Try to kill the container if stopping failed
+                kill_cmd = f"docker kill {docker_container_id}"
+                logger.info(f"Attempting to kill Docker container {docker_container_id} for {tool_id}")
+                kill_result = subprocess.run(kill_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                
+                if kill_result.returncode == 0:
+                    success = True
+                    logger.info(f"Killed Docker container {docker_container_id} for {tool_id}")
                 else:
-                    # If we couldn't find a specific container, try a more general approach
-                    # Look for any container that might be related to this tool
-
-                    # 1. Try by tool name
-                    tool_name = tool_id.replace("_", "-")
-                    if self.debug:
-                        logger.debug(f"Trying to find Docker containers by name pattern: {tool_name}")
-                    # This will find and stop any container with the tool name in its name
-                    find_cmd = f"docker ps -q --filter name={tool_name} | xargs -r docker stop"
-                    stop_result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                    if stop_result.returncode == 0 and stop_result.stdout.strip():
-                        success = True
-                        logger.info(f"Stopped Docker containers for {tool_id} by name")
-
-                    # 2. Try a more direct approach - find all containers with the image name in their image
-                    if not success:
-                        if self.debug:
-                            logger.debug(f"Trying to find Docker containers by image pattern")
-                        # Get all running containers
-                        find_cmd = "docker ps --format \"{{.ID}}|{{.Image}}\""
-                        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        if result.stdout.strip():
-                            for line in result.stdout.strip().split('\n'):
-                                parts = line.split('|')
-                                if len(parts) >= 2:
-                                    container_id = parts[0]
-                                    image = parts[1]
-
-                                    # Check if this is a relevant container
-                                    is_relevant = False
-                                    # 1. Check if extracted image matches
-                                    if docker_image and docker_image in image:
-                                        is_relevant = True
-                                        if self.debug:
-                                            logger.debug(f"Container {container_id} matches extracted image {docker_image}")
-                                    # 2. Check if tool ID appears in image name
-                                    elif tool_id.lower() in image.lower() or tool_id.replace("_", "-").lower() in image.lower():
-                                        is_relevant = True
-                                        if self.debug:
-                                            logger.debug(f"Container {container_id} matches tool ID {tool_id}")
-
-                                    if is_relevant:
-                                        if self.debug:
-                                            logger.debug(f"Found container {container_id} with image {image}")
-                                        # Stop this container
-                                        stop_cmd = f"docker stop {container_id}"
-                                        stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                                        if stop_result.returncode == 0:
-                                            success = True
-                                            logger.info(f"Stopped Docker container {container_id} with image {image}")
-
-                    # 3. Try a more generic approach - find all containers and check their command lines
-                    if not success:
-                        if self.debug:
-                            logger.debug(f"Trying to find Docker containers by inspecting all running containers")
-                        # Get all running containers
-                        find_cmd = "docker ps -a --format \"{{.ID}}|{{.Image}}|{{.Command}}\""
-                        result = subprocess.run(find_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                        if result.stdout.strip():
-                            for line in result.stdout.strip().split('\n'):
-                                parts = line.split('|')
-                                if len(parts) >= 3:
-                                    container_id = parts[0]
-                                    image = parts[1]
-                                    command = parts[2]
-
-                                    # Use the same logic as before to check if this is a relevant container
-                                    is_relevant = False
-                                    if docker_image and docker_image in image:
-                                        is_relevant = True
-                                        if self.debug:
-                                            logger.debug(f"Container {container_id} matches extracted image {docker_image}")
-                                    elif tool_id.lower() in image.lower() or tool_id.replace("_", "-").lower() in image.lower():
-                                        is_relevant = True
-                                        if self.debug:
-                                            logger.debug(f"Container {container_id} matches tool ID {tool_id}")
-                                    # Also check command for any matches
-                                    elif tool_id.lower() in command.lower() or tool_id.replace("_", "-").lower() in command.lower():
-                                        is_relevant = True
-                                        if self.debug:
-                                            logger.debug(f"Container {container_id} command matches tool ID {tool_id}")
-
-                                    if is_relevant:
-                                        if self.debug:
-                                            logger.debug(f"Found matching container {container_id} with image {image}")
-                                        # Stop this container
-                                        stop_cmd = f"docker stop {container_id}"
-                                        stop_result = subprocess.run(stop_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-                                        if stop_result.returncode == 0:
-                                            success = True
-                                            logger.info(f"Stopped Docker container {container_id} for {tool_id}")
-
-                    # 4. Last resort - kill the docker run process itself
-                    if not success and pid:
-                        if self.debug:
-                            logger.debug(f"Trying to kill the docker run process with PID {pid}")
-                        try:
-                            # Kill the docker run process
-                            if platform.system() == "Windows":
-                                subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
-                            else:
-                                # Unix approach - send SIGTERM to process group
-                                try:
-                                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-                                except ProcessLookupError:
-                                    # If process group not found, try killing just the process
-                                    os.kill(pid, signal.SIGTERM)
-
-                            # Wait a moment for the process to terminate
-                            time.sleep(0.5)
-
-                            # Check if the process is still running
-                            try:
-                                os.kill(pid, 0)  # Signal 0 doesn't kill the process, just checks if it exists
-                                # Process still exists, use SIGKILL
-                                if platform.system() != "Windows":
-                                    os.kill(pid, signal.SIGKILL)
-                            except ProcessLookupError:
-                                # Process already gone, good
-                                pass
-
-                            success = True
-                            logger.info(f"Killed docker run process with PID {pid} for {tool_id}")
-                        except Exception as e:
-                            logger.warning(f"Error killing docker run process with PID {pid}: {e}")
-            except Exception as e:
-                logger.warning(f"Error stopping Docker container for {tool_id}: {e}")
+                    logger.warning(f"Failed to stop or kill Docker container {docker_container_id} for {tool_id}")
 
         # Remove the PID file regardless of success
         self._remove_pid(tool_id)
