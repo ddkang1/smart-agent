@@ -9,6 +9,7 @@ A powerful AI agent chatbot that leverages external tools to augment its intelli
 - **Configuration-Driven**: Simple YAML configuration for all settings
 - **LiteLLM Support**: Easily connect to Claude, GPT, and other models
 - **CLI Interface**: Intuitive commands for all operations
+- **Web UI**: Streamlit-based web interface for easy interaction
 
 ## Overview
 
@@ -163,6 +164,20 @@ smart-agent chat
 ```
 
 In this mode, your `tools.yaml` contains URLs to remote tool services instead of localhost.
+
+### Web UI Mode
+
+Use the Streamlit-based web interface for the same functionality as the CLI chat client but in a web browser:
+
+```bash
+# Install with web UI support
+pip install "smart-agent[web]"
+
+# Start the web UI
+smart-agent web --config path/to/config.yaml --tools path/to/tools.yaml --port 8501
+```
+
+This will open a web browser with the Smart Agent UI, which is an exact reflection of the CLI chat client. The web UI automatically initializes using the provided config and tools paths, so there's no need to enter them again in the UI. It provides the same experience as the CLI chat client but in a graphical interface, making it useful for demonstrations and for users who prefer a web interface over the command line.
 
 ### Tool Management
 

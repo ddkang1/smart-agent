@@ -23,39 +23,41 @@ mcp_client_sse_logger = logging.getLogger('mcp.client.sse')
 # Set log levels to reduce verbosity
 httpx_logger.setLevel(logging.WARNING)
 mcp_client_sse_logger.setLevel(logging.WARNING)
+# Set openai.agents logger to CRITICAL to suppress ERROR messages
+openai_agents_logger.setLevel(logging.CRITICAL)
 
 # Create a filter to suppress specific error messages
-class SuppressSpecificErrorFilter(logging.Filter):
-    """Filter to suppress specific error messages in logs.
+# class SuppressSpecificErrorFilter(logging.Filter):
+#     """Filter to suppress specific error messages in logs.
 
-    This filter checks log messages against a list of patterns and
-    filters out any messages that match, preventing them from being
-    displayed to the user.
-    """
-    def filter(self, record) -> bool:
-        # Get the message from the record
-        message = record.getMessage()
+#     This filter checks log messages against a list of patterns and
+#     filters out any messages that match, preventing them from being
+#     displayed to the user.
+#     """
+#     def filter(self, record) -> bool:
+#         # Get the message from the record
+#         message = record.getMessage()
 
-        # List of error patterns to suppress
-        suppress_patterns = [
-            'Error cleaning up server: Attempted to exit a cancel scope',
-            'Event loop is closed',
-            'Task exception was never retrieved',
-            'AsyncClient.aclose',
-        ]
+#         # List of error patterns to suppress
+#         suppress_patterns = [
+#             'Error cleaning up server: Attempted to exit a cancel scope',
+#             'Event loop is closed',
+#             'Task exception was never retrieved',
+#             'AsyncClient.aclose',
+#         ]
 
-        # Check if any of the patterns are in the message
-        for pattern in suppress_patterns:
-            if pattern in message:
-                return False  # Filter out this message
+#         # Check if any of the patterns are in the message
+#         for pattern in suppress_patterns:
+#             if pattern in message:
+#                 return False  # Filter out this message
 
-        return True  # Keep this message
+#         return True  # Keep this message
 
-# Add the filter to various loggers
-openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
-asyncio_logger.addFilter(SuppressSpecificErrorFilter())
-httpx_logger.addFilter(SuppressSpecificErrorFilter())
-httpcore_logger.addFilter(SuppressSpecificErrorFilter())
+# # Add the filter to various loggers
+# openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
+# asyncio_logger.addFilter(SuppressSpecificErrorFilter())
+# httpx_logger.addFilter(SuppressSpecificErrorFilter())
+# httpcore_logger.addFilter(SuppressSpecificErrorFilter())
 
 # OpenAI and Agent imports
 from openai import AsyncOpenAI

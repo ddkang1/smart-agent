@@ -6,12 +6,21 @@ import json
 import asyncio
 import logging
 from typing import List, Dict, Any, Optional
+from collections import deque
 
 import click
 from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+from rich.text import Text
+from rich.live import Live
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Configure OpenAI client logger to suppress retry messages
+openai_logger = logging.getLogger("openai")
+openai_logger.setLevel(logging.WARNING)
 
 from ..tool_manager import ConfigManager
 from ..agent import SmartAgent, PromptGenerator
@@ -94,7 +103,7 @@ def run_chat_loop(config_manager: ConfigManager):
         # Create MCP server list for the agent
         mcp_servers = []
         for tool_id, tool_name, tool_url in enabled_tools:
-            print(f"Adding {tool_name} at {tool_url} to agent")
+            logger.info(f"Adding {tool_name} at {tool_url} to agent")
             mcp_servers.append(tool_url)
 
         # Create the agent - using SmartAgent wrapper class
@@ -105,10 +114,10 @@ def run_chat_loop(config_manager: ConfigManager):
             system_prompt=PromptGenerator.create_system_prompt(),
         )
 
-        print(f"Agent initialized with {len(mcp_servers)} tools")
+        logger.info(f"Agent initialized with {len(mcp_servers)} tools")
 
     except ImportError:
-        print(
+        logger.error(
             "Required packages not installed. Run 'pip install openai agent' to use the agent."
         )
         return
@@ -148,41 +157,119 @@ def run_chat_loop(config_manager: ConfigManager):
         # Add the user message to history
         conversation_history.append({"role": "user", "content": user_input})
 
-        # Get assistant response
-        # print("\nAssistant: ", end="", flush=True)
-
         try:
-            # Use the agent for streaming response
+            # Define the async function to run the agent
             async def run_agent():
-                # Add the user message to history
+                # Create a copy of the conversation history
                 history = conversation_history.copy()
-
+                
+                # Configure rich console for smoother output
+                rich_console = Console(soft_wrap=True, highlight=False)
+                
+                # Set stdout to line buffering for more immediate output
+                import sys
+                sys.stdout.reconfigure(line_buffering=True)
+                
+                # Create a buffer for tokens with type information
+                buffer = deque()
+                stream_ended = asyncio.Event()
+                current_type = "assistant"  # Default type is assistant message
+                
+                # Define constants for consistent output
+                output_interval = 0.05  # 50ms between outputs
+                output_size = 6  # Output 6 characters at a time
+                
+                # Define colors for different content types
+                type_colors = {
+                    "assistant": "green",
+                    "thought": "cyan",
+                    "tool_output": "bright_green",
+                    "tool": "yellow",
+                    "error": "red",
+                    "system": "magenta"
+                }
+                
+                
+                # Function to add content to buffer with type information
+                def add_to_buffer(content, content_type="assistant"):
+                    # Add special marker for type change
+                    if buffer and buffer[-1][1] != content_type:
+                        buffer.append(("TYPE_CHANGE", content_type))
+                    
+                    # Add each character with its type
+                    for char in content:
+                        buffer.append((char, content_type))
+                
+                # Function to stream output at a consistent rate with different colors
+                async def stream_output(buffer, interval, size, end_event):
+                    nonlocal current_type
+                    try:
+                        while not end_event.is_set() or buffer:  # Continue until signaled and buffer is empty
+                            if buffer:
+                                # Get a batch of tokens from the buffer
+                                batch = []
+                                current_batch_type = None
+                                
+                                for _ in range(min(size, len(buffer))):
+                                    if not buffer:
+                                        break
+                                        
+                                    item = buffer.popleft()
+                                    
+                                    # Handle type change marker
+                                    if item[0] == "TYPE_CHANGE":
+                                        if batch:  # Print current batch before changing type
+                                            rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                                            batch = []
+                                        current_type = item[1]
+                                        current_batch_type = current_type
+                                        continue
+                                    
+                                    # Initialize batch type if not set
+                                    if current_batch_type is None:
+                                        current_batch_type = item[1]
+                                    
+                                    # If type changes within batch, print current batch and start new one
+                                    if item[1] != current_batch_type:
+                                        rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                                        batch = [item[0]]
+                                        current_batch_type = item[1]
+                                    else:
+                                        batch.append(item[0])
+                                
+                                # Print any remaining batch content
+                                if batch:
+                                    rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
+                            
+                            await asyncio.sleep(interval)
+                    except asyncio.CancelledError:
+                        # Task cancellation is expected on completion
+                        pass
+                
+                # Track the assistant's response
+                assistant_reply = ""
+                
                 # Get the MCP server URLs
                 mcp_urls = [url for url in mcp_servers if isinstance(url, str)]
-
-                # Create the OpenAI client
-                client = AsyncOpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                )
-
-                # Import required classes
-                from agents.mcp import MCPServerSse, MCPServerStdio
+                
+                # Import required classes for MCP
+                from agents.mcp import MCPServerStdio
+                from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
                 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
-
+                
                 # Create MCP servers based on transport type
                 mcp_servers_objects = []
                 for tool_id, tool_config in config_manager.get_tools_config().items():
                     if not config_manager.is_tool_enabled(tool_id):
                         continue
-
+                    
                     transport_type = tool_config.get("transport", "stdio_to_sse").lower()
-
-                    # For SSE-based transports (stdio_to_sse, sse), use MCPServerSse
+                    
+                    # For SSE-based transports (stdio_to_sse, sse), use ReconnectingMCP
                     if transport_type in ["stdio_to_sse", "sse"]:
                         url = tool_config.get("url")
                         if url:
-                            mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
+                            mcp_servers_objects.append(ReconnectingMCP(name=tool_id, params={"url": url}))
                     # For stdio transport, use MCPServerStdio with the command directly
                     elif transport_type == "stdio":
                         command = tool_config.get("command")
@@ -216,40 +303,34 @@ def run_chat_loop(config_manager: ConfigManager):
                     # For any other transport types, log a warning
                     else:
                         logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
-
+                
                 # Connect to all MCP servers
                 for server in mcp_servers_objects:
                     await server.connect()
-
+                
                 try:
-                    # Create the agent directly like in research.py
-                    agent = Agent(
-                        name="Assistant",
-                        instructions=history[0]["content"] if history and history[0]["role"] == "system" else None,
-                        model=OpenAIChatCompletionsModel(
-                            model=model_name,
-                            openai_client=client,
-                        ),
+                    # Create the SmartAgent instead of direct Agent
+                    agent = SmartAgent(
+                        model_name=model_name,
+                        openai_client=client,
                         mcp_servers=mcp_servers_objects,
+                        system_prompt=history[0]["content"] if history and history[0]["role"] == "system" else None,
                     )
-
+                    
+                    # Print the assistant prefix with rich styling
+                    rich_console.print("\nAssistant: ", end="", style="bold green")
+                    
+                    # Start the streaming task
+                    streaming_task = asyncio.create_task(
+                        stream_output(buffer, output_interval, output_size, stream_ended)
+                    )
+                    
                     # Run the agent with the conversation history
-                    result = Runner.run_streamed(agent, history, max_turns=100)
-                    assistant_reply = ""
+                    # Access the underlying Agent instance from SmartAgent
+                    result = Runner.run_streamed(agent.agent, history, max_turns=100)
                     is_thought = False
-
-                    # Import rich for colorful output
-                    from rich.console import Console
-                    from rich.panel import Panel
-                    from rich.markdown import Markdown
-
-                    # Create a console for rich output
-                    rich_console = Console()
-                    # Set stdout to line buffering for more immediate output
-                    import sys
-                    sys.stdout.reconfigure(line_buffering=True)
-
-                    # Process the stream events with rich colorful output
+                    
+                    # Process the stream events with a holistic output approach
                     async for event in result.stream_events():
                         if event.type == "raw_response_event":
                             continue
@@ -262,49 +343,135 @@ def run_chat_loop(config_manager: ConfigManager):
                                     key, value = next(iter(arguments_dict.items()))
                                     if key == "thought":
                                         is_thought = True
-                                        rich_console.print(Panel(value, title="Thought", border_style="cyan", title_align="left"))
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
-                                        assistant_reply += "\n[thought]: " + value
+                                        
+                                        # Add the opening thought tag to the buffer with thought type
+                                        add_to_buffer("\n<thought>", "thought")
+                                        
+                                        # Add the thought content with thought type
+                                        add_to_buffer(str(value), "thought")
+                                        
+                                        # Add the closing thought tag with thought type
+                                        add_to_buffer("</thought>", "thought")
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<thought>{value}</thought>"
                                     else:
                                         is_thought = False
-                                        rich_console.print(Panel(value, title=key, border_style="yellow", title_align="left"))
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
+                                        
+                                        # Check if this is a code tool
+                                        if key == "code":
+                                            # Get code string
+                                            code_str = str(value)
+                                            
+                                            # Add tool call to buffer with tool type
+                                            tool_opening = f"\n<tool name=\"{key}\">"
+                                            add_to_buffer(tool_opening, "tool")
+                                            
+                                            # Add code with markdown formatting (no language specification)
+                                            add_to_buffer(f"\n```\n", "tool")
+                                            add_to_buffer(code_str, "tool")
+                                            add_to_buffer("\n```", "tool")
+                                            
+                                            add_to_buffer("</tool>", "tool")
+                                            
+                                            # Update assistant reply with formatted code (no language specification)
+                                            assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
+                                        else:
+                                            # Regular tool call
+                                            tool_opening = f"\n<tool name=\"{key}\">"
+                                            add_to_buffer(tool_opening, "tool")
+                                            add_to_buffer(str(value), "tool")
+                                            add_to_buffer("</tool>", "tool")
+                                            
+                                            # Update assistant reply
+                                            assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
                                 except (json.JSONDecodeError, StopIteration) as e:
-                                    rich_console.print(f"[bold red]Error parsing tool call:[/] {e}")
-                                    # Ensure output is flushed immediately
-                                    sys.stdout.flush()
+                                    # Add error to buffer with error type
+                                    error_text = f"Error parsing tool call: {e}"
+                                    add_to_buffer("\n<error>", "error")
+                                    add_to_buffer(error_text, "error")
+                                    add_to_buffer("</error>", "error")
+                                    
+                                    # Update assistant reply
+                                    assistant_reply += f"\n<error>{error_text}</error>"
                             elif event.item.type == "tool_call_output_item":
                                 if not is_thought:
                                     try:
                                         output_text = json.loads(event.item.output).get("text", "")
-                                        rich_console.print(Panel(output_text, title="Tool Output", border_style="green", title_align="left"))
+                                        
+                                        # Pause token streaming
+                                        stream_ended.set()
+                                        await streaming_task
+                                        
+                                        # Print tool output all at once
+                                        rich_console.print("\n<tool_output>", end="", style="bright_green bold")
+                                        rich_console.print(str(output_text), style="bright_green", end="")
+                                            
+                                        rich_console.print("</tool_output>", style="bright_green bold")
+                                        
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
+                                        
+                                        # Reset for continued streaming
+                                        stream_ended.clear()
+                                        streaming_task = asyncio.create_task(
+                                            stream_output(buffer, output_interval, output_size, stream_ended)
+                                        )
                                     except json.JSONDecodeError:
-                                        rich_console.print(Panel(event.item.output, title="Tool Output", border_style="green", title_align="left"))
+                                        # Pause token streaming
+                                        stream_ended.set()
+                                        await streaming_task
+                                        
+                                        # Print tool output all at once
+                                        rich_console.print("\n<tool_output>", end="", style="bright_green bold")
+                                        rich_console.print(str(event.item.output), style="bright_green", end="")
+                                            
+                                        rich_console.print("</tool_output>", style="bright_green bold")
+                                        
                                         # Ensure output is flushed immediately
                                         sys.stdout.flush()
+                                        
+                                        # Update assistant reply
+                                        assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
+                                        
+                                        # Reset for continued streaming
+                                        stream_ended.clear()
+                                        streaming_task = asyncio.create_task(
+                                            stream_output(buffer, output_interval, output_size, stream_ended)
+                                        )
                             elif event.item.type == "message_output_item":
                                 role = event.item.raw_item.role
                                 text_message = ItemHelpers.text_message_output(event.item)
                                 if role == "assistant":
-                                    # Try to render as markdown if possible
-                                    try:
-                                        rich_console.print(Panel(Markdown(text_message), title="Assistant", border_style="blue", title_align="left"))
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
-                                    except Exception:
-                                        rich_console.print(Panel(text_message, title="Assistant", border_style="blue", title_align="left"))
-                                        # Ensure output is flushed immediately
-                                        sys.stdout.flush()
-                                    assistant_reply += "\n[response]: " + text_message
+                                    # Add tokens to buffer for streaming with assistant type
+                                    add_to_buffer(text_message, "assistant")
+                                    assistant_reply += text_message
                                 else:
-                                    rich_console.print(Panel(text_message, title=role.capitalize(), border_style="magenta", title_align="left"))
-                                    # Ensure output is flushed immediately
-                                    sys.stdout.flush()
-
+                                    # Add system message to buffer with system type
+                                    add_to_buffer(f"\n<{role}>", "system")
+                                    add_to_buffer(str(text_message), "system")
+                                    add_to_buffer(f"</{role}>", "system")
+                                    
+                                    # Update assistant reply
+                                    assistant_reply += f"\n<{role}>{text_message}</{role}>"
+                                    
+                                    # Reset for continued streaming
+                                    stream_ended.clear()
+                                    streaming_task = asyncio.create_task(
+                                        stream_output(buffer, output_interval, output_size, stream_ended)
+                                    )
+                    
+                    # Signal that the stream has ended
+                    stream_ended.set()
+                    # Wait for the streaming task to finish processing the buffer
+                    await streaming_task
+                    
+                    # Add a newline after completion
+                    print()
+                    
                     return assistant_reply.strip()
                 finally:
                     # Clean up MCP servers
@@ -316,10 +483,9 @@ def run_chat_loop(config_manager: ConfigManager):
                                 else:
                                     server.cleanup()  # Call directly for sync cleanup
                             except Exception as e:
-                                print(f"Error during server cleanup: {e}")
+                                pass
 
             # Run the agent in an event loop
-            import asyncio
             assistant_response = asyncio.run(run_agent())
 
             # Append the assistant's response to maintain context
@@ -336,10 +502,10 @@ def run_chat_loop(config_manager: ConfigManager):
                         name="assistant_response",
                         model=model_name,
                         prompt=user_input,
-                        completion="Agent response (not captured)",
+                        completion=assistant_response,
                     )
                 except Exception as e:
-                    print(f"Langfuse logging error: {e}")
+                    logger.error(f"Langfuse logging error: {e}")
 
         except KeyboardInterrupt:
             print("\nOperation interrupted by user.")
@@ -348,7 +514,7 @@ def run_chat_loop(config_manager: ConfigManager):
             print("\nOperation cancelled.")
             continue
         except Exception as e:
-            print(f"\nError: {e}")
+            logger.error(f"Error: {e}")
             import traceback
             traceback.print_exc()
 
@@ -377,6 +543,10 @@ def chat(config, tools):
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config, tools_path=tools)
+    
+    # Configure logging using the config_manager
+    from ..cli import configure_logging
+    configure_logging(config_manager)
 
     # Run the chat loop
     run_chat_loop(config_manager)
