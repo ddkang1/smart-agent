@@ -329,7 +329,7 @@ async def handle_event(event, state):
                     thought_opening = "\n<thought>\n"
                     thought_closing = "\n</thought>"
                     
-                    # Stream tokens character by character like CLI
+                    # Stream tokens character by character like CLI for thoughts only
                     for char in thought_opening:
                         await state["assistant_msg"].stream_token(char)
                         state["buffer"].append((char, "thought"))
@@ -346,47 +346,15 @@ async def handle_event(event, state):
                         await asyncio.sleep(0.001)  # Small delay for visual effect
                 else:
                     # Format code without language specification
-                    # Assume any value in a code key is code
-                    if key == "code":
-                        # Format tool call with code block (no language specification)
-                        tool_opening = f"\n ``` \n"
-                        tool_closing = "\n ``` \n"
-                        
-                        # Stream tokens character by character like CLI
-                        for char in tool_opening:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        for char in value:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        for char in tool_closing:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
-                    else:
-                        # Format regular tool call like CLI does
-                        tool_opening = f"\n ``` \n"
-                        tool_closing = "\n ``` \n"
-                        
-                        # Stream tokens character by character like CLI
-                        for char in tool_opening:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        for char in value:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        for char in tool_closing:
-                            await state["assistant_msg"].stream_token(char)
-                            state["buffer"].append((char, "tool"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
+                    # Format regular tool call like CLI does
+                    tool_opening = f"\n ``` \n"
+                    tool_closing = "\n ``` \n"
+                    
+                    # Show all at once for non-thought items
+                    full_content = tool_opening + value + tool_closing
+                    await state["assistant_msg"].stream_token(full_content)
+                    for char in full_content:
+                        state["buffer"].append((char, "tool"))
             except Exception as e:
                 logger.error(f"Error processing tool call: {e}")
                 return
@@ -418,21 +386,11 @@ async def handle_event(event, state):
                     output_content = item.output
                     output_closing = "\n ``` \n"
                 
-                # Stream tokens character by character like CLI
-                for char in output_opening:
-                    await state["assistant_msg"].stream_token(char)
+                # Show tool output all at once
+                full_output = output_opening + output_content + output_closing
+                await state["assistant_msg"].stream_token(full_output)
+                for char in full_output:
                     state["buffer"].append((char, "tool_output"))
-                    await asyncio.sleep(0.001)  # Small delay for visual effect
-                    
-                for char in output_content:
-                    await state["assistant_msg"].stream_token(char)
-                    state["buffer"].append((char, "tool_output"))
-                    await asyncio.sleep(0.001)  # Small delay for visual effect
-                    
-                for char in output_closing:
-                    await state["assistant_msg"].stream_token(char)
-                    state["buffer"].append((char, "tool_output"))
-                    await asyncio.sleep(0.001)  # Small delay for visual effect
             except Exception as e:
                 logger.error(f"Error processing tool output: {e}")
                 return
