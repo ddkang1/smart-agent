@@ -23,10 +23,10 @@ from .commands.status import status
 from .commands.init import init
 from .commands.setup import setup, launch_litellm_proxy
 
-# Try to import web commands if dependencies are available
+# Try to import streamlit commands if dependencies are available
 try:
     import streamlit
-    from .commands.web import web
+    from .commands.streamlit import streamlit as streamlit_cmd
     has_streamlit = True
 except ImportError:
     has_streamlit = False
@@ -162,20 +162,20 @@ cli.add_command(status)
 cli.add_command(init)
 cli.add_command(setup)
 
-# Add web command if streamlit is available
+# Add streamlit command if streamlit is available
 if has_streamlit:
-    cli.add_command(web)
+    cli.add_command(streamlit_cmd, name="streamlit")
 else:
     # Create a placeholder command that shows installation instructions
-    @click.command(name="web")
-    def web_placeholder():
+    @click.command(name="streamlit")
+    def streamlit_placeholder():
         """Start Streamlit web interface (requires web dependencies)."""
         console.print("[bold yellow]Streamlit web dependencies not installed.[/]")
         console.print("To use this command, install web dependencies:")
         console.print("[bold]pip install 'smart-agent[web]'[/]")
 
     # Add placeholder command
-    cli.add_command(web_placeholder, name="web")
+    cli.add_command(streamlit_placeholder, name="streamlit")
 
 # Add chainlit command if chainlit is available
 if has_chainlit:
