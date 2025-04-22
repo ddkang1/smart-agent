@@ -351,6 +351,12 @@ async def handle_event(event, state):
                     tool_closing = "\n ``` \n"
                     
                     # Show all at once for non-thought items
+                    # Ensure value is a string before concatenation
+                    if isinstance(value, dict):
+                        value = json.dumps(value)
+                    elif not isinstance(value, str):
+                        value = str(value)
+                        
                     full_content = tool_opening + value + tool_closing
                     await state["assistant_msg"].stream_token(full_content)
                     for char in full_content:
