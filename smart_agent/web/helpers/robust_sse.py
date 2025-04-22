@@ -122,7 +122,7 @@ class RobustSSEConnection:
                     await self.event_queue.put(e)
                     break
                 
-                logger.warning(f"Error in SSE connection: {e}, will retry")
+                logger.debug(f"Error in SSE connection: {e}, will retry")
             
             except asyncio.CancelledError:
                 logger.debug("SSE connection task cancelled")
@@ -203,7 +203,7 @@ class RobustSSEConnection:
                     raise
                 
                 retry_delay_time = self.retry_delay * (2 ** (retry_count - 1))
-                logger.warning(
+                logger.debug(
                     f"Error sending message: {e}, retrying in {retry_delay_time:.1f}s "
                     f"(attempt {retry_count}/{self.max_retries})"
                 )
