@@ -5,6 +5,8 @@ Chat command implementation for the Smart Agent CLI.
 import json
 import asyncio
 import logging
+import readline
+import os
 from typing import List, Dict, Any, Optional
 from collections import deque
 
@@ -129,10 +131,27 @@ def run_chat_loop(config_manager: ConfigManager):
     # Initialize conversation history
     conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
 
+    # Set up readline for command history
+    history_file = os.path.expanduser("~/.smart_agent_history")
+    try:
+        readline.read_history_file(history_file)
+        # Set history length
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        # History file doesn't exist yet
+        pass
+        
+    # Enable arrow key navigation through history
+    readline.parse_and_bind('"\e[A": previous-history')  # Up arrow
+    readline.parse_and_bind('"\e[B": next-history')      # Down arrow
+    
     # Chat loop
     while True:
-        # Get user input
+        # Get user input with history support
         user_input = input("\nYou: ")
+        # Add non-empty inputs to history
+        if user_input.strip() and user_input.lower() not in ["exit", "quit", "clear"]:
+            readline.add_history(user_input)
 
         # Check for exit command
         if user_input.lower() in ["exit", "quit"]:
@@ -519,6 +538,12 @@ def run_chat_loop(config_manager: ConfigManager):
             traceback.print_exc()
 
     print("\nChat session ended")
+    
+    # Save command history
+    try:
+        readline.write_history_file(history_file)
+    except Exception as e:
+        logger.error(f"Error saving command history: {e}")
 
 
 
