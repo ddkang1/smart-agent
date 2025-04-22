@@ -154,7 +154,7 @@ class ReconnectingMCP(MCPServerSse):
             while True:
                 try:
                     if self._connected:
-                        await self.list_tools()
+                        await self.send_ping()
                 except Exception as e:
                     if isinstance(e, asyncio.CancelledError):
                         log.debug("Ping task cancelled")
@@ -225,6 +225,29 @@ class ReconnectingMCP(MCPServerSse):
             except Exception as e:
                 log.debug(f"Error closing exit stack: {e}")
 
+    async def send_ping(self):
+        """Send a ping request to check if the connection is alive.
+        
+        This is a lightweight alternative to list_tools() for health checks.
+        
+        Returns:
+            The empty result from the ping request
+        
+        Raises:
+            Exception: If the ping fails
+        """
+        try:
+            # Use the session attribute to send a ping request
+            if hasattr(self, 'session') and self.session:
+                await self.session.send_ping()
+                return True
+            else:
+                raise RuntimeError("No active session available for ping")
+        except (httpx.HTTPError, httpx.TimeoutException, ConnectionError, RuntimeError) as e:
+            log.warning(f"Connection error during ping: {e}")
+            self._connected = False
+            raise
+    
     async def call_tool(self, tool_name, arguments=None):
         """Override call_tool to handle connection issues."""
         try:
