@@ -9,7 +9,7 @@ A powerful AI agent chatbot that leverages external tools to augment its intelli
 - **Configuration-Driven**: Simple YAML configuration for all settings
 - **LiteLLM Support**: Easily connect to Claude, GPT, and other models
 - **CLI Interface**: Intuitive commands for all operations
-- **Web UI**: Streamlit-based web interface for easy interaction
+- **Web UI**: Chainlit-based web interface for easy interaction
 
 ## Overview
 
@@ -97,87 +97,138 @@ pip install -e .
 
 ## Usage
 
-Smart Agent provides multiple ways to use the tool based on your needs:
+Smart Agent follows a client-server architecture with a clear separation between server components (tools, LLM proxy) and client interfaces (chat, web UIs).
 
-### Quick Start (Single Session)
+### Setup and Configuration
 
-For development or quick testing, run Smart Agent with tools managed automatically:
+Before using Smart Agent, you need to set up your configuration:
 
 ```bash
 # Run the interactive setup wizard
 smart-agent setup --quick  # Setup (default is all options)
+```
 
-### After Quick Setup: Configure Your YAML Files
+After setup, you'll need to edit these files manually to configure your environment:
+1. **Edit `config/config.yaml`**: Main configuration including API settings
+2. **Edit `config/tools.yaml`**: Tool configuration
+3. **Edit `config/litellm_config.yaml`**: LLM provider configuration
 
-Quick setup just copies example files to your config directory. You'll need to edit these files manually to configure your environment:
+### Server Components
 
-1. **Edit `config/config.yaml`**:
-2. **Edit `config/tools.yaml`**:
-3. **Edit `config/litellm_config.yaml`**:
+The server components must be started before using any client interfaces:
 
-# Start required services (this must be done before chatting)
-smart-agent start# Start all required services (both tools and proxy)
+```bash
+# Start all required services (both tools and proxy)
+smart-agent start
 
-# Start chat session
+# Check status of running services
+smart-agent status
+
+# Stop all services
+smart-agent stop
+```
+
+### Client Interfaces
+
+Once the server components are running, you can use any of the client interfaces:
+
+#### CLI Chat Interface
+
+```bash
+# Start the command-line chat interface
 smart-agent chat
 ```
 
-Services must be explicitly started before chatting. The Smart Agent follows a 3-step procedure:
-1. **Setup**: Configure your environment
-2. **Start**: Launch the required services
-3. **Chat**: Begin your conversation with the agent
+#### Chainlit Web Interface
 
-### Development Mode (Persistent Services)
+```bash
+# Install Chainlit
+pip install chainlit
+
+# Start the Chainlit web interface
+smart-agent chainlit --port 8000 --host 127.0.0.1
+```
+
+### Usage Patterns
+
+#### Quick Start (Single Session)
+
+For development or quick testing:
+
+```bash
+# 1. Setup
+smart-agent setup --quick
+
+# 2. Start server components
+smart-agent start
+
+# 3. Start client interface
+smart-agent chat  # or chainlit
+```
+
+#### Development Mode (Persistent Services)
 
 For development when you need tools to stay running between chat sessions:
 
 ```bash
-# Terminal 1: First setup your configuration
-smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
-
-# Then launch tools and proxy services that keep running
+# Terminal 1: Start server components
 smart-agent start [--all|--tools|--proxy]  # Use --tools or --proxy to start specific services
 
-# Terminal 2: Start chat client that connects to running tools
-smart-agent chat
-
-# To stop or restart services
-smart-agent stop           # Stop all services
-smart-agent restart        # Restart all services
+# Terminal 2: Use client interfaces as needed
+smart-agent chat  # or chainlit
 ```
 
-This approach is useful for development when you want to keep tools running between chat sessions.
+#### Production Mode (Remote Tool Services)
 
-### Production Mode (Remote Tool Services)
-
-Connect to remote tool services running elsewhere (e.g., in production):
+Connect to remote tool services running elsewhere:
 
 ```bash
-# Create configuration through the interactive wizard
-smart-agent setup --quick  # Setup (default is all options)
-
 # Edit config/tools.yaml to use remote URLs
 # Example: url: "https://production-server.example.com/tool-name/sse"
 
-# Start chat client - will automatically detect remote tools
-smart-agent chat
+# Start client interface - will automatically connect to remote tools
+smart-agent chat  # or chainlit
 ```
 
-In this mode, your `tools.yaml` contains URLs to remote tool services instead of localhost.
+### Smart Agent Architecture
 
-### Web UI Mode
+Smart Agent follows a client-server architecture:
 
-Use the Streamlit-based web interface for the same functionality as the CLI chat client but in a web browser:
+#### Server Part
+
+The server components manage the tools, LLM proxy, and other background services:
 
 ```bash
-# Install with web UI support
-pip install "smart-agent[web]"
+# Start all services (tools and proxy)
+smart-agent start
 
-# Start the web UI
-smart-agent web --config path/to/config.yaml --tools path/to/tools.yaml --port 8501
+# Check status of running services
+smart-agent status
+
+# Stop all services
+smart-agent stop
 ```
 
-This will open a web browser with the Smart Agent UI, which is an exact reflection of the CLI chat client. The web UI automatically initializes using the provided config and tools paths, so there's no need to enter them again in the UI. It provides the same experience as the CLI chat client but in a graphical interface, making it useful for demonstrations and for users who prefer a web interface over the command line.
+#### Client Part
+
+The client components connect to the running services and provide different interfaces:
+
+1. **CLI Chat Interface**:
+   ```bash
+   # Start the command-line chat interface
+   smart-agent chat
+   ```
+
+2. **Chainlit Web Interface**:
+   ```bash
+   # Install Chainlit
+   pip install chainlit
+   
+   # Start the Chainlit web interface
+   smart-agent chainlit --port 8000 --host 127.0.0.1
+   ```
+
+Each client interface provides the same core functionality but with different user experiences. The Chainlit interface automatically initializes using the provided config and tools paths, providing a graphical alternative to the CLI chat client.
 
 ### Tool Management
 
@@ -185,33 +236,48 @@ Smart Agent provides a simple way to manage tools through YAML configuration:
 
 ```yaml
 # Example tools.yaml configuration
-mcp_think_tool:
-  enabled: true
-  url: "http://localhost:8000/sse"
-  command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+tools:
+  mcp_think_tool:
+    enabled: true
+    url: "http://localhost:8000/sse"
+    command: "uvx mcp-think --sse --host 0.0.0.0"
+    transport: stdio_to_sse
 
-ddg_mcp:
-  enabled: true
-  url: "http://localhost:8001/sse"
-  command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+  ddg_mcp:
+    enabled: true
+    url: "http://localhost:8001/sse"
+    command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+    transport: stdio_to_sse
 
-# Docker container-based tool example
-python_repl:
-  enabled: true
-  url: "http://localhost:8002/sse"
-  command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+  # Docker container-based tool example
+  python_repl:
+    enabled: true
+    url: "http://localhost:8002/sse"
+    command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+    transport: stdio_to_sse
 
-# Remote tool example
-remote_tool:
-  enabled: true
-  url: "https://api.remote-tool.com/sse"
+  # Remote tool example
+  remote_tool:
+    enabled: true
+    url: "https://api.remote-tool.com/sse"
+    transport: sse
 ```
+
+Each tool in the configuration can have the following properties:
+
+| Property | Description | Required |
+|----------|-------------|----------|
+| `enabled` | Whether the tool is enabled | Yes |
+| `transport` | Transport type: `stdio`, `sse`, `stdio_to_sse`, or `sse_to_stdio` | Yes |
+| `url` | URL for the tool's endpoint | For `sse`, `stdio_to_sse`, and `sse_to_stdio` |
+| `command` | Installation command for the tool | For `stdio` and `stdio_to_sse` |
 
 All tool management is done through the configuration files in the `config` directory:
 
 1. **Enable/Disable Tools**: Set `enabled: true` or `enabled: false` in your `tools.yaml` file
-2. **Configure URLs**: Set the appropriate URLs for each tool in `tools.yaml`
-3. **Tool Commands**: Specify the exact installation command for each tool
+2. **Configure Transport**: Set the appropriate transport type for each tool
+3. **Configure URLs**: Set the appropriate URLs for each tool in `tools.yaml`
+4. **Tool Commands**: Specify the exact installation command for each tool
 
 No command-line flags are needed - simply edit your configuration files and run the commands.
 
@@ -281,23 +347,27 @@ tools:
   mcp_think_tool:
     enabled: true
     url: "http://localhost:8000/sse"
-    command: "uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool"
+    command: "uvx mcp-think --sse --host 0.0.0.0"
+    transport: stdio_to_sse
 
   ddg_mcp:
     enabled: true
     url: "http://localhost:8001/sse"
-    command: "uvx --from git+https://github.com/example/tool example-tool"
+    command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
+    transport: stdio_to_sse
 
   # Docker container-based tool example
   python_repl:
     enabled: true
     url: "http://localhost:8002/sse"
     command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
+    transport: stdio_to_sse
 
   # Remote tool example
   remote_tool:
     enabled: true
     url: "https://api.remote-tool.com/sse"
+    transport: sse
 ```
 
 #### Tool Configuration Schema
@@ -306,27 +376,42 @@ Each tool in the YAML configuration can have the following properties:
 
 | Property | Description | Required |
 |----------|-------------|----------|
-| `enabled` | Whether the tool is enabled by default | Yes |
-| `url` | URL for the tool's endpoint | Yes |
-| `command` | Installation command for the tool | Yes |
-| `name` | Human-readable name | No (defaults to tool ID) |
-| `port` | Specific port to use | No (extracted from URL if not specified) |
-| `env_prefix` | Environment variable prefix | No (defaults to SMART_AGENT_TOOL_{TOOL_ID_UPPERCASE}) |
+| `enabled` | Whether the tool is enabled | Yes |
+| `transport` | Transport type: `stdio`, `sse`, `stdio_to_sse`, or `sse_to_stdio` | Yes |
+| `url` | URL for the tool's endpoint | For `sse`, `stdio_to_sse`, and `sse_to_stdio` |
+| `command` | Installation command for the tool | For `stdio` and `stdio_to_sse` |
 
-#### Tool Types
+#### Tool Architecture: Server and Client Parts
 
-Smart Agent supports two types of tools:
-- **Remote SSE Tools**: Tools that are already running and accessible via a remote URL
-- **Local stdio Tools**: Tools that need to be launched locally and converted to SSE
+Tools in Smart Agent follow a server-client architecture:
 
-For local stdio tools, Smart Agent uses [supergateway](https://github.com/supercorp-ai/supergateway) to automatically convert them to SSE. This approach allows for seamless integration with various MCP tools without requiring them to natively support SSE.
+1. **Server Part**: The actual tool implementation that runs as a service
+   - Requires a `command` to launch the tool server (for local tools)
+   - Runs independently and exposes an API endpoint
+   - Can be local or remote
 
-The `command` field specifies the exact installation command for the tool. Smart Agent will automatically add port parameters to this command:
+2. **Client Part**: The Smart Agent's connection to the tool
+   - Requires a `url` to connect to the tool server
+   - Does not need a `command` when connecting to remote tools
+   - Uses the specified `transport` type to communicate
+
+#### Transport Types
+
+Smart Agent supports four transport types:
+
+- **stdio**: Direct stdio communication (no supergateway, no port/URL needed)
+- **sse**: Remote SSE tools (no local launching needed, client-only)
+- **stdio_to_sse**: Convert stdio to SSE using supergateway (server + client)
+- **sse_to_stdio**: Convert SSE to stdio using supergateway (client-only)
+
+For `stdio_to_sse` transport, Smart Agent uses [supergateway](https://github.com/supercorp-ai/supergateway) to automatically convert stdio tools to SSE. This approach allows for seamless integration with various MCP tools without requiring them to natively support SSE.
+
+The `command` field is only required for server-side tools that need to be launched locally. Examples include:
 - For Docker commands: `docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest`
-- For UVX commands: `uvx --from git+https://github.com/ddkang1/mcp-think-tool mcp-think-tool`
+- For UVX commands: `uvx mcp-think --sse --host 0.0.0.0`
 - For NPX commands: `npx my-tool`
 
-All local tools are treated as stdio tools and converted to SSE using supergateway, regardless of their type setting in the configuration.
+For client-only tools (like remote SSE tools with `transport: sse`), no `command` is needed as the tool server is already running elsewhere.
 
 ## Configuration Management
 
