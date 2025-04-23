@@ -1,5 +1,5 @@
 """
-OpenAI MCP Chat - Combines OpenAI agents with MCP connection management in a continuous chat loop.
+Chat command implementation for the Smart Agent CLI.
 """
 
 import asyncio
@@ -30,9 +30,10 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 # Import OpenAI agents components
-from agents import Agent, Runner, gen_trace_id, trace, ItemHelpers
+from agents import Agent, Runner, set_tracing_disabled, ItemHelpers
 from agents.mcp import MCPServer, MCPServerSse
 from agents import OpenAIChatCompletionsModel
+set_tracing_disabled(disabled=True)
 
 # Import OpenAI client
 from openai import AsyncOpenAI
@@ -167,13 +168,14 @@ class SmartAgent:
         
         return mcp_servers
 
-    async def process_query(self, query: str, history: List[Dict[str, str]] = None) -> str:
+    async def process_query(self, query: str, history: List[Dict[str, str]] = None, custom_event_handler=None) -> str:
         """
         Process a query using the OpenAI agent with MCP tools.
 
         Args:
             query: The user's query
             history: Optional conversation history
+            custom_event_handler: Optional custom event handler function for streaming events
 
         Returns:
             The agent's response
@@ -296,6 +298,47 @@ class SmartAgent:
             
             # Process the stream events with a holistic output approach
             async for event in result.stream_events():
+                # If a custom event handler is provided, use it exclusively
+                if custom_event_handler:
+                    try:
+                        await custom_event_handler(event)
+                        
+                        # Still update assistant_reply for the return value
+                        # This ensures we return a complete response even when using custom handler
+                        if event.type == "run_item_stream_event":
+                            if event.item.type == "tool_call_item":
+                                try:
+                                    arguments_dict = json.loads(event.item.raw_item.arguments)
+                                    key, value = next(iter(arguments_dict.items()))
+                                    if key == "thought":
+                                        assistant_reply += f"\n<thought>{value}</thought>"
+                                    else:
+                                        if key == "code":
+                                            code_str = str(value)
+                                            assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
+                                        else:
+                                            assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
+                                except (json.JSONDecodeError, StopIteration):
+                                    pass
+                            elif event.item.type == "tool_call_output_item":
+                                try:
+                                    output_text = json.loads(event.item.output).get("text", "")
+                                    assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
+                                except json.JSONDecodeError:
+                                    assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
+                            elif event.item.type == "message_output_item":
+                                role = event.item.raw_item.role
+                                text_message = ItemHelpers.text_message_output(event.item)
+                                if role == "assistant":
+                                    assistant_reply += text_message
+                                else:
+                                    assistant_reply += f"\n<{role}>{text_message}</{role}>"
+                    except Exception as e:
+                        logger.error(f"Error in custom event handler: {e}")
+                    # Skip normal processing when using custom handler
+                    continue
+                
+                # Normal processing (only used when no custom handler is provided)
                 if event.type == "raw_response_event":
                     continue
                 elif event.type == "agent_updated_stream_event":

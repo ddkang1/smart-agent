@@ -29,7 +29,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
-from smart_agent.agent import SmartAgent, PromptGenerator
+from smart_agent.agent import PromptGenerator
+from smart_agent.commands.chat import SmartAgent
 from smart_agent.web.helpers.setup import create_translation_files
 
 # Import optional dependencies
@@ -258,13 +259,23 @@ async def on_chat_start():
         # Store connected servers in user session
         cl.user_session.mcp_servers_objects = connected_servers
 
-        # Create the agent - using SmartAgent wrapper class
-        smart_agent = SmartAgent(
-            model_name=model_name,
-            openai_client=client,
-            mcp_servers=connected_servers,
-            system_prompt=system_prompt,
-        )
+        # Create the agent - using SmartAgent class from chat.py
+        smart_agent = SmartAgent(config_manager=cl.user_session.config_manager)
+        
+        # Set required properties
+        smart_agent.api_key = api_key
+        smart_agent.base_url = base_url
+        smart_agent.model_name = model_name
+        smart_agent.temperature = temperature
+        smart_agent.system_prompt = system_prompt
+        
+        # Initialize OpenAI client
+        smart_agent.openai_client = client
+        
+        # Store connected servers in the SmartAgent
+        # Note: We're not using setup_mcp_servers() here because we've already
+        # created and connected to the MCP servers above
+        smart_agent.mcp_servers = connected_servers
 
         # Store the agent in user session
         cl.user_session.smart_agent = smart_agent
@@ -439,13 +450,22 @@ async def on_message(msg: cl.Message):
         conv.clear()
         conv.append({"role": "system", "content": PromptGenerator.create_system_prompt()})
         
-        # Reset the agent - using SmartAgent wrapper class
-        smart_agent = SmartAgent(
-            model_name=cl.user_session.model_name,
-            openai_client=cl.user_session.client,
-            mcp_servers=cl.user_session.mcp_servers_objects,
-            system_prompt=PromptGenerator.create_system_prompt(),
-        )
+        # Reset the agent - using SmartAgent class from chat.py
+        smart_agent = SmartAgent(config_manager=cl.user_session.config_manager)
+        
+        # Set required properties
+        smart_agent.api_key = cl.user_session.config_manager.get_api_key()
+        smart_agent.base_url = cl.user_session.config_manager.get_api_base_url()
+        smart_agent.model_name = cl.user_session.model_name
+        smart_agent.temperature = cl.user_session.temperature
+        smart_agent.system_prompt = PromptGenerator.create_system_prompt()
+        
+        # Initialize OpenAI client
+        smart_agent.openai_client = cl.user_session.client
+        
+        # Store connected servers in the SmartAgent
+        # Note: We're using the already connected servers
+        smart_agent.mcp_servers = cl.user_session.mcp_servers_objects
         
         cl.user_session.smart_agent = smart_agent
         await cl.Message(content="Conversation history cleared", author="System").send()
@@ -475,16 +495,6 @@ async def on_message(msg: cl.Message):
         # Define constants for consistent output like CLI
         output_interval = 0.05  # 50ms between outputs
         output_size = 6  # Output 6 characters at a time
-        
-        # Define colors for different content types like CLI
-        type_colors = {
-            "assistant": "green",
-            "thought": "cyan",
-            "tool_output": "bright_green",
-            "tool": "yellow",
-            "error": "red",
-            "system": "magenta"
-        }
         
         # Function to stream output at a consistent rate with different colors like CLI
         async def stream_output():
@@ -526,16 +536,28 @@ async def on_message(msg: cl.Message):
         # Start the streaming task
         streaming_task = asyncio.create_task(stream_output())
         
-        # Run the agent with the conversation history
-        result = Runner.run_streamed(cl.user_session.smart_agent.agent, conv, max_turns=100)
-        assistant_reply = ""
-        
-        # Process the stream events
-        async for ev in result.stream_events():
-            await handle_event(ev, state)
+        # Create a custom event handler to integrate with Chainlit UI
+        async def custom_event_handler(event):
+            await handle_event(event, state)
             
-        # Update the assistant message with final content
-        await assistant_msg.update()
+        # Process the query with the full conversation history using streaming
+        try:
+            # Use the process_query method from SmartAgent which now supports custom event handlers
+            assistant_reply = await cl.user_session.smart_agent.process_query(
+                user_input,
+                conv,
+                custom_event_handler=custom_event_handler
+            )
+            
+            # The assistant_reply will contain the final text response
+            # We don't need to update the message content here as it's already been
+            # updated incrementally through the custom_event_handler
+            
+            # Add the assistant's response to conversation history
+            conv.append({"role": "assistant", "content": assistant_reply})
+        except Exception as e:
+            logger.exception(f"Error processing query: {e}")
+            await assistant_msg.update(content=f"Error: {e}")
         
         # Cancel the streaming task
         streaming_task.cancel()
@@ -543,10 +565,7 @@ async def on_message(msg: cl.Message):
             await streaming_task
         except asyncio.CancelledError:
             pass
-        
-        # Add assistant message to conversation history
-        conv.append({"role": "assistant", "content": assistant_msg.content})
-        
+                
         # Log to Langfuse if enabled
         if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
             try:
@@ -566,9 +585,6 @@ async def on_message(msg: cl.Message):
     except Exception as e:
         logger.exception(f"Error processing stream events: {e}")
         await cl.Message(content=f"Error: {e}", author="System").send()
-    finally:
-        if hasattr(result, "aclose"):
-            await result.aclose()
 
 @cl.on_chat_end
 async def on_chat_end():
