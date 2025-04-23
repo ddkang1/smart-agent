@@ -49,16 +49,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def configure_logging(config_manager=None):
+def configure_logging(config_manager=None, debug=False):
     """Configure logging based on settings from config_manager.
     
     Args:
         config_manager: Optional ConfigManager instance. If not provided,
                        default logging settings will be used.
+        debug: If True, set log level to DEBUG regardless of config settings.
     """
     if config_manager:
         log_level_str = config_manager.get_log_level()
         log_file = config_manager.get_log_file()
+        
+        # If debug flag is set, override log level to DEBUG
+        if debug:
+            log_level_str = "DEBUG"
         
         # Convert string log level to logging constant
         log_level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -85,6 +90,9 @@ def configure_logging(config_manager=None):
         # Always keep backoff logger at WARNING or higher to suppress retry messages
         backoff_logger = logging.getLogger('backoff')
         backoff_logger.setLevel(logging.WARNING)
+        
+        # Log the current logging level
+        logger.debug(f"Logging level set to {log_level_str}")
 
 # Configure logging for various libraries to suppress specific error messages
 openai_agents_logger = logging.getLogger('openai.agents')

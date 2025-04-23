@@ -558,20 +558,26 @@ def run_chat_loop(config_manager: ConfigManager):
     default=None,
     help="Path to tools configuration file",
 )
-def chat(config, tools):
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable debug logging",
+)
+def chat(config, tools, debug):
     """
     Start a chat session with the agent.
 
     Args:
         config: Path to configuration file
         tools: Path to tools configuration file
+        debug: Enable debug logging
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config, tools_path=tools)
     
     # Configure logging using the config_manager
     from ..cli import configure_logging
-    configure_logging(config_manager)
+    configure_logging(config_manager, debug)
 
     # Run the chat loop
     run_chat_loop(config_manager)
