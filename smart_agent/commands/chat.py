@@ -172,6 +172,10 @@ def run_chat_loop(config_manager: ConfigManager):
             )
             print("Conversation history cleared")
             continue
+            
+        # Skip empty or whitespace-only inputs
+        if not user_input.strip():
+            continue
 
         # Add the user message to history
         conversation_history.append({"role": "user", "content": user_input})
