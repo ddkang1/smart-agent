@@ -108,15 +108,16 @@ def run_chat_loop(config_manager: ConfigManager):
             logger.info(f"Adding {tool_name} at {tool_url} to agent")
             mcp_servers.append(tool_url)
 
-        # Create the agent - using SmartAgent wrapper class
-        smart_agent = SmartAgent(
+        # Create the agent - using SmartAgent wrapper class with empty MCP servers list
+        # We'll connect to MCP servers in each run_agent() call
+        agent = SmartAgent(
             model_name=model_name,
             openai_client=client,
-            mcp_servers=mcp_servers,
+            mcp_servers=[],  # Initialize with empty list, will be populated in run_agent
             system_prompt=PromptGenerator.create_system_prompt(),
         )
 
-        logger.info(f"Agent initialized with {len(mcp_servers)} tools")
+        logger.info(f"Agent initialized with model {model_name}")
 
     except ImportError:
         logger.error(
@@ -163,13 +164,8 @@ def run_chat_loop(config_manager: ConfigManager):
             # Reset the conversation history
             conversation_history = [{"role": "system", "content": PromptGenerator.create_system_prompt()}]
 
-            # Reset the agent - using SmartAgent wrapper class
-            smart_agent = SmartAgent(
-                model_name=model_name,
-                openai_client=client,
-                mcp_servers=mcp_servers,
-                system_prompt=PromptGenerator.create_system_prompt(),
-            )
+            # Reset the agent with a new system prompt
+            agent.system_prompt = PromptGenerator.create_system_prompt()
             print("Conversation history cleared")
             continue
             
@@ -277,7 +273,9 @@ def run_chat_loop(config_manager: ConfigManager):
                 
                 # Import required classes for MCP
                 from agents.mcp import MCPServerStdio
-                from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
+                from agents.mcp.server import MCPServerSse
+                # from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
+
                 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
                 
                 # Create MCP servers based on transport type
@@ -292,7 +290,7 @@ def run_chat_loop(config_manager: ConfigManager):
                     if transport_type in ["stdio_to_sse", "sse"]:
                         url = tool_config.get("url")
                         if url:
-                            mcp_servers_objects.append(ReconnectingMCP(name=tool_id, params={"url": url}))
+                            mcp_servers_objects.append(MCPServerSse(name=tool_id, params={"url": url}))
                     # For stdio transport, use MCPServerStdio with the command directly
                     elif transport_type == "stdio":
                         command = tool_config.get("command")
@@ -332,13 +330,6 @@ def run_chat_loop(config_manager: ConfigManager):
                     await server.connect()
                 
                 try:
-                    # Create the SmartAgent instead of direct Agent
-                    agent = SmartAgent(
-                        model_name=model_name,
-                        openai_client=client,
-                        mcp_servers=mcp_servers_objects,
-                        system_prompt=history[0]["content"] if history and history[0]["role"] == "system" else None,
-                    )
                     
                     # Print the assistant prefix with rich styling
                     rich_console.print("\nAssistant: ", end="", style="bold green")
@@ -348,9 +339,17 @@ def run_chat_loop(config_manager: ConfigManager):
                         stream_output(buffer, output_interval, output_size, stream_ended)
                     )
                     
+                    # Create a new Agent instance for this run with the connected MCP servers
+                    # This ensures we have fresh connections for each run
+                    run_agent = SmartAgent(
+                        model_name=model_name,
+                        openai_client=client,
+                        mcp_servers=mcp_servers_objects,
+                        system_prompt=history[0]["content"] if history and history[0]["role"] == "system" else None,
+                    )
+                    
                     # Run the agent with the conversation history
-                    # Access the underlying Agent instance from SmartAgent
-                    result = Runner.run_streamed(agent.agent, history, max_turns=100)
+                    result = Runner.run_streamed(run_agent.agent, history, max_turns=100)
                     is_thought = False
                     
                     # Process the stream events with a holistic output approach
