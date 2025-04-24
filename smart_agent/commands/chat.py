@@ -168,7 +168,7 @@ class SmartAgent:
         
         return mcp_servers
 
-    async def process_query(self, query: str, history: List[Dict[str, str]] = None, custom_event_handler=None) -> str:
+    async def process_query(self, query: str, history: List[Dict[str, str]] = None, custom_event_handler=None, agent=None) -> str:
         """
         Process a query using the OpenAI agent with MCP tools.
 
@@ -176,6 +176,7 @@ class SmartAgent:
             query: The user's query
             history: Optional conversation history
             custom_event_handler: Optional custom event handler function for streaming events
+            agent: The Agent instance to use for processing the query
 
         Returns:
             The agent's response
@@ -272,16 +273,9 @@ class SmartAgent:
         # Track the assistant's response
         assistant_reply = ""
         
-        # Create an agent with the current model settings
-        agent = Agent(
-            name="Assistant",
-            instructions=self.system_prompt,
-            model=OpenAIChatCompletionsModel(
-                model=self.model_name,
-                openai_client=self.openai_client,
-            ),
-            mcp_servers=self.mcp_servers,
-        )
+        # Ensure we have an agent
+        if agent is None:
+            raise ValueError("Agent must be provided to process_query")
         
         # Print the assistant prefix with rich styling
         rich_console.print("\nAssistant: ", end="", style="bold green")
@@ -520,11 +514,6 @@ class SmartAgent:
         
         # Chat loop
         async with AsyncExitStack() as exit_stack:
-            # Connect to all MCP servers
-            for server in self.mcp_servers:
-                await exit_stack.enter_async_context(server)
-                logger.info(f"Connected to MCP server: {server.name}")
-            
             while True:
                 # Get user input with history support
                 user_input = input("\nYou: ")
@@ -553,8 +542,27 @@ class SmartAgent:
                 self.conversation_history.append({"role": "user", "content": user_input})
                 
                 try:
-                    # Process the query with the full conversation history
-                    response = await self.process_query(user_input, self.conversation_history)
+                    # Set up MCP servers for this query
+                    mcp_servers = []
+                    for server in self.mcp_servers:
+                        # Create a fresh connection for each server
+                        connected_server = await exit_stack.enter_async_context(server)
+                        mcp_servers.append(connected_server)
+                        logger.info(f"Connected to MCP server: {connected_server.name}")
+                    
+                    # Create a fresh agent for each query
+                    agent = Agent(
+                        name="Assistant",
+                        instructions=self.system_prompt,
+                        model=OpenAIChatCompletionsModel(
+                            model=self.model_name,
+                            openai_client=self.openai_client,
+                        ),
+                        mcp_servers=mcp_servers,
+                    )
+                    
+                    # Process the query with the full conversation history and fresh agent
+                    response = await self.process_query(user_input, self.conversation_history, agent=agent)
                     
                     # Add the assistant's response to history
                     self.conversation_history.append({"role": "assistant", "content": response})
