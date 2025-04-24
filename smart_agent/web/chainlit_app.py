@@ -542,11 +542,23 @@ async def on_message(msg: cl.Message):
             
         # Process the query with the full conversation history using streaming
         try:
+            # Create a fresh agent for this query
+            agent = Agent(
+                name="Assistant",
+                instructions=cl.user_session.smart_agent.system_prompt,
+                model=OpenAIChatCompletionsModel(
+                    model=cl.user_session.model_name,
+                    openai_client=cl.user_session.client,
+                ),
+                mcp_servers=cl.user_session.mcp_servers_objects,
+            )
+            
             # Use the process_query method from SmartAgent which now supports custom event handlers
             assistant_reply = await cl.user_session.smart_agent.process_query(
                 user_input,
                 conv,
-                custom_event_handler=custom_event_handler
+                custom_event_handler=custom_event_handler,
+                agent=agent  # Pass the fresh agent
             )
             
             # The assistant_reply will contain the final text response
