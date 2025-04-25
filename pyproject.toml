@@ -25,7 +25,7 @@ dependencies = [
     "python-dotenv",
     "pyyaml>=6.0",
     "uv",
-    "openai-agents==0.0.11",
+    "openai-agents==0.0.13",
     "rich",
     "mcp[cli]>=1.6",
     "backoff>=2.2.1",

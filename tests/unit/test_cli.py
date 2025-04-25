@@ -6,14 +6,12 @@ from unittest.mock import patch, MagicMock, call
 import sys
 import pytest
 
-from smart_agent.commands.setup import launch_litellm_proxy
-
 
 class TestCliCommands:
     """Test suite for Smart Agent CLI commands."""
 
     @patch("smart_agent.commands.start.start_tools")
-    @patch("smart_agent.commands.setup.launch_litellm_proxy")
+    @patch("smart_agent.proxy_manager.ProxyManager.launch_litellm_proxy")
     def test_start_cmd_functionality(self, mock_launch_proxy, mock_launch_tools):
         """Test the functionality of start command without calling the Click command."""
         # Import here to avoid circular imports
@@ -42,9 +40,6 @@ class TestCliCommands:
                 # Verify that launch_tools was called
                 assert mock_launch_tools.called
 
-                # Directly call launch_litellm_proxy to verify it works
-                from smart_agent.commands.setup import launch_litellm_proxy
-                launch_litellm_proxy(mock_config_manager, True)
                 # Verify that launch_litellm_proxy was called
                 assert mock_launch_proxy.called
 
@@ -60,30 +55,6 @@ class TestCliCommands:
         # Verify stop_all_processes was called
         assert mock_stop_all.called
 
-    @patch("os.path.exists")
-    def test_setup_cmd_functionality(self, mock_exists):
-        """Test the functionality of setup command without calling the Click command."""
-        # Import here to avoid circular imports
-        from smart_agent.commands.init import init
-
-        # Configure mock_exists to return True for example files
-        def exists_side_effect(path):
-            if "example" in str(path):
-                return True
-            return False
-
-        mock_exists.side_effect = exists_side_effect
-
-        # Mock the init_config and init_tools methods
-        with patch("smart_agent.tool_manager.ConfigManager.init_config", return_value="/path/to/config.yaml"):
-            with patch("smart_agent.tool_manager.ConfigManager.init_tools", return_value="/path/to/tools.yaml"):
-                # We need to patch sys.exit to prevent the test from exiting
-                with patch("sys.exit"):
-                    # Call the internal functionality directly
-                    init.callback(config=None, tools=None)
-
-        # Verify that files were checked
-        assert mock_exists.called
 
     @pytest.mark.skip(reason="Need to fix this test")
     @patch("subprocess.Popen")
@@ -157,8 +128,8 @@ class TestCliCommands:
 
     @patch("subprocess.Popen")
     @patch("os.path.exists", return_value=True)
-    def test_launch_litellm_proxy(self, mock_exists, mock_popen):
-        """Test launch_litellm_proxy function."""
+    def test_proxy_manager_launch_litellm_proxy(self, mock_exists, mock_popen):
+        """Test ProxyManager.launch_litellm_proxy function."""
         # Create a mock config manager with required methods
         mock_config_manager = MagicMock()
 
@@ -176,8 +147,12 @@ class TestCliCommands:
         # Create a background parameter
         background = True
 
+        # Create a proxy manager instance
+        from smart_agent.proxy_manager import ProxyManager
+        proxy_manager = ProxyManager()
+
         # Call the function
-        result = launch_litellm_proxy(mock_config_manager, background)
+        result = proxy_manager.launch_litellm_proxy(mock_config_manager, background)
 
         # Verify subprocess.Popen was called to launch the proxy
         assert mock_popen.called

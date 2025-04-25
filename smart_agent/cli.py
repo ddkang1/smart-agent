@@ -9,6 +9,7 @@ including chat, tool management, and configuration handling.
 # Standard library imports
 import sys
 import logging
+import os
 
 # Third-party imports
 import click
@@ -21,15 +22,6 @@ from .commands.start import start
 from .commands.stop import stop
 from .commands.status import status
 from .commands.init import init
-from .commands.setup import setup, launch_litellm_proxy
-
-# Try to import streamlit commands if dependencies are available
-try:
-    import streamlit
-    from .commands.streamlit import streamlit as streamlit_cmd
-    has_streamlit = True
-except ImportError:
-    has_streamlit = False
 
 try:
     import chainlit
@@ -111,39 +103,6 @@ mcp_client_sse_logger.setLevel(logging.WARNING)
 # Set openai.agents logger to CRITICAL to suppress ERROR messages
 openai_agents_logger.setLevel(logging.CRITICAL)
 
-# Create a filter to suppress specific error messages
-# class SuppressSpecificErrorFilter(logging.Filter):
-#     """Filter to suppress specific error messages in logs.
-
-#     This filter checks log messages against a list of patterns and
-#     filters out any messages that match, preventing them from being
-#     displayed to the user.
-#     """
-#     def filter(self, record) -> bool:
-#         # Get the message from the record
-#         message = record.getMessage()
-
-#         # List of error patterns to suppress
-#         suppress_patterns = [
-#             'Error cleaning up server: Attempted to exit a cancel scope',
-#             'Event loop is closed',
-#             'Task exception was never retrieved',
-#             'AsyncClient.aclose',
-#         ]
-
-#         # Check if any of the patterns are in the message
-#         for pattern in suppress_patterns:
-#             if pattern in message:
-#                 return False  # Filter out this message
-
-#         return True  # Keep this message
-
-# # Add the filter to various loggers
-# openai_agents_logger.addFilter(SuppressSpecificErrorFilter())
-# asyncio_logger.addFilter(SuppressSpecificErrorFilter())
-# httpx_logger.addFilter(SuppressSpecificErrorFilter())
-# httpcore_logger.addFilter(SuppressSpecificErrorFilter())
-
 # Initialize console for rich output
 console = Console()
 
@@ -168,22 +127,6 @@ cli.add_command(start)
 cli.add_command(stop)
 cli.add_command(status)
 cli.add_command(init)
-cli.add_command(setup)
-
-# Add streamlit command if streamlit is available
-if has_streamlit:
-    cli.add_command(streamlit_cmd, name="streamlit")
-else:
-    # Create a placeholder command that shows installation instructions
-    @click.command(name="streamlit")
-    def streamlit_placeholder():
-        """Start Streamlit web interface (requires web dependencies)."""
-        console.print("[bold yellow]Streamlit web dependencies not installed.[/]")
-        console.print("To use this command, install web dependencies:")
-        console.print("[bold]pip install 'smart-agent[web]'[/]")
-
-    # Add placeholder command
-    cli.add_command(streamlit_placeholder, name="streamlit")
 
 # Add chainlit command if chainlit is available
 if has_chainlit:
@@ -216,9 +159,59 @@ else:
     cli.add_command(chainlit_ui_placeholder, name="chainlit")
 
 
+def check_config_exists(ctx, cmd_name):
+    """
+    Check if config.yaml exists in the current directory or if --config option is provided.
+    
+    Args:
+        ctx: Click context
+        cmd_name: Command name being executed
+    
+    Returns:
+        True if config exists or init command is being run, False otherwise
+    """
+    # Skip check for init command
+    if cmd_name == "init":
+        return True
+        
+    # Check if --config option is provided
+    params = ctx.params
+    if params.get("config") and os.path.exists(params["config"]):
+        return True
+        
+    # Check if config.yaml exists in current directory
+    if os.path.exists(os.path.join(os.getcwd(), "config.yaml")):
+        return True
+        
+    # Config not found, show message
+    console.print("[bold yellow]Configuration file not found![/]")
+    console.print("Please run [bold]smart-agent init[/] to create a configuration file")
+    console.print("or specify a config file with [bold]--config[/] option.")
+    return False
+
+
 def main():
     """Main entry point for the CLI."""
     try:
+        # Get the original command
+        cmd_name = sys.argv[1] if len(sys.argv) > 1 else None
+        
+        # Create a new Click context
+        ctx = click.Context(cli)
+        
+        # Parse parameters to get --config option if provided
+        try:
+            cli.parse_args(ctx, sys.argv[1:])
+        except:
+            # Ignore parsing errors, we just need to extract --config if present
+            pass
+            
+        # Check if config exists for commands that need it
+        if cmd_name in ["start", "stop", "status", "chat", "chainlit"]:
+            if not check_config_exists(ctx, cmd_name):
+                sys.exit(1)
+                
+        # Run the CLI command
         cli()
     except Exception as e:
         console.print(f"[bold red]Error:[/] {e}")

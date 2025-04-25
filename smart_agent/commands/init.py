@@ -20,7 +20,7 @@ console = Console()
 
 def initialize_config_files(
     config_manager: ConfigManager,
-) -> Tuple[str, str]:
+) -> str:
     """
     Initialize configuration files.
 
@@ -28,13 +28,12 @@ def initialize_config_files(
         config_manager: Configuration manager instance
 
     Returns:
-        Tuple of (config_file_path, tools_file_path)
+        Path to the config file
     """
-    # Initialize configuration files
+    # Initialize configuration file
     config_file = config_manager.init_config()
-    tools_file = config_manager.init_tools()
 
-    return config_file, tools_file
+    return config_file
 
 
 @click.command()
@@ -43,29 +42,22 @@ def initialize_config_files(
     default=None,
     help="Path to configuration file",
 )
-@click.option(
-    "--tools",
-    default=None,
-    help="Path to tools configuration file",
-)
-def init(config, tools):
+def init(config):
     """
-    Initialize configuration files.
+    Initialize configuration file.
 
     Args:
         config: Path to configuration file
-        tools: Path to tools configuration file
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)
 
-    # Initialize configuration files
-    config_file, tools_file = initialize_config_files(config_manager)
+    # Initialize configuration file
+    config_file = initialize_config_files(config_manager)
 
     # Print success message
     console.print(f"[green]Initialized configuration file: {config_file}[/]")
-    console.print(f"[green]Initialized tools configuration file: {tools_file}[/]")
-    console.print("\n[bold]Edit these files to configure the agent and tools.[/]")
+    console.print("\n[bold]Edit this file to configure the agent and tools.[/]")
 
     # Print next steps
     console.print("\n[bold]Next steps:[/]")

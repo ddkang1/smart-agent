@@ -104,14 +104,20 @@ Smart Agent follows a client-server architecture with a clear separation between
 Before using Smart Agent, you need to set up your configuration:
 
 ```bash
-# Run the interactive setup wizard
-smart-agent setup --quick  # Setup (default is all options)
+# Initialize configuration files
+smart-agent init
 ```
 
-After setup, you'll need to edit these files manually to configure your environment:
-1. **Edit `config/config.yaml`**: Main configuration including API settings
-2. **Edit `config/tools.yaml`**: Tool configuration
-3. **Edit `config/litellm_config.yaml`**: LLM provider configuration
+This will create a config.yaml file in your current directory with default settings. The configuration file includes:
+1. **LLM settings**: API base URL, model name, temperature, etc.
+2. **Tools configuration**: All tool settings are directly in the main config file
+3. **Logging settings**: Log level and file path
+
+After initialization, edit the config.yaml file to customize your settings:
+```bash
+# Edit the configuration file
+nano config.yaml
+```
 
 ### Server Components
 
@@ -156,8 +162,8 @@ smart-agent chainlit --port 8000 --host 127.0.0.1
 For development or quick testing:
 
 ```bash
-# 1. Setup
-smart-agent setup --quick
+# 1. Initialize configuration
+smart-agent init
 
 # 2. Start server components
 smart-agent start
@@ -283,13 +289,14 @@ No command-line flags are needed - simply edit your configuration files and run 
 
 ## Configuration
 
-Smart Agent uses YAML configuration files located in the `config` directory:
+Smart Agent uses a single YAML configuration file:
 
-- `config.yaml` - Main configuration file
-- `tools.yaml` - Tool configuration
-- `litellm_config.yaml` - LLM provider configuration
+- `config.yaml` - Contains all configuration including LLM settings, tools, and logging options
+- `litellm_config.yaml` - Optional LiteLLM provider configuration
 
-The configuration system has been refactored to eliminate duplication between files. The main config now references the LiteLLM config file for model definitions, creating a single source of truth.
+The configuration files are created in the current working directory when you run `smart-agent init`.
+
+The configuration system has been simplified to use a single file for most settings, reducing confusion and duplication.
 
 ### LiteLLM Proxy
 
@@ -311,20 +318,16 @@ By default, the LiteLLM proxy binds to `0.0.0.0:4000`, allowing connections from
 The main configuration file (`config/config.yaml`) has the following structure:
 
 ```yaml
-# API Configuration
-api:
-  provider: "proxy"  # Options: anthropic, bedrock, proxy
-  # Using localhost, 127.0.0.1, or 0.0.0.0 in base_url will automatically start a local LiteLLM proxy
-  base_url: "http://0.0.0.0:4000"
-
-# Model Configuration
-model:
-  name: "claude-3-7-sonnet-20240229"
-  temperature: 0.0
+# LLM API Configuration
+llm:
+  base_url: "http://localhost:4000"  # Base URL for LLM API (local LiteLLM proxy)
+  model: "claude-3-7-sonnet-20240229"  # Model to use for generation
+  api_key: "api_key"  # API key for local LiteLLM proxy
+  temperature: 0.0  # Temperature for generation (0.0-1.0)
 
 # Logging Configuration
 logging:
-  level: "INFO"
+  level: "INFO"  # Logging level (DEBUG, INFO, WARNING, ERROR)
   file: null  # Set to a path to log to a file
 
 # Monitoring Configuration
@@ -333,34 +336,26 @@ monitoring:
     enabled: false
     host: "https://cloud.langfuse.com"
 
-# Include tools configuration
-tools_config: "config/tools.yaml"
+# Tools Configuration
+tools:
+  think:
+    enabled: true
+    url: "http://localhost:8000/sse"
+    command: "uvx mcp-think --sse --host 0.0.0.0"
+    transport: stdio_to_sse
 ```
 
-### Tool Configuration
+### Tool Configuration Structure
 
-Tools are configured in `config/tools.yaml` with the following structure:
+Tools are configured directly in the main `config.yaml` file under the `tools` section:
 
 ```yaml
-# Example tools.yaml configuration
+# Example tool configuration
 tools:
   mcp_think_tool:
     enabled: true
     url: "http://localhost:8000/sse"
     command: "uvx mcp-think --sse --host 0.0.0.0"
-    transport: stdio_to_sse
-
-  ddg_mcp:
-    enabled: true
-    url: "http://localhost:8001/sse"
-    command: "uvx --from git+https://github.com/ddkang1/ddg-mcp ddg-mcp"
-    transport: stdio_to_sse
-
-  # Docker container-based tool example
-  python_repl:
-    enabled: true
-    url: "http://localhost:8002/sse"
-    command: "docker run -i --rm --pull=always -v ./data:/mnt/data/ ghcr.io/ddkang1/mcp-py-repl:latest"
     transport: stdio_to_sse
 
   # Remote tool example
@@ -415,19 +410,21 @@ For client-only tools (like remote SSE tools with `transport: sse`), no `command
 
 ## Configuration Management
 
-Smart Agent uses YAML configuration files to manage settings and tools. The configuration is split into two main files:
+Smart Agent uses a single YAML configuration file to manage all settings. The configuration file includes:
 
-1. **config.yaml** - Contains API settings, model configurations, and logging options
-2. **tools.yaml** - Contains tool-specific settings including URLs and storage paths
+1. **LLM settings** - API base URL, model name, temperature, etc.
+2. **Tools configuration** - All tool settings including URLs, commands, and transport types
+3. **Logging settings** - Log level and file path
 
-The Smart Agent CLI provides commands to help manage these configuration files:
+To get started, initialize the configuration and customize it:
 
 ```bash
-# Run the setup wizard to create configuration files
-smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
-```
+# Initialize configuration
+smart-agent init
 
-The setup wizard will guide you through creating configuration files based on examples.
+# Edit the configuration file
+nano config.yaml
+```
 
 ## Development
 
@@ -447,8 +444,11 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install development dependencies
 pip install -e ".[dev]"
 
-# Run the setup wizard to create configuration files
-smart-agent setup [--all|--quick|--config|--tools|--litellm]  # Setup (default is all options)
+# Initialize configuration
+smart-agent init
+
+# Edit the configuration file
+nano config.yaml
 ```
 
 ### Running Tests

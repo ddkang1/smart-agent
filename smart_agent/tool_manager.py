@@ -74,11 +74,11 @@ class ConfigManager:
         """
         Load configuration from YAML file.
         """
-        # Default config paths to check
+        # Default config paths to check - prioritize current directory
         default_paths = [
             self.config_path,
-            os.path.join(os.getcwd(), "config", "config.yaml"),
             os.path.join(os.getcwd(), "config.yaml"),
+            os.path.join(os.getcwd(), "config", "config.yaml"),
             os.path.expanduser("~/.config/smart-agent/config.yaml"),
         ]
 
@@ -93,40 +93,10 @@ class ConfigManager:
                         self.config = yaml.safe_load(f) or {}
                     log_message(f"Loaded configuration from {path}", "INFO")
 
-                    # Load tools configuration
-                    tools_config_path = self.tools_path or self.config.get("tools_config")
-                    if tools_config_path:
-                        if not os.path.isabs(tools_config_path):
-                            # Make path relative to the config file
-                            config_dir = os.path.dirname(path)
-
-                            # Fix for config/tools.yaml style paths when config file is already in the config directory
-                            if tools_config_path.startswith("config/") and os.path.basename(config_dir) == "config":
-                                # Remove the "config/" prefix to avoid duplication
-                                tools_config_path = tools_config_path[7:]  # length of "config/"
-
-                            tools_config_path = os.path.join(
-                                config_dir, tools_config_path
-                            )
-
-                        if os.path.exists(tools_config_path):
-                            with open(tools_config_path, "r") as f:
-                                self.tools_config = yaml.safe_load(f).get("tools", {})
-                            log_message(
-                                f"Loaded tools configuration from {tools_config_path}", "INFO"
-                            )
-                        else:
-                            log_message(
-                                f"Tools configuration file not found: {tools_config_path}", "WARNING"
-                            )
-                            # Try an alternative path construction as fallback
-                            alternate_path = os.path.join(os.path.dirname(config_dir), tools_config_path)
-                            if os.path.exists(alternate_path):
-                                with open(alternate_path, "r") as f:
-                                    self.tools_config = yaml.safe_load(f).get("tools", {})
-                                log_message(
-                                    f"Loaded tools configuration from alternate path: {alternate_path}", "INFO"
-                                )
+                    # Load tools configuration directly from config
+                    self.tools_config = self.config.get("tools", {})
+                    if self.tools_config:
+                        log_message("Loaded tools configuration from main config file", "INFO")
 
                     # Load LiteLLM configuration if available
                     self.litellm_config = self._load_litellm_config()
@@ -607,8 +577,18 @@ class ConfigManager:
         """
         litellm_config_path = self.config.get("llm", {}).get("config_file")
         if not litellm_config_path:
-            # Default fallback path
-            return os.path.join(os.getcwd(), "config", "litellm_config.yaml")
+            # Default fallback paths - prioritize current directory
+            default_paths = [
+                os.path.join(os.getcwd(), "litellm_config.yaml"),
+                os.path.join(os.getcwd(), "config", "litellm_config.yaml")
+            ]
+            
+            for path in default_paths:
+                if os.path.exists(path):
+                    return path
+                    
+            # If no file exists, return the default path in current directory
+            return os.path.join(os.getcwd(), "litellm_config.yaml")
 
         # Handle relative paths
         if not os.path.isabs(litellm_config_path):
@@ -622,7 +602,6 @@ class ConfigManager:
 
         return litellm_config_path
 
-
     def init_config(self) -> str:
         """
         Initialize the config file.
@@ -630,62 +609,24 @@ class ConfigManager:
         Returns:
             Path to the config file
         """
-        config_dir = os.path.dirname(self.config_path) if self.config_path else os.path.join(os.getcwd(), "config")
-        os.makedirs(config_dir, exist_ok=True)
-        config_file = os.path.join(config_dir, "config.yaml")
+        # Create config file in the current working directory
+        config_file = os.path.join(os.getcwd(), "config.yaml")
 
         # Create a default config file if it doesn't exist
         if not os.path.exists(config_file):
-            with open(config_file, "w") as f:
-                f.write("# Smart Agent Configuration\n")
-                f.write("api:\n")
-                f.write("  key: \"\"  # Your API key\n")
-                f.write("  base_url: \"https://api.openai.com/v1\"\n")
-                f.write("model:\n")
-                f.write("  name: \"gpt-4o\"\n")
-                f.write("  temperature: 0.7\n")
+            # Get the path to the example config file in the package
+            package_dir = os.path.dirname(os.path.abspath(__file__))
+            example_config = os.path.join(package_dir, "config", "config.yaml.example")
+            
+            # Copy the example config file
+            import shutil
+            try:
+                shutil.copy(example_config, config_file)
+                logger.info(f"Copied example config from {example_config} to {config_file}")
+            except FileNotFoundError:
+                logger.error(f"Example config file not found at {example_config}")
+                raise FileNotFoundError(f"Example config file not found at {example_config}. "
+                                       "This indicates an installation issue with smart-agent.")
 
         return config_file
 
-    def init_tools(self) -> str:
-        """
-        Initialize the tools config file.
-
-        Returns:
-            Path to the tools config file
-        """
-        config_dir = os.path.dirname(self.config_path) if self.config_path else os.path.join(os.getcwd(), "config")
-        os.makedirs(config_dir, exist_ok=True)
-        tools_file = os.path.join(config_dir, "tools.yaml")
-
-        # Create a default tools file if it doesn't exist
-        if not os.path.exists(tools_file):
-            with open(tools_file, "w") as f:
-                f.write("# Smart Agent Tools Configuration\n")
-                f.write("search_tool:\n")
-                f.write("  enabled: false\n")
-                f.write("  name: \"Search Tool\"\n")
-                f.write("  description: \"Search the web for information\"\n")
-                f.write("  command: \"npx search-tool --port {port}\"\n")
-                f.write("  url: \"http://localhost:{port}/sse\"\n")
-
-        return tools_file
-
-
-# For backward compatibility
-class ToolManager(ConfigManager):
-    """
-    Legacy class for backward compatibility.
-    """
-
-    def __init__(self, config_path: Optional[str] = None):
-        super().__init__(config_path)
-
-    def get_mcp_servers(self) -> List:
-        """
-        Get all initialized MCP servers.
-
-        Returns:
-            List of MCP server objects
-        """
-        return []
