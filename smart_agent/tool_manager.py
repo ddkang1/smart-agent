@@ -127,7 +127,6 @@ class ConfigManager:
                 except Exception as e:
                     log_message(f"Error loading configuration from {path}: {e}", "ERROR")
 
-        log_message("No configuration file found. Using default settings.", "WARNING")
         self.config = {}
 
     def _load_litellm_config(self):
@@ -618,7 +617,6 @@ class ConfigManager:
             import shutil
             try:
                 shutil.copy(example_config, config_file)
-                logger.info(f"Copied example config from {example_config} to {config_file}")
             except FileNotFoundError:
                 logger.error(f"Example config file not found at {example_config}")
                 raise FileNotFoundError(f"Example config file not found at {example_config}. "
