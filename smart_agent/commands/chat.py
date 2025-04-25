@@ -605,26 +605,20 @@ class SmartAgent:
     help="Path to configuration file",
 )
 @click.option(
-    "--tools",
-    default=None,
-    help="Path to tools configuration file",
-)
-@click.option(
     "--debug",
     is_flag=True,
     help="Enable debug logging",
 )
-def chat(config, tools, debug):
+def chat(config, debug):
     """
     Start a chat session with the agent.
 
     Args:
         config: Path to configuration file
-        tools: Path to tools configuration file
         debug: Enable debug logging
     """
     # Create configuration manager
-    config_manager = ConfigManager(config_path=config, tools_path=tools)
+    config_manager = ConfigManager(config_path=config)
     
     # Configure logging
     from ..cli import configure_logging

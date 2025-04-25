@@ -315,8 +315,8 @@ def start(config, background, debug):
 
     Args:
         config: Path to configuration file
-        tools: Path to tools configuration file
         background: Whether to run in background
+        debug: Enable debug mode for verbose logging
     """
     # Create configuration manager
     config_manager = ConfigManager(config_path=config)

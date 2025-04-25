@@ -87,11 +87,6 @@ def stop_tools(
     help="Path to configuration file",
 )
 @click.option(
-    "--tools",
-    default=None,
-    help="Path to tools configuration file",
-)
-@click.option(
     "--all",
     is_flag=True,
     help="Stop all processes, including those not in the configuration",
@@ -102,13 +97,12 @@ def stop_tools(
     default=False,
     help="Enable debug mode for verbose logging",
 )
-def stop(config, tools, all, debug):
+def stop(config, all, debug):
     """
     Stop all tool services.
 
     Args:
         config: Path to configuration file
-        tools: Path to tools configuration file
         all: Stop all processes, including those not in the configuration
     """
     # Create configuration manager

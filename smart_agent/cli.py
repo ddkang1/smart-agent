@@ -173,11 +173,20 @@ def check_config_exists(ctx, cmd_name):
     # Skip check for init command
     if cmd_name == "init":
         return True
-        
+    
     # Check if --config option is provided
     params = ctx.params
-    if params.get("config") and os.path.exists(params["config"]):
-        return True
+    if params.get("config"):
+        # Handle relative paths by joining with current working directory if needed
+        config_path = params["config"]
+        
+        if not os.path.isabs(config_path):
+            config_path = os.path.join(os.getcwd(), config_path)
+        
+        if os.path.exists(config_path):
+            # Update the params with the absolute path
+            params["config"] = config_path
+            return True
         
     # Check if config.yaml exists in current directory
     if os.path.exists(os.path.join(os.getcwd(), "config.yaml")):
@@ -199,7 +208,20 @@ def main():
         # Create a new Click context
         ctx = click.Context(cli)
         
-        # Parse parameters to get --config option if provided
+        # Manually check for --config option in sys.argv
+        config_path = None
+        for i, arg in enumerate(sys.argv):
+            if arg == "--config" and i + 1 < len(sys.argv):
+                config_path = sys.argv[i + 1]
+                break
+        
+        # If config_path is found, add it to ctx.params
+        if config_path:
+            if not hasattr(ctx, 'params') or ctx.params is None:
+                ctx.params = {}
+            ctx.params['config'] = config_path
+        
+        # Parse parameters to get other options if provided
         try:
             cli.parse_args(ctx, sys.argv[1:])
         except:

@@ -641,7 +641,6 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
     parser.add_argument("--config", type=str, default=None, help="Path to configuration file")
-    parser.add_argument("--tools", type=str, default=None, help="Path to tools configuration file")
 
     args = parser.parse_args()
 

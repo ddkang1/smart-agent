@@ -55,17 +55,15 @@ class ConfigManager:
     Manages configuration for Smart Agent based on YAML configuration.
     """
 
-    def __init__(self, config_path: Optional[str] = None, tools_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None):
         """
         Initialize the ConfigManager.
 
         Args:
             config_path: Path to the YAML configuration file. If None, will look in default locations.
-            tools_path: Path to the tools configuration file. If None, will use the path specified in the config file.
         """
         self.config = {}
         self.config_path = config_path
-        self.tools_path = tools_path
         self.tools_config = {}
         self.litellm_config = {}
         self._load_config()
@@ -78,8 +76,6 @@ class ConfigManager:
         default_paths = [
             self.config_path,
             os.path.join(os.getcwd(), "config.yaml"),
-            os.path.join(os.getcwd(), "config", "config.yaml"),
-            os.path.expanduser("~/.config/smart-agent/config.yaml"),
         ]
 
         # Filter out None values
