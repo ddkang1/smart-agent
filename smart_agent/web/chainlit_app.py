@@ -30,7 +30,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
-from smart_agent.commands.chat import SmartAgent
+from smart_agent.core.web_agent import WebSmartAgent
 from smart_agent.web.helpers.setup import create_translation_files
 
 # Import optional dependencies
@@ -114,68 +114,17 @@ async def on_chat_start():
         ).send()
         return
 
-    # Get model configuration
-    model_name = cl.user_session.config_manager.get_model_name()
-    temperature = cl.user_session.config_manager.get_model_temperature()
-
-    # Get Langfuse configuration
-    langfuse_config = cl.user_session.config_manager.get_langfuse_config()
-    langfuse_enabled = langfuse_config.get("enabled", False)
-    langfuse = None
-
-    # Initialize Langfuse if enabled
-    if langfuse_enabled:
-        try:
-            from langfuse import Langfuse
-
-            langfuse = Langfuse(
-                public_key=langfuse_config.get("public_key", ""),
-                secret_key=langfuse_config.get("secret_key", ""),
-                host=langfuse_config.get("host", "https://cloud.langfuse.com"),
-            )
-            await cl.Message(content="Langfuse monitoring enabled", author="System").send()
-        except ImportError:
-            await cl.Message(
-                content="Langfuse package not installed. Run 'pip install langfuse' to enable monitoring.",
-                author="System"
-            ).send()
-            langfuse_enabled = False
-
     try:
-        # Import required libraries
-        from openai import AsyncOpenAI
-
-        # Initialize AsyncOpenAI client
-        client = AsyncOpenAI(
-            base_url=base_url,
-            api_key=api_key,
-        )
-
-        # Get enabled tools
-        enabled_tools = []
-        for tool_id, tool_config in cl.user_session.config_manager.get_tools_config().items():
-            if cl.user_session.config_manager.is_tool_enabled(tool_id):
-                tool_url = cl.user_session.config_manager.get_tool_url(tool_id)
-                tool_name = tool_config.get("name", tool_id)
-                enabled_tools.append((tool_id, tool_name, tool_url))
-
-        # Create MCP server list for the agent
-        mcp_servers = []
-        for tool_id, tool_name, tool_url in enabled_tools:
-            # await cl.Message(content=f"Adding {tool_name} at {tool_url} to agent", author="System").send()
-            mcp_servers.append(tool_url)
-
+        # Create the WebSmartAgent
+        smart_agent = WebSmartAgent(config_manager=cl.user_session.config_manager)
+        
         # Initialize conversation history with system prompt
         system_prompt = PromptGenerator.create_system_prompt()
         cl.user_session.conversation_history = [{"role": "system", "content": system_prompt}]
-
-        # Store configuration in user session
-        cl.user_session.client = client
-        cl.user_session.model_name = model_name
-        cl.user_session.mcp_servers = mcp_servers
-        cl.user_session.langfuse = langfuse
-        cl.user_session.langfuse_enabled = langfuse_enabled
-        cl.user_session.temperature = temperature
+        
+        # Get model configuration
+        model_name = cl.user_session.config_manager.get_model_name()
+        temperature = cl.user_session.config_manager.get_model_temperature()
 
         # Create MCP server objects
         mcp_servers_objects = []
@@ -227,63 +176,19 @@ async def on_chat_start():
             else:
                 logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
 
-        # Connect to all MCP servers with timeout and retry
-        connected_servers = []
-        for server in mcp_servers_objects:
-            try:
-                # Use a timeout for connection
-                connection_task = asyncio.create_task(server.connect())
-                await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
-                
-                # For ReconnectingMCP, verify connection is established
-                if isinstance(server, ReconnectingMCP):
-                    # Wait for ping to verify connection
-                    await asyncio.sleep(1)
-                    if not server._connected:
-                        # await cl.Message(content=f"Connection to {server.name} not fully established. Skipping.", author="System").send()
-                        continue
-                
-                connected_servers.append(server)
-                # await cl.Message(content=f"Connected to {server.name}", author="System").send()
-            except asyncio.TimeoutError:
-                await cl.Message(content=f"Timeout connecting to MCP server {server.name}", author="System").send()
-                # Cancel the connection task
-                connection_task.cancel()
-                try:
-                    await connection_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            except Exception as e:
-                await cl.Message(content=f"Error connecting to MCP server {server.name}: {e}", author="System").send()
-
-        # Store connected servers in user session
-        cl.user_session.mcp_servers_objects = connected_servers
-
-        # Create the agent - using SmartAgent class from chat.py
-        smart_agent = SmartAgent(config_manager=cl.user_session.config_manager)
+        # Connect to MCP servers
+        connected_servers = await smart_agent.connect_mcp_servers(mcp_servers_objects)
         
-        # Set required properties
-        smart_agent.api_key = api_key
-        smart_agent.base_url = base_url
-        smart_agent.model_name = model_name
-        smart_agent.temperature = temperature
-        smart_agent.system_prompt = system_prompt
-        
-        # Initialize OpenAI client
-        smart_agent.openai_client = client
-        
-        # Store connected servers in the SmartAgent
-        # Note: We're not using setup_mcp_servers() here because we've already
-        # created and connected to the MCP servers above
+        # Store connected servers in the WebSmartAgent
         smart_agent.mcp_servers = connected_servers
-
-        # Store the agent in user session
+        
+        # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
-
-        # await cl.Message(
-        #     content=f"Agent initialized with {len(connected_servers)} tools",
-        #     author="System"
-        # ).send()
+        cl.user_session.mcp_servers_objects = connected_servers
+        cl.user_session.model_name = model_name
+        cl.user_session.temperature = temperature
+        cl.user_session.langfuse_enabled = smart_agent.langfuse_enabled
+        cl.user_session.langfuse = smart_agent.langfuse
 
     except ImportError:
         await cl.Message(
@@ -299,19 +204,7 @@ async def on_chat_start():
 
         # Make sure to clean up resources
         if hasattr(cl.user_session, 'mcp_servers_objects'):
-            for server in cl.user_session.mcp_servers_objects:
-                try:
-                    if hasattr(server, 'cleanup') and callable(server.cleanup):
-                        if asyncio.iscoroutinefunction(server.cleanup):
-                            await server.cleanup()
-                        else:
-                            server.cleanup()
-                except Exception as cleanup_error:
-                    logger.warning(f"Error during server cleanup: {cleanup_error}")
-            
-        # Force garbage collection to ensure resources are freed
-        import gc
-        gc.collect()
+            await smart_agent.cleanup_mcp_servers(cl.user_session.mcp_servers_objects)
 
 async def handle_event(event, state):
     """Handle events from the agent.
@@ -450,24 +343,10 @@ async def on_message(msg: cl.Message):
         conv.clear()
         conv.append({"role": "system", "content": PromptGenerator.create_system_prompt()})
         
-        # Reset the agent - using SmartAgent class from chat.py
-        smart_agent = SmartAgent(config_manager=cl.user_session.config_manager)
-        
-        # Set required properties
-        smart_agent.api_key = cl.user_session.config_manager.get_api_key()
-        smart_agent.base_url = cl.user_session.config_manager.get_api_base_url()
-        smart_agent.model_name = cl.user_session.model_name
-        smart_agent.temperature = cl.user_session.temperature
-        smart_agent.system_prompt = PromptGenerator.create_system_prompt()
-        
-        # Initialize OpenAI client
-        smart_agent.openai_client = cl.user_session.client
-        
-        # Store connected servers in the SmartAgent
-        # Note: We're using the already connected servers
-        smart_agent.mcp_servers = cl.user_session.mcp_servers_objects
-        
+        # Reset the agent
+        smart_agent = WebSmartAgent(config_manager=cl.user_session.config_manager)
         cl.user_session.smart_agent = smart_agent
+        
         await cl.Message(content="Conversation history cleared", author="System").send()
         return
     
@@ -492,92 +371,32 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        # Define constants for consistent output like CLI
-        output_interval = 0.05  # 50ms between outputs
-        output_size = 6  # Output 6 characters at a time
+        # Create a fresh agent for this query
+        agent = Agent(
+            name="Assistant",
+            instructions=cl.user_session.smart_agent.system_prompt,
+            model=OpenAIChatCompletionsModel(
+                model=cl.user_session.model_name,
+                openai_client=cl.user_session.smart_agent.openai_client,
+            ),
+            mcp_servers=cl.user_session.mcp_servers_objects,
+        )
         
-        # Function to stream output at a consistent rate with different colors like CLI
-        async def stream_output():
-            try:
-                while True:
-                    if state["buffer"]:
-                        # Get a batch of tokens from the buffer
-                        batch = []
-                        current_batch_type = None
-                        
-                        for _ in range(min(output_size, len(state["buffer"]))):
-                            if not state["buffer"]:
-                                break
-                                
-                            item = state["buffer"].pop(0)
-                            
-                            # Initialize batch type if not set
-                            if current_batch_type is None:
-                                current_batch_type = item[1]
-                            
-                            # If type changes within batch, process current batch and start new one
-                            if item[1] != current_batch_type:
-                                # Process batch
-                                batch = [item[0]]
-                                current_batch_type = item[1]
-                            else:
-                                batch.append(item[0])
-                        
-                        # Process any remaining batch content
-                        if batch:
-                            # In Chainlit, we stream tokens directly
-                            pass
-                    
-                    await asyncio.sleep(output_interval)
-            except asyncio.CancelledError:
-                # Task cancellation is expected on completion
-                pass
-        
-        # Start the streaming task
-        streaming_task = asyncio.create_task(stream_output())
-        
-        # Create a custom event handler to integrate with Chainlit UI
+        # Define a custom event handler to integrate with Chainlit UI
         async def custom_event_handler(event):
             await handle_event(event, state)
             
-        # Process the query with the full conversation history using streaming
-        try:
-            # Create a fresh agent for this query
-            agent = Agent(
-                name="Assistant",
-                instructions=cl.user_session.smart_agent.system_prompt,
-                model=OpenAIChatCompletionsModel(
-                    model=cl.user_session.model_name,
-                    openai_client=cl.user_session.client,
-                ),
-                mcp_servers=cl.user_session.mcp_servers_objects,
-            )
-            
-            # Use the process_query method from SmartAgent which now supports custom event handlers
-            assistant_reply = await cl.user_session.smart_agent.process_query(
-                user_input,
-                conv,
-                custom_event_handler=custom_event_handler,
-                agent=agent  # Pass the fresh agent
-            )
-            
-            # The assistant_reply will contain the final text response
-            # We don't need to update the message content here as it's already been
-            # updated incrementally through the custom_event_handler
-            
-            # Add the assistant's response to conversation history
-            conv.append({"role": "assistant", "content": assistant_reply})
-        except Exception as e:
-            logger.exception(f"Error processing query: {e}")
-            await assistant_msg.update(content=f"Error: {e}")
+        # Process the query with the web-specific method
+        assistant_reply = await cl.user_session.smart_agent.process_query_for_web(
+            user_input,
+            conv,
+            agent=agent,
+            event_handler=custom_event_handler
+        )
         
-        # Cancel the streaming task
-        streaming_task.cancel()
-        try:
-            await streaming_task
-        except asyncio.CancelledError:
-            pass
-                
+        # Add the assistant's response to conversation history
+        conv.append({"role": "assistant", "content": assistant_reply})
+            
         # Log to Langfuse if enabled
         if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
             try:
@@ -605,25 +424,9 @@ async def on_chat_end():
 
     try:
         # Clean up MCP servers
-        if hasattr(cl.user_session, 'mcp_servers_objects'):
-            for server in cl.user_session.mcp_servers_objects:
-                try:
-                    if hasattr(server, 'cleanup') and callable(server.cleanup):
-                        if asyncio.iscoroutinefunction(server.cleanup):
-                            try:
-                                await asyncio.wait_for(server.cleanup(), timeout=2.0)
-                            except asyncio.TimeoutError:
-                                logger.warning(f"Timeout cleaning up server {getattr(server, 'name', 'unknown')}")
-                        else:
-                            server.cleanup()
-                except Exception as e:
-                    logger.debug(f"Error cleaning up server {getattr(server, 'name', 'unknown')}: {e}")
-            
+        if hasattr(cl.user_session, 'smart_agent') and hasattr(cl.user_session, 'mcp_servers_objects'):
+            await cl.user_session.smart_agent.cleanup_mcp_servers(cl.user_session.mcp_servers_objects)
             cl.user_session.mcp_servers_objects = []
-
-        # Force garbage collection to ensure resources are freed
-        import gc
-        gc.collect()
 
         logger.info("Cleanup complete")
     except Exception as e:
