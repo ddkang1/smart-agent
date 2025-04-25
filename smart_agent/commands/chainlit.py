@@ -23,7 +23,7 @@ def find_available_port(start_port=8000, max_attempts=100):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             
             # Try to bind to the port
-            s.bind(("127.0.0.1", port))
+            s.bind(("0.0.0.0", port))
             
             # If we get here, the port is available
             s.close()
@@ -47,7 +47,7 @@ def find_available_port(start_port=8000, max_attempts=100):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("127.0.0.1", port))
+            s.bind(("0.0.0.0", port))
             s.close()
             time.sleep(0.1)
             return port
@@ -114,7 +114,7 @@ def setup_parser(parser):
     parser.add_argument(
         "--host",
         type=str,
-        default="127.0.0.1",
+        default="0.0.0.0",
         help="Host to run the Chainlit server on"
     )
     parser.add_argument(

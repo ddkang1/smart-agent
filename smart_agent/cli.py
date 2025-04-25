@@ -132,7 +132,7 @@ cli.add_command(init)
 if has_chainlit:
     @click.command(name="chainlit")
     @click.option("--port", default=8000, help="Port to run the server on")
-    @click.option("--host", default="127.0.0.1", help="Host to run the server on")
+    @click.option("--host", default="0.0.0.0", help="Host to run the server on")
     @click.option("--debug", is_flag=True, help="Run in debug mode")
     def chainlit_ui(port, host, debug):
         """Start Chainlit web interface."""

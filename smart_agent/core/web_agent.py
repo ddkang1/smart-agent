@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 from .agent import BaseSmartAgent
 
 # Import helpers
-from agents import ItemHelpers
+from agents import ItemHelpers, Runner
 
 
 class WebSmartAgent(BaseSmartAgent):
