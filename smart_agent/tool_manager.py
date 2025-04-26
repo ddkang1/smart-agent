@@ -623,4 +623,31 @@ class ConfigManager:
                                        "This indicates an installation issue with smart-agent.")
 
         return config_file
+        
+    def init_litellm_config(self) -> str:
+        """
+        Initialize the LiteLLM config file.
+
+        Returns:
+            Path to the LiteLLM config file
+        """
+        # Create LiteLLM config file in the current working directory
+        litellm_config_file = os.path.join(os.getcwd(), "litellm_config.yaml")
+
+        # Create a default LiteLLM config file if it doesn't exist
+        if not os.path.exists(litellm_config_file):
+            # Get the path to the example LiteLLM config file in the package
+            package_dir = os.path.dirname(os.path.abspath(__file__))
+            example_litellm_config = os.path.join(package_dir, "config", "litellm_config.yaml.example")
+            
+            # Copy the example LiteLLM config file
+            import shutil
+            try:
+                shutil.copy(example_litellm_config, litellm_config_file)
+            except FileNotFoundError:
+                logger.error(f"Example LiteLLM config file not found at {example_litellm_config}")
+                raise FileNotFoundError(f"Example LiteLLM config file not found at {example_litellm_config}. "
+                                       "This indicates an installation issue with smart-agent.")
+
+        return litellm_config_file
 
