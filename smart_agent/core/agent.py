@@ -114,10 +114,10 @@ class BaseSmartAgent:
                         name=tool_id,
                         params={
                             "url": url,
-                            "timeout": 30,  # HTTP request timeout
+                            "timeout": 150,  # HTTP request timeout
                             "sse_read_timeout": 300  # SSE connection timeout (5 minutes)
                         },
-                        client_session_timeout_seconds=30  # Increase timeout to 30 seconds
+                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
                     ))
             # For stdio transport, use MCPServerStdio with the command directly
             elif transport_type == "stdio":
@@ -136,7 +136,7 @@ class BaseSmartAgent:
                             "command": executable,
                             "args": args
                         },
-                        client_session_timeout_seconds=30  # Increase timeout to 30 seconds
+                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
                     ))
             # For sse_to_stdio transport, always construct the command from the URL
             elif transport_type == "sse_to_stdio":
@@ -159,7 +159,7 @@ class BaseSmartAgent:
                             "command": executable,
                             "args": args
                         },
-                        client_session_timeout_seconds=30  # Increase timeout to 30 seconds
+                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
                     ))
                 else:
                     logger.warning(f"Missing URL for sse_to_stdio transport type for tool {tool_id}")

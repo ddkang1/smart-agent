@@ -14,6 +14,7 @@ import time
 import warnings
 from collections import deque
 from typing import List, Dict, Any, Optional
+from contextlib import AsyncExitStack
 
 # Configure agents tracing
 from agents import Runner, set_tracing_disabled, ItemHelpers
@@ -30,7 +31,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
-from smart_agent.core.chainlit_agent import ChainlitAgent
+from smart_agent.core.chainlit_agent import ChainlitSmartAgent
 from smart_agent.web.helpers.setup import create_translation_files
 
 # Import optional dependencies
@@ -115,8 +116,8 @@ async def on_chat_start():
         return
 
     try:
-        # Create the ChainlitAgent
-        smart_agent = ChainlitAgent(config_manager=cl.user_session.config_manager)
+        # Create the ChainlitSmartAgent
+        smart_agent = ChainlitSmartAgent(config_manager=cl.user_session.config_manager)
         
         # Initialize conversation history with system prompt
         system_prompt = PromptGenerator.create_system_prompt()
@@ -126,66 +127,14 @@ async def on_chat_start():
         model_name = cl.user_session.config_manager.get_model_name()
         temperature = cl.user_session.config_manager.get_model_temperature()
 
-        # Create MCP server objects
-        mcp_servers_objects = []
-        for tool_id, tool_config in cl.user_session.config_manager.get_tools_config().items():
-            if not cl.user_session.config_manager.is_tool_enabled(tool_id):
-                continue
-            
-            transport_type = tool_config.get("transport", "stdio_to_sse").lower()
-            
-            # Import ReconnectingMCP for robust connections
-            from smart_agent.web.helpers.reconnecting_mcp import ReconnectingMCP
-            
-            # For SSE-based transports (stdio_to_sse, sse), use ReconnectingMCP
-            if transport_type in ["stdio_to_sse", "sse"]:
-                url = tool_config.get("url")
-                if url:
-                    mcp_servers_objects.append(ReconnectingMCP(name=tool_id, params={"url": url}))
-            # For stdio transport, use MCPServerStdio with the command directly
-            elif transport_type == "stdio":
-                command = tool_config.get("command")
-                if command:
-                    # For MCPServerStdio, we need to split the command into command and args
-                    command_parts = command.split()
-                    executable = command_parts[0]
-                    args = command_parts[1:] if len(command_parts) > 1 else []
-                    mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={
-                        "command": executable,
-                        "args": args
-                    }))
-            # For sse_to_stdio transport, always construct the command from the URL
-            elif transport_type == "sse_to_stdio":
-                # Get the URL from the configuration
-                url = tool_config.get("url")
-                if url:
-                    # Construct the full supergateway command
-                    command = f"npx -y supergateway --sse \"{url}\""
-                    logger.debug(f"Constructed command for sse_to_stdio transport: '{command}'")
-                    # For MCPServerStdio, we need to split the command into command and args
-                    command_parts = command.split()
-                    executable = command_parts[0]
-                    args = command_parts[1:] if len(command_parts) > 1 else []
-                    mcp_servers_objects.append(MCPServerStdio(name=tool_id, params={
-                        "command": executable,
-                        "args": args
-                    }))
-                else:
-                    logger.warning(f"Missing URL for sse_to_stdio transport type for tool {tool_id}")
-            # For any other transport types, log a warning
-            else:
-                logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
+        # Set up MCP server objects (but don't connect yet - we'll connect for each message)
+        smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
 
-        # Connect to MCP servers
-        connected_servers = await smart_agent.connect_mcp_servers(mcp_servers_objects)
-        
-        # Store connected servers in the WebSmartAgent
-        smart_agent.mcp_servers = connected_servers
-        
         # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
-        cl.user_session.mcp_servers_objects = connected_servers
+        cl.user_session.mcp_servers_objects = smart_agent.mcp_servers
         cl.user_session.model_name = model_name
+        cl.user_session.exit_stack = AsyncExitStack()
         cl.user_session.temperature = temperature
         cl.user_session.langfuse_enabled = smart_agent.langfuse_enabled
         cl.user_session.langfuse = smart_agent.langfuse
@@ -201,12 +150,7 @@ async def on_chat_start():
         error_message = f"An error occurred during initialization: {str(e)}"
         logger.exception(error_message)
         await cl.Message(content=error_message, author="System").send()
-
-        # Make sure to clean up resources
-        if hasattr(cl.user_session, 'mcp_servers_objects'):
-            await smart_agent.cleanup_mcp_servers(cl.user_session.mcp_servers_objects)
-
-# The handle_event function has been moved to the ChainlitAgent class
+        await cl.user_session.exit_stack.aclose()
 
 @cl.on_message
 async def on_message(msg: cl.Message):
@@ -220,24 +164,6 @@ async def on_message(msg: cl.Message):
     """
     user_input = msg.content
     conv = cl.user_session.conversation_history
-    
-    # Check for special commands
-    if user_input.lower() == "clear":
-        # Reset the conversation history
-        conv.clear()
-        conv.append({"role": "system", "content": PromptGenerator.create_system_prompt()})
-        
-        # Reset the agent
-        smart_agent = ChainlitAgent(config_manager=cl.user_session.config_manager)
-        cl.user_session.smart_agent = smart_agent
-        
-        await cl.Message(content="Conversation history cleared", author="System").send()
-        return
-    
-    # Check for exit command
-    if user_input.lower() in ["exit", "quit"]:
-        await cl.Message(content="Exiting chat...", author="System").send()
-        return
     
     # Add the user message to history
     conv.append({"role": "user", "content": user_input})
@@ -255,44 +181,53 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        # Create a fresh agent for this query
-        agent = Agent(
-            name="Assistant",
-            instructions=cl.user_session.smart_agent.system_prompt,
-            model=OpenAIChatCompletionsModel(
-                model=cl.user_session.model_name,
-                openai_client=cl.user_session.smart_agent.openai_client,
-            ),
-            mcp_servers=cl.user_session.mcp_servers_objects,
-        )
-        
-        # Process the query with the Chainlit-specific method
-        assistant_reply = await cl.user_session.smart_agent.process_query(
-            user_input,
-            conv,
-            agent=agent,
-            assistant_msg=assistant_msg,
-            state=state
-        )
-        
-        # Add the assistant's response to conversation history
-        conv.append({"role": "assistant", "content": assistant_reply})
+        # Use AsyncExitStack to manage MCP server connections for this message
+        # async with AsyncExitStack() as exit_stack:
+            # Connect to MCP servers for this query
+            mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
+                cl.user_session.mcp_servers_objects,
+                exit_stack=cl.user_session.exit_stack
+            )
+            logger.debug(f"Connected to {len(mcp_servers)} MCP servers for this message")
             
-        # Log to Langfuse if enabled
-        if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
-            try:
-                trace = cl.user_session.langfuse.trace(
-                    name="chat_session",
-                    metadata={"model": cl.user_session.model_name, "temperature": cl.user_session.temperature},
-                )
-                trace.generation(
-                    name="assistant_response",
+            # Create a fresh agent for this query with the newly connected servers
+            agent = Agent(
+                name="Assistant",
+                instructions=cl.user_session.smart_agent.system_prompt,
+                model=OpenAIChatCompletionsModel(
                     model=cl.user_session.model_name,
-                    prompt=user_input,
-                    completion=assistant_msg.content,
-                )
-            except Exception as e:
-                logger.error(f"Langfuse logging error: {e}")
+                    openai_client=cl.user_session.smart_agent.openai_client,
+                ),
+                mcp_servers=mcp_servers,
+            )
+            
+            # Process the query with the Chainlit-specific method
+            assistant_reply = await cl.user_session.smart_agent.process_query(
+                user_input,
+                conv,
+                agent=agent,
+                assistant_msg=assistant_msg,
+                state=state
+            )
+            
+            # Add the assistant's response to conversation history
+            conv.append({"role": "assistant", "content": assistant_reply})
+                
+            # Log to Langfuse if enabled
+            if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
+                try:
+                    trace = cl.user_session.langfuse.trace(
+                        name="chat_session",
+                        metadata={"model": cl.user_session.model_name, "temperature": cl.user_session.temperature},
+                    )
+                    trace.generation(
+                        name="assistant_response",
+                        model=cl.user_session.model_name,
+                        prompt=user_input,
+                        completion=assistant_msg.content,
+                    )
+                except Exception as e:
+                    logger.error(f"Langfuse logging error: {e}")
                 
     except Exception as e:
         logger.exception(f"Error processing stream events: {e}")
@@ -305,10 +240,7 @@ async def on_chat_end():
 
     try:
         # Clean up MCP servers
-        if hasattr(cl.user_session, 'smart_agent') and hasattr(cl.user_session, 'mcp_servers_objects'):
-            await cl.user_session.smart_agent.cleanup_mcp_servers(cl.user_session.mcp_servers_objects)
-            cl.user_session.mcp_servers_objects = []
-
+        await cl.user_session.exit_stack.aclose()
         logger.info("Cleanup complete")
     except Exception as e:
         # Catch any exceptions during cleanup to prevent them from propagating

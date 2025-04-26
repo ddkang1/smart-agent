@@ -21,7 +21,7 @@ from .agent import BaseSmartAgent
 from agents import ItemHelpers, Runner
 
 
-class ChainlitAgent(BaseSmartAgent):
+class ChainlitSmartAgent(BaseSmartAgent):
     """
     Chainlit-specific implementation of SmartAgent with features tailored for Chainlit interface.
     
@@ -29,70 +29,60 @@ class ChainlitAgent(BaseSmartAgent):
     including specialized event handling and UI integration.
     """
 
-    async def connect_mcp_servers(self, mcp_servers_objects):
-        """
-        Connect to MCP servers with timeout and retry logic for Chainlit interface.
-        
-        Args:
-            mcp_servers_objects: List of MCP server objects to connect to
+    async def connect_mcp_servers(self, mcp_servers_objects, exit_stack=None):
+            """
+            Connect to MCP servers with timeout and retry logic for Chainlit interface.
             
-        Returns:
-            List of successfully connected MCP server objects
-        """
-        # Connect to all MCP servers with timeout and retry
-        connected_servers = []
-        for server in mcp_servers_objects:
-            try:
-                # Use a timeout for connection
-                connection_task = asyncio.create_task(server.connect())
-                await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
+            Args:
+                mcp_servers_objects: List of MCP server objects to connect to
+                exit_stack: Optional AsyncExitStack to use for connection management
                 
-                # For ReconnectingMCP, verify connection is established
-                if hasattr(server, '_connected'):
-                    # Wait for ping to verify connection
-                    await asyncio.sleep(1)
-                    if not server._connected:
-                        logger.warning(f"Connection to {server.name} not fully established. Skipping.")
-                        continue
+            Returns:
+                List of successfully connected MCP server objects
+            """
+            # If an exit_stack is provided, use it to manage connections
+            if exit_stack is not None:
+                mcp_servers = []
+                for server in mcp_servers_objects:
+                    try:
+                        # Create a fresh connection for each server
+                        connected_server = await exit_stack.enter_async_context(server)
+                        mcp_servers.append(connected_server)
+                        logger.debug(f"Connected to MCP server: {connected_server.name}")
+                    except Exception as e:
+                        logger.error(f"Error connecting to MCP server {getattr(server, 'name', 'unknown')}: {e}")
                 
-                connected_servers.append(server)
-                logger.info(f"Connected to {server.name}")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout connecting to MCP server {server.name}")
-                # Cancel the connection task
-                connection_task.cancel()
+                return mcp_servers
+            
+            # Legacy connection method (for backward compatibility)
+            connected_servers = []
+            for server in mcp_servers_objects:
                 try:
-                    await connection_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            except Exception as e:
-                logger.error(f"Error connecting to MCP server {server.name}: {e}")
-
-        return connected_servers
-
-    async def cleanup_mcp_servers(self, mcp_servers_objects):
-        """
-        Clean up MCP server connections for Chainlit interface.
-        
-        Args:
-            mcp_servers_objects: List of MCP server objects to clean up
-        """
-        for server in mcp_servers_objects:
-            try:
-                if hasattr(server, 'cleanup') and callable(server.cleanup):
-                    if asyncio.iscoroutinefunction(server.cleanup):
-                        try:
-                            await asyncio.wait_for(server.cleanup(), timeout=2.0)
-                        except asyncio.TimeoutError:
-                            logger.warning(f"Timeout cleaning up server {getattr(server, 'name', 'unknown')}")
-                    else:
-                        server.cleanup()
-            except Exception as e:
-                logger.debug(f"Error cleaning up server {getattr(server, 'name', 'unknown')}: {e}")
-        
-        # Force garbage collection to ensure resources are freed
-        import gc
-        gc.collect()
+                    # Use a timeout for connection
+                    connection_task = asyncio.create_task(server.connect())
+                    await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
+                    
+                    if hasattr(server, '_connected'):
+                        # Wait for ping to verify connection
+                        await asyncio.sleep(1)
+                        if not server._connected:
+                            logger.warning(f"Connection to {server.name} not fully established. Skipping.")
+                            continue
+                    
+                    connected_servers.append(server)
+                    logger.info(f"Connected to {server.name}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout connecting to MCP server {server.name}")
+                    # Cancel the connection task
+                    connection_task.cancel()
+                    try:
+                        await connection_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                except Exception as e:
+                    logger.error(f"Error connecting to MCP server {server.name}: {e}")
+    
+            return connected_servers
 
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None, assistant_msg=None, state=None) -> str:
         """

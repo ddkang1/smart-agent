@@ -379,7 +379,7 @@ class CLISmartAgent(BaseSmartAgent):
                         # Create a fresh connection for each server
                         connected_server = await exit_stack.enter_async_context(server)
                         mcp_servers.append(connected_server)
-                        logger.info(f"Connected to MCP server: {connected_server.name}")
+                        logger.debug(f"Connected to MCP server: {connected_server.name}")
                     
                     # Create a fresh agent for each query
                     agent = Agent(
