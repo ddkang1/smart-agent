@@ -94,7 +94,7 @@ class WebSmartAgent(BaseSmartAgent):
         import gc
         gc.collect()
 
-    async def process_query_for_web(self, query: str, history: List[Dict[str, str]], agent, event_handler):
+    async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None) -> str:
         """
         Process a query using the OpenAI agent with MCP tools, optimized for web interfaces.
         
@@ -103,13 +103,22 @@ class WebSmartAgent(BaseSmartAgent):
         
         Args:
             query: The user's query
-            history: Conversation history
+            history: Optional conversation history
             agent: The Agent instance to use for processing the query
-            event_handler: Event handler function for streaming events to the web UI
             
         Returns:
             The agent's response
         """
+        # Create message history with system prompt and user query if not provided
+        if history is None:
+            history = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": query}
+            ]
+            
+        # Ensure we have an agent
+        if agent is None:
+            raise ValueError("Agent must be provided to process_query")
         # Track the assistant's response
         assistant_reply = ""
         
@@ -119,12 +128,8 @@ class WebSmartAgent(BaseSmartAgent):
             
             # Process the stream events
             async for event in result.stream_events():
-                # Use the provided event handler for web UI integration
-                if event_handler:
-                    try:
-                        await event_handler(event)
-                    except Exception as e:
-                        logger.error(f"Error in event handler: {e}")
+                # Process events without an event handler in this base implementation
+                # Web UI specific event handling should be implemented in the web application
                 
                 # Still update assistant_reply for the return value
                 if event.type == "run_item_stream_event":

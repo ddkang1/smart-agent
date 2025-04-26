@@ -30,7 +30,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
-from smart_agent.core.web_agent import WebSmartAgent
+from smart_agent.core.chainlit_agent import ChainlitAgent
 from smart_agent.web.helpers.setup import create_translation_files
 
 # Import optional dependencies
@@ -115,8 +115,8 @@ async def on_chat_start():
         return
 
     try:
-        # Create the WebSmartAgent
-        smart_agent = WebSmartAgent(config_manager=cl.user_session.config_manager)
+        # Create the ChainlitAgent
+        smart_agent = ChainlitAgent(config_manager=cl.user_session.config_manager)
         
         # Initialize conversation history with system prompt
         system_prompt = PromptGenerator.create_system_prompt()
@@ -206,123 +206,7 @@ async def on_chat_start():
         if hasattr(cl.user_session, 'mcp_servers_objects'):
             await smart_agent.cleanup_mcp_servers(cl.user_session.mcp_servers_objects)
 
-async def handle_event(event, state):
-    """Handle events from the agent.
-    
-    Args:
-        event: The event to handle
-        state: The state object containing UI elements
-    """
-    try:
-        # ── token delta from the LLM ────────────────────────────────────────────
-
-        if event.type != "run_item_stream_event":
-            return
-
-        item = event.item
-
-        # ── model called a tool ───────────────────
-        if item.type == "tool_call_item":
-            try:
-                arg = json.loads(item.raw_item.arguments)
-                key, value = next(iter(arg.items()))
-                
-                if key == "thought":
-                    state["is_thought"] = True
-                    # Format thought like CLI does
-                    thought_opening = "\n<thought>\n"
-                    thought_closing = "\n</thought>"
-                    
-                    # Stream tokens character by character like CLI for thoughts only
-                    for char in thought_opening:
-                        await state["assistant_msg"].stream_token(char)
-                        state["buffer"].append((char, "thought"))
-                        await asyncio.sleep(0.001)  # Small delay for visual effect
-                        
-                    for char in value:
-                        await state["assistant_msg"].stream_token(char)
-                        state["buffer"].append((char, "thought"))
-                        await asyncio.sleep(0.001)  # Small delay for visual effect
-                        
-                    for char in thought_closing:
-                        await state["assistant_msg"].stream_token(char)
-                        state["buffer"].append((char, "thought"))
-                        await asyncio.sleep(0.001)  # Small delay for visual effect
-                else:
-                    # Format code without language specification
-                    # Format regular tool call like CLI does
-                    tool_opening = f"\n ``` \n"
-                    tool_closing = "\n ``` \n"
-                    
-                    # Show all at once for non-thought items
-                    # Ensure value is a string before concatenation
-                    if isinstance(value, dict):
-                        value = json.dumps(value)
-                    elif not isinstance(value, str):
-                        value = str(value)
-                        
-                    full_content = tool_opening + value + tool_closing
-                    await state["assistant_msg"].stream_token(full_content)
-                    for char in full_content:
-                        state["buffer"].append((char, "tool"))
-            except Exception as e:
-                logger.error(f"Error processing tool call: {e}")
-                return
-
-        # ── tool result ────────────────────────────────────────────────────────
-        elif item.type == "tool_call_output_item":
-            if state.get("is_thought"):
-                state["is_thought"] = False          # skip duplicate, reset
-                return
-            try:
-                try:
-                    # Try to parse as JSON for better handling
-                    output_json = json.loads(item.output)
-                    
-                    # If it's a text response, format it appropriately
-                    if isinstance(output_json, dict) and "text" in output_json:
-                        # Format tool output like CLI does
-                        output_opening = "\n ``` \n"
-                        output_content = output_json['text']
-                        output_closing = "\n ``` \n"
-                    else:
-                        # Format JSON output like CLI does
-                        output_opening = "\n ``` \n"
-                        output_content = json.dumps(output_json)
-                        output_closing = "\n ``` \n"
-                except json.JSONDecodeError:
-                    # For non-JSON outputs, show as plain text like CLI does
-                    output_opening = "\n ``` \n"
-                    output_content = item.output
-                    output_closing = "\n ``` \n"
-                
-                # Show tool output all at once
-                full_output = output_opening + output_content + output_closing
-                await state["assistant_msg"].stream_token(full_output)
-                for char in full_output:
-                    state["buffer"].append((char, "tool_output"))
-            except Exception as e:
-                logger.error(f"Error processing tool output: {e}")
-                return
-
-        # ── final assistant chunk that is not streamed as delta ────────────────
-        elif item.type == "message_output_item":
-            txt = ItemHelpers.text_message_output(item)
-            
-            # Stream tokens character by character like CLI
-            for char in txt:
-                await state["assistant_msg"].stream_token(char)
-                state["buffer"].append((char, "assistant"))
-                await asyncio.sleep(0.001)  # Small delay for visual effect
-            
-    except Exception as e:
-        # Catch any exceptions to prevent the event handling from crashing
-        logger.exception(f"Error in handle_event: {e}")
-        # Try to notify the user about the error
-        try:
-            await state["assistant_msg"].stream_token(f"\n\n[Error processing response: {str(e)}]\n\n")
-        except Exception:
-            pass
+# The handle_event function has been moved to the ChainlitAgent class
 
 @cl.on_message
 async def on_message(msg: cl.Message):
@@ -344,7 +228,7 @@ async def on_message(msg: cl.Message):
         conv.append({"role": "system", "content": PromptGenerator.create_system_prompt()})
         
         # Reset the agent
-        smart_agent = WebSmartAgent(config_manager=cl.user_session.config_manager)
+        smart_agent = ChainlitAgent(config_manager=cl.user_session.config_manager)
         cl.user_session.smart_agent = smart_agent
         
         await cl.Message(content="Conversation history cleared", author="System").send()
@@ -382,16 +266,13 @@ async def on_message(msg: cl.Message):
             mcp_servers=cl.user_session.mcp_servers_objects,
         )
         
-        # Define a custom event handler to integrate with Chainlit UI
-        async def custom_event_handler(event):
-            await handle_event(event, state)
-            
-        # Process the query with the web-specific method
-        assistant_reply = await cl.user_session.smart_agent.process_query_for_web(
+        # Process the query with the Chainlit-specific method
+        assistant_reply = await cl.user_session.smart_agent.process_query(
             user_input,
             conv,
             agent=agent,
-            event_handler=custom_event_handler
+            assistant_msg=assistant_msg,
+            state=state
         )
         
         # Add the assistant's response to conversation history

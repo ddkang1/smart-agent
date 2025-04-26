@@ -265,7 +265,7 @@ class ProcessManager:
                             
                             # If process is still running after timeout, send SIGKILL
                             if not process_terminated:
-                                logger.warning(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
+                                logger.debug(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
                                 try:
                                     os.killpg(os.getpgid(pid), signal.SIGKILL)
                                     logger.info(f"Sent SIGKILL to process group for {tool_id}")
@@ -294,7 +294,7 @@ class ProcessManager:
                             
                             # If process is still running after timeout, send SIGKILL
                             if not process_terminated:
-                                logger.warning(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
+                                logger.debug(f"Process {pid} for {tool_id} did not terminate within {termination_timeout}s, sending SIGKILL")
                                 try:
                                     os.kill(pid, signal.SIGKILL)
                                     logger.info(f"Sent SIGKILL to process {pid} for {tool_id}")

@@ -12,6 +12,7 @@ import sys
 from typing import List, Dict, Any, Optional
 from contextlib import AsyncExitStack
 from collections import deque
+from abc import abstractmethod
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -168,116 +169,21 @@ class BaseSmartAgent:
         
         return mcp_servers
 
-    async def process_query(self, query: str, history: List[Dict[str, str]] = None, custom_event_handler=None, agent=None) -> str:
+    @abstractmethod
+    async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None) -> str:
         """
         Process a query using the OpenAI agent with MCP tools.
+        
+        This is an abstract method that must be implemented by subclasses.
+        Each implementation should handle the processing of queries in a way
+        appropriate for its specific interface (CLI, web, etc.).
 
         Args:
             query: The user's query
             history: Optional conversation history
-            custom_event_handler: Optional custom event handler function for streaming events
             agent: The Agent instance to use for processing the query
 
         Returns:
             The agent's response
         """
-        # Create message history with system prompt and user query if not provided
-        if history is None:
-            history = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": query}
-            ]
-        
-        # Ensure we have an agent
-        if agent is None:
-            raise ValueError("Agent must be provided to process_query")
-        
-        # Track the assistant's response
-        assistant_reply = ""
-        
-        try:
-            # Run the agent with streaming
-            result = Runner.run_streamed(agent, history, max_turns=100)
-            
-            # Process the stream events
-            async for event in result.stream_events():
-                # If a custom event handler is provided, use it exclusively
-                if custom_event_handler:
-                    try:
-                        await custom_event_handler(event)
-                        
-                        # Still update assistant_reply for the return value
-                        # This ensures we return a complete response even when using custom handler
-                        if event.type == "run_item_stream_event":
-                            if event.item.type == "tool_call_item":
-                                try:
-                                    arguments_dict = json.loads(event.item.raw_item.arguments)
-                                    key, value = next(iter(arguments_dict.items()))
-                                    if key == "thought":
-                                        assistant_reply += f"\n<thought>{value}</thought>"
-                                    else:
-                                        if key == "code":
-                                            code_str = str(value)
-                                            assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
-                                        else:
-                                            assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
-                                except (json.JSONDecodeError, StopIteration):
-                                    pass
-                            elif event.item.type == "tool_call_output_item":
-                                try:
-                                    output_text = json.loads(event.item.output).get("text", "")
-                                    assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
-                                except json.JSONDecodeError:
-                                    assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
-                            elif event.item.type == "message_output_item":
-                                role = event.item.raw_item.role
-                                text_message = ItemHelpers.text_message_output(event.item)
-                                if role == "assistant":
-                                    assistant_reply += text_message
-                                else:
-                                    assistant_reply += f"\n<{role}>{text_message}</{role}>"
-                    except Exception as e:
-                        logger.error(f"Error in custom event handler: {e}")
-                    # Skip normal processing when using custom handler
-                    continue
-                
-                # Normal processing (only used when no custom handler is provided)
-                if event.type == "raw_response_event":
-                    continue
-                elif event.type == "agent_updated_stream_event":
-                    continue
-                elif event.type == "run_item_stream_event":
-                    if event.item.type == "message_output_item":
-                        role = event.item.raw_item.role
-                        text_message = ItemHelpers.text_message_output(event.item)
-                        if role == "assistant":
-                            assistant_reply += text_message
-                        else:
-                            assistant_reply += f"\n<{role}>{text_message}</{role}>"
-                    elif event.item.type == "tool_call_item":
-                        try:
-                            arguments_dict = json.loads(event.item.raw_item.arguments)
-                            key, value = next(iter(arguments_dict.items()))
-                            if key == "thought":
-                                assistant_reply += f"\n<thought>{value}</thought>"
-                            else:
-                                if key == "code":
-                                    code_str = str(value)
-                                    assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
-                                else:
-                                    assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
-                        except (json.JSONDecodeError, StopIteration) as e:
-                            error_text = f"Error parsing tool call: {e}"
-                            assistant_reply += f"\n<error>{error_text}</error>"
-                    elif event.item.type == "tool_call_output_item":
-                        try:
-                            output_text = json.loads(event.item.output).get("text", "")
-                            assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
-                        except json.JSONDecodeError:
-                            assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
-            
-            return assistant_reply.strip()
-        except Exception as e:
-            # Log the error and return a user-friendly message
-            logger.error(f"Error processing query: {e}")
-            return f"I'm sorry, I encountered an error: {str(e)}. Please try again later."
+        pass
