@@ -100,18 +100,17 @@ llm:
   temperature: 0.0
 
 tools:
-  # Local tool with stdio_to_sse conversion
-  mcp_think_tool:
+  # Remote tool with sse conversion
+  mcp_tool_1:
     enabled: true
-    url: "http://localhost:8000/sse"
-    command: "uvx mcp-think --sse --host 0.0.0.0"
-    transport: stdio_to_sse
-
-  # Remote tool
-  remote_tool:
-    enabled: true
-    url: "https://api.remote-tool.com/sse"
+    url: "http://{HOST}:{PORT}/sse"
     transport: sse
+
+  # Local tool
+  mcp_tool_2:
+    enabled: true
+    command: "uvx mcp-think --transport stdio"
+    transport: stdio
 ```
 
 ## Common Usage Patterns
