@@ -334,8 +334,8 @@ class CLISmartAgent(BaseSmartAgent):
             pass
             
         # Enable arrow key navigation through history
-        readline.parse_and_bind('"\e[A": previous-history')  # Up arrow
-        readline.parse_and_bind('"\e[B": next-history')      # Down arrow
+        readline.parse_and_bind('"\x1b[A": previous-history')  # Up arrow
+        readline.parse_and_bind('"\x1b[B": next-history')      # Down arrow
         
         # Initialize conversation history with system prompt
         self.conversation_history = [{"role": "system", "content": self.system_prompt}]
