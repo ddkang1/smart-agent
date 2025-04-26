@@ -1,5 +1,4 @@
 # Smart Agent Configuration Example
-# Copy this file to config.yaml and update with your values
 
 # LLM API Configuration
 llm:
@@ -9,7 +8,12 @@ llm:
   temperature: 1.0                             # Temperature for generation (0.0-1.0)
 
 # Tools Configuration
-tools_config: "tools.yaml"                     # Path to tools configuration file
+tools:
+  think:
+    enabled: true
+    url: http://localhost:8000/sse
+    command: "uvx mcp-think"
+    transport: sse
 
 # Logging Configuration
 logging:
@@ -23,3 +27,4 @@ logging:
 #     host: "https://cloud.langfuse.com"       # Langfuse host URL
 #     public_key: ""                           # Your Langfuse public key
 #     secret_key: ""                           # Your Langfuse secret key
+

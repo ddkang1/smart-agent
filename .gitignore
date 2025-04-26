@@ -39,6 +39,7 @@ ENV/
 config/*.yaml
 python_repl_storage/
 tool_storage/
+*.yaml
 
 # OS specific
 .DS_Store

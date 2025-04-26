@@ -129,11 +129,6 @@ def get_tools_status(
     help="Path to configuration file",
 )
 @click.option(
-    "--tools",
-    default=None,
-    help="Path to tools configuration file",
-)
-@click.option(
     "--json",
     is_flag=True,
     help="Output in JSON format",
@@ -144,13 +139,12 @@ def get_tools_status(
     default=False,
     help="Enable debug mode for verbose logging",
 )
-def status(config, tools, json, debug):
+def status(config, json, debug):
     """
     Show the status of all services.
 
     Args:
         config: Path to configuration file
-        tools: Path to tools configuration file
         json: Output in JSON format
     """
     # Create configuration manager
