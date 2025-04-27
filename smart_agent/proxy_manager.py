@@ -93,7 +93,21 @@ class ProxyManager:
 
         # Get API settings
         api_base_url = config_manager.get_api_base_url()
+        
+        # Get default port from LiteLLM config if available
+        default_port = 8000  # Fallback default port
+        try:
+            litellm_config = config_manager.get_litellm_config()
+            if litellm_config and 'server' in litellm_config and 'port' in litellm_config['server']:
+                default_port = litellm_config['server']['port']
+                if self.debug:
+                    logger.debug(f"Using port {default_port} from LiteLLM config")
+        except Exception as e:
+            if self.debug:
+                logger.debug(f"Error getting port from LiteLLM config: {str(e)}")
 
+        # Try to extract port from API base URL
+        api_port = default_port
         try:
             parsed_url = urlparse(api_base_url)
             if parsed_url.port:
@@ -102,8 +116,7 @@ class ProxyManager:
                     logger.debug(f"Extracted port {api_port} from API base URL {api_base_url}")
         except Exception as e:
             if self.debug:
-                logger.debug(f"Error parsing API base URL: {str(e)}")
-            # Use default port
+                logger.debug(f"Error parsing API base URL: {str(e)}, using default port {api_port}")
 
         # Create command
         cmd = [
