@@ -109,15 +109,20 @@ class BaseSmartAgent:
             if transport_type in ["stdio_to_sse", "sse"]:
                 url = tool_config.get("url")
                 if url:
-                    logger.info(f"Adding MCP server {tool_id} at {url}")
+                    # Get timeout configurations from config
+                    http_timeout = self.config_manager.get_tool_timeout(tool_id, "timeout", 30)
+                    sse_read_timeout = self.config_manager.get_tool_timeout(tool_id, "sse_read_timeout", 300)
+                    client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
+                    
+                    logger.info(f"Adding MCP server {tool_id} at {url} with timeouts: HTTP={http_timeout}s, SSE={sse_read_timeout}s, Session={client_session_timeout}s")
                     mcp_servers.append(MCPServerSse(
                         name=tool_id,
                         params={
                             "url": url,
-                            "timeout": 150,  # HTTP request timeout
-                            "sse_read_timeout": 300  # SSE connection timeout (5 minutes)
+                            "timeout": http_timeout,  # HTTP request timeout
+                            "sse_read_timeout": sse_read_timeout  # SSE connection timeout
                         },
-                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
+                        client_session_timeout_seconds=client_session_timeout
                     ))
             # For stdio transport, use MCPServerStdio with the command directly
             elif transport_type == "stdio":
@@ -126,17 +131,22 @@ class BaseSmartAgent:
                     # Import MCPServerStdio here to avoid circular imports
                     from agents.mcp import MCPServerStdio
                     
+                    # Get timeout configuration from config
+                    client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
+                    
                     # For MCPServerStdio, we need to split the command into command and args
                     command_parts = command.split()
                     executable = command_parts[0]
                     args = command_parts[1:] if len(command_parts) > 1 else []
+                    
+                    logger.info(f"Adding MCP server {tool_id} with command '{command}' and session timeout: {client_session_timeout}s")
                     mcp_servers.append(MCPServerStdio(
                         name=tool_id,
                         params={
                             "command": executable,
                             "args": args
                         },
-                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
+                        client_session_timeout_seconds=client_session_timeout
                     ))
             # For sse_to_stdio transport, always construct the command from the URL
             elif transport_type == "sse_to_stdio":
@@ -146,6 +156,9 @@ class BaseSmartAgent:
                     # Import MCPServerStdio here to avoid circular imports
                     from agents.mcp import MCPServerStdio
                     
+                    # Get timeout configuration from config
+                    client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
+                    
                     # Construct the full supergateway command
                     command = f"npx -y supergateway --sse \"{url}\""
                     logger.debug(f"Constructed command for sse_to_stdio transport: '{command}'")
@@ -153,13 +166,15 @@ class BaseSmartAgent:
                     command_parts = command.split()
                     executable = command_parts[0]
                     args = command_parts[1:] if len(command_parts) > 1 else []
+                    
+                    logger.info(f"Adding MCP server {tool_id} with sse_to_stdio transport and session timeout: {client_session_timeout}s")
                     mcp_servers.append(MCPServerStdio(
                         name=tool_id,
                         params={
                             "command": executable,
                             "args": args
                         },
-                        client_session_timeout_seconds=150  # Increase timeout to 150 seconds
+                        client_session_timeout_seconds=client_session_timeout
                     ))
                 else:
                     logger.warning(f"Missing URL for sse_to_stdio transport type for tool {tool_id}")

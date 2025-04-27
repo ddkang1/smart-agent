@@ -256,6 +256,31 @@ class ConfigManager:
         if url is None:
             raise ValueError(f"URL not found for tool {tool_id}. Please provide a URL in your YAML configuration.")
         return url
+        
+    def get_tool_timeout(self, tool_id: str, timeout_type: str = "timeout", default: int = 30) -> int:
+        """
+        Get a timeout value for a tool.
+
+        Args:
+            tool_id: The ID of the tool to get the timeout for
+            timeout_type: The type of timeout to get (timeout, sse_read_timeout, client_session_timeout)
+            default: Default timeout value if not specified in config
+
+        Returns:
+            Timeout value in seconds
+        """
+        tool_config = self.get_tool_config(tool_id)
+        
+        # Check if there's a timeouts section in the tool config
+        timeouts = tool_config.get("timeouts", {})
+        
+        # If timeouts is specified but not a dict, log a warning and use default
+        if timeouts and not isinstance(timeouts, dict):
+            logger.warning(f"Invalid timeouts configuration for tool {tool_id}. Expected a dictionary.")
+            return default
+            
+        # Return the specific timeout or the default if not found
+        return timeouts.get(timeout_type, default)
 
     def get_tool_command(self, tool_id: str) -> str:
         """
@@ -274,6 +299,26 @@ class ConfigManager:
         if command is None:
             raise ValueError(f"Command not found for tool {tool_id}. Please provide a command in your YAML configuration.")
         return command
+        
+    def get_tool_timeouts(self, tool_id: str) -> dict:
+        """
+        Get all timeout configurations for a tool.
+
+        Args:
+            tool_id: The ID of the tool to get timeouts for
+
+        Returns:
+            Dictionary containing all timeout configurations for the tool
+        """
+        tool_config = self.get_tool_config(tool_id)
+        timeouts = tool_config.get("timeouts", {})
+        
+        # If timeouts is specified but not a dict, log a warning and return empty dict
+        if timeouts and not isinstance(timeouts, dict):
+            logger.warning(f"Invalid timeouts configuration for tool {tool_id}. Expected a dictionary.")
+            return {}
+            
+        return timeouts
 
     def initialize_tools(self) -> List:
         """

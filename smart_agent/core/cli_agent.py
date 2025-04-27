@@ -186,7 +186,7 @@ class CLISmartAgent(BaseSmartAgent):
                                 add_to_buffer("</thought>", "thought")
                                 
                                 # Update assistant reply
-                                assistant_reply += f"\n<thought>{value}</thought>"
+                                # assistant_reply += f"\n<thought>{value}</thought>"
                             else:
                                 is_thought = False
                                 
@@ -207,7 +207,7 @@ class CLISmartAgent(BaseSmartAgent):
                                     add_to_buffer("</tool>", "tool")
                                     
                                     # Update assistant reply with formatted code (no language specification)
-                                    assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
+                                    # assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
                                 else:
                                     # Regular tool call
                                     tool_opening = f"\n<tool name=\"{key}\">"
@@ -216,7 +216,7 @@ class CLISmartAgent(BaseSmartAgent):
                                     add_to_buffer("</tool>", "tool")
                                     
                                     # Update assistant reply
-                                    assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
+                                    # assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
                         except (json.JSONDecodeError, StopIteration) as e:
                             # Add error to buffer with error type
                             error_text = f"Error parsing tool call: {e}"
@@ -225,7 +225,7 @@ class CLISmartAgent(BaseSmartAgent):
                             add_to_buffer("</error>", "error")
                             
                             # Update assistant reply
-                            assistant_reply += f"\n<error>{error_text}</error>"
+                            # assistant_reply += f"\n<error>{error_text}</error>"
                     elif event.item.type == "tool_call_output_item":
                         if not is_thought:
                             try:
@@ -245,7 +245,7 @@ class CLISmartAgent(BaseSmartAgent):
                                 sys.stdout.flush()
                                 
                                 # Update assistant reply
-                                assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
+                                # assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
                                 
                                 # Reset for continued streaming
                                 stream_ended.clear()
@@ -267,7 +267,7 @@ class CLISmartAgent(BaseSmartAgent):
                                 sys.stdout.flush()
                                 
                                 # Update assistant reply
-                                assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
+                                # assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
                                 
                                 # Reset for continued streaming
                                 stream_ended.clear()
@@ -288,7 +288,7 @@ class CLISmartAgent(BaseSmartAgent):
                             add_to_buffer(f"</{role}>", "system")
                             
                             # Update assistant reply
-                            assistant_reply += f"\n<{role}>{text_message}</{role}>"
+                            # assistant_reply += f"\n<{role}>{text_message}</{role}>"
             
             # Signal that the stream has ended
             stream_ended.set()
