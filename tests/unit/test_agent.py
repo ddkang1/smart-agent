@@ -13,14 +13,14 @@ try:
 except (ImportError, AttributeError):
     agents_classes_available = False
 
-from smart_agent.agent import SmartAgent
+from smart_agent.core.agent import BaseSmartAgent
 
 # Skip all tests in this module if required agents classes are not available
 pytestmark = pytest.mark.skipif(not agents_classes_available, reason="Required classes from agents package not available")
 
 
 class TestSmartAgent:
-    """Test suite for the SmartAgent class."""
+    """Test suite for the BaseSmartAgent class."""
 
     def test_agent_initialization(self):
         """Test agent initialization with basic parameters."""
@@ -30,13 +30,20 @@ class TestSmartAgent:
         model_name = "gpt-4"
         system_prompt = "You are a helpful assistant."
 
-        # Initialize the agent
-        agent = SmartAgent(
-            model_name=model_name,
-            openai_client=mock_openai_client,
-            mcp_servers=[],
-            system_prompt=system_prompt,
-        )
+        # Create a mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = model_name
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        agent.openai_client = mock_openai_client
+        agent.mcp_servers = []
+        agent.system_prompt = system_prompt
 
         # Verify that the agent was initialized correctly
         assert agent.model_name == model_name
@@ -45,20 +52,30 @@ class TestSmartAgent:
         assert agent.system_prompt == system_prompt
         # agent.agent is None because mcp_servers is empty
 
-    def test_agent_without_initialization(self):
-        """Test agent creation without initialization parameters."""
-        # Initialize the agent without required parameters
-        agent = SmartAgent()
-
-        # Verify that the agent properties are set correctly but agent is not initialized
+    @patch("smart_agent.core.agent.AsyncOpenAI")  # Patch at the correct import location
+    def test_agent_without_initialization(self, mock_openai_client):
+        """Test agent creation with minimal configuration."""
+        # Create a minimal mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"  # Provide a dummy API key
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = None
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        
+        # Verify that the agent properties are set correctly
         assert agent.model_name is None
-        assert agent.openai_client is None
         assert agent.mcp_servers == []
         assert isinstance(agent.system_prompt, str)
-        assert agent.agent is None
+        # Verify that the OpenAI client was initialized
+        assert mock_openai_client.called
 
-    @patch("smart_agent.agent.Agent")
-    @patch("smart_agent.agent.OpenAIChatCompletionsModel")
+    @patch("agents.Agent")
+    @patch("agents.OpenAIChatCompletionsModel")
     def test_initialize_agent(self, mock_model_class, mock_agent_class):
         """Test the _initialize_agent method."""
         # Create mock objects
@@ -67,30 +84,45 @@ class TestSmartAgent:
         model_name = "gpt-4"
         system_prompt = "You are a helpful assistant."
 
-        # Initialize the agent
-        agent = SmartAgent(
-            model_name=model_name,
-            openai_client=mock_openai_client,
-            mcp_servers=[],
-            system_prompt=system_prompt,
-        )
+        # Create a mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = model_name
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        agent.openai_client = mock_openai_client
+        agent.mcp_servers = []
+        agent.system_prompt = system_prompt
 
         # Verify that the agent methods were called correctly
         # Skip these assertions since the agent is not initialized with empty mcp_servers
         # mock_model_class.assert_called_once_with(model=model_name, openai_client=mock_openai_client)
         # mock_agent_class.assert_called_once_with(name="Assistant", instructions=system_prompt, model=mock_model_class.return_value, mcp_servers=[])
 
-    @patch("smart_agent.agent.Runner")
+    @patch("agents.Runner")
     def test_process_message(self, mock_runner):
         """Test the process_message method."""
         # Setup
         mock_openai_client = MagicMock()
         mock_mcp_servers = [MagicMock()]
-        agent = SmartAgent(
-            model_name="gpt-4",
-            openai_client=mock_openai_client,
-            mcp_servers=[],
-        )
+        # Create a mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = "gpt-4"
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        agent.openai_client = mock_openai_client
+        agent.mcp_servers = []
 
         # Create test data
         history = [
@@ -98,29 +130,47 @@ class TestSmartAgent:
             {"role": "assistant", "content": "Hi there!"},
         ]
 
-        # Call the method (need to use async test framework)
-        # For now, we'll just test that the method exists and has the right signature
-        assert hasattr(agent, "process_message")
+        # For BaseSmartAgent, we should check for process_query instead of process_message
+        assert hasattr(agent, "process_query")
 
-    def test_process_message_without_agent(self):
-        """Test process_message raises error when agent is not initialized."""
-        # Setup
-        agent = SmartAgent()  # No initialization parameters
+    @patch("smart_agent.core.agent.AsyncOpenAI")  # Patch at the correct import location
+    def test_process_message_without_agent(self, mock_openai_client):
+        """Test that BaseSmartAgent has an abstract method process_query."""
+        # Setup - create a minimal mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"  # Provide a dummy API key
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = None
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        
+        # Check if process_query is an abstract method
+        from abc import abstractmethod
+        import inspect
+        
+        # Get the process_query method
+        process_query_method = getattr(BaseSmartAgent, 'process_query')
+        
+        # Check if it's decorated with @abstractmethod
+        assert getattr(process_query_method, '__isabstractmethod__', False)
 
-        # Create test data
-        history = [{"role": "user", "content": "Hello"}]
-
-        # Test that calling process_message raises ValueError
-        try:
-            import asyncio
-
-            asyncio.run(agent.process_message(history))
-            assert False, "Expected ValueError was not raised"
-        except ValueError:
-            pass  # Expected behavior
-
-    def test_process_stream_events_method_exists(self):
-        """Test that the process_stream_events method exists."""
-        # Just verify the method exists and is a static method
-        assert hasattr(SmartAgent, "process_stream_events")
-        # We can't easily test the async functionality here without a more complex setup
+    def test_setup_mcp_servers_method_exists(self):
+        """Test that the setup_mcp_servers method exists."""
+        # Create a mock config manager
+        mock_config_manager = MagicMock()
+        mock_config_manager.get_api_key.return_value = "test-api-key"
+        mock_config_manager.get_api_base_url.return_value = "https://api.openai.com/v1"
+        mock_config_manager.get_model_name.return_value = "gpt-4"
+        mock_config_manager.get_model_temperature.return_value = 0.7
+        mock_config_manager.get_langfuse_config.return_value = {"enabled": False}
+        mock_config_manager.get_tools_config.return_value = {}
+        
+        # Initialize the agent with the mock config manager
+        agent = BaseSmartAgent(mock_config_manager)
+        
+        # Just verify the method exists
+        assert hasattr(agent, "setup_mcp_servers")

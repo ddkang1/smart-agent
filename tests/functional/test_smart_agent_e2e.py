@@ -15,7 +15,7 @@ except ImportError:
     agents_available = False
 
 from smart_agent.cli import start, stop
-from smart_agent.agent import SmartAgent
+from smart_agent.core.agent import BaseSmartAgent
 
 # Skip all tests in this module if agents package is not available
 pytestmark = pytest.mark.skipif(not agents_available, reason="agents package not available")

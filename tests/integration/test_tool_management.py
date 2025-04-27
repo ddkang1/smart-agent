@@ -14,7 +14,7 @@ except ImportError:
     agents_available = False
 
 from smart_agent.commands.start import start_tools
-from smart_agent.agent import SmartAgent
+from smart_agent.core.agent import BaseSmartAgent
 
 
 # Skip all tests in this module if agents package is not available
@@ -97,17 +97,29 @@ class TestToolManagement:
         assert mock_process_manager.start_tool_process.called
 
         # Create agent with mocked components
-        with patch("smart_agent.agent.Agent") as mock_agent_class:
+        with patch("agents.Agent") as mock_agent_class:
             mock_agent = MagicMock()
             mock_agent_class.return_value = mock_agent
 
-            # Initialize the SmartAgent
-            agent = SmartAgent(model_name="gpt-4")
+            # Create a mock config manager for the agent
+            mock_agent_config = MagicMock()
+            mock_agent_config.get_api_key.return_value = "test-api-key"
+            mock_agent_config.get_api_base_url.return_value = "https://api.openai.com/v1"
+            mock_agent_config.get_model_name.return_value = "gpt-4"
+            mock_agent_config.get_model_temperature.return_value = 0.7
+            mock_agent_config.get_langfuse_config.return_value = {"enabled": False}
+            mock_agent_config.get_tools_config.return_value = {}
 
-            # Mock the process_message method
-            with patch.object(agent, "process_message") as mock_process_message:
+            # Initialize the BaseSmartAgent with the mock config
+            agent = BaseSmartAgent(mock_agent_config)
+            
+            # Mock the process_query method (BaseSmartAgent uses process_query, not process_message)
+            with patch.object(agent, "process_query") as mock_process_query:
+                # Set a return value for the mocked method
+                mock_process_query.return_value = "Response from agent"
+                
                 # Call the method
-                await agent.process_message("Can you search for something?")
+                await agent.process_query("Can you search for something?", [])
 
                 # Verify the method was called
-                assert mock_process_message.called
+                assert mock_process_query.called
