@@ -56,4 +56,4 @@ dev = [
 smart-agent = "smart_agent.cli:main"
 
 [tool.setuptools]
-packages = "find_packages"
+packages = {find = {}}
