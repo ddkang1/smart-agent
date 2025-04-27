@@ -2,4 +2,4 @@
 Smart Agent - AI agent with reasoning and tool use capabilities.
 """
 
-__version__ = "0.8.3"
+__version__ = "0.8.4"
