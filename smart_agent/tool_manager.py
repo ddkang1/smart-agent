@@ -239,28 +239,7 @@ class ConfigManager:
             True if the tool is enabled, False otherwise
         """
         tool_config = self.get_tool_config(tool_id)
-
-        # Check environment variable override
-        env_enabled = os.getenv(f"ENABLE_{tool_id.upper()}")
-        if env_enabled is not None:
-            return env_enabled.lower() == "true"
-
-        # Fall back to configuration
         return tool_config.get("enabled", False)
-
-    def get_env_prefix(self, tool_id: str) -> str:
-        """
-        Get the environment variable prefix for a tool.
-
-        Args:
-            tool_id: The ID of the tool
-
-        Returns:
-            Environment variable prefix
-        """
-        tool_config = self.get_tool_config(tool_id)
-        # Use env_prefix if provided, otherwise generate from tool_id
-        return tool_config.get("env_prefix", f"SMART_AGENT_TOOL_{tool_id.upper()}")
 
     def get_tool_url(self, tool_id: str) -> str:
         """
@@ -273,36 +252,10 @@ class ConfigManager:
             Tool URL
         """
         tool_config = self.get_tool_config(tool_id)
-        env_prefix = self.get_env_prefix(tool_id)
-
-        # Check environment variable override
-        env_url = os.getenv(f"{env_prefix}_URL")
-        if env_url:
-            return env_url
-
-        # Fall back to configuration
-        return tool_config.get("url", "")
-
-    def get_tool_repository(self, tool_id: str) -> str:
-        """
-        Get the repository for a tool.
-
-        Args:
-            tool_id: The ID of the tool to get the repository for
-
-        Returns:
-            Tool repository
-        """
-        tool_config = self.get_tool_config(tool_id)
-        env_prefix = self.get_env_prefix(tool_id)
-
-        # Check environment variable override
-        env_repo = os.getenv(f"{env_prefix}_REPO")
-        if env_repo:
-            return env_repo
-
-        # Fall back to configuration
-        return tool_config.get("repository", "")
+        url = tool_config.get("url")
+        if url is None:
+            raise ValueError(f"URL not found for tool {tool_id}. Please provide a URL in your YAML configuration.")
+        return url
 
     def get_tool_command(self, tool_id: str) -> str:
         """
@@ -314,18 +267,13 @@ class ConfigManager:
             tool_id: The ID of the tool to get the command for
 
         Returns:
-            Command to start the tool, or empty string if no command is specified
+            Command to start the tool
         """
         tool_config = self.get_tool_config(tool_id)
-        env_prefix = self.get_env_prefix(tool_id)
-
-        # Check environment variable override
-        env_command = os.getenv(f"{env_prefix}_COMMAND")
-        if env_command:
-            return env_command
-
-        # Get the command from the configuration
-        return tool_config.get("command", "")
+        command = tool_config.get("command")
+        if command is None:
+            raise ValueError(f"Command not found for tool {tool_id}. Please provide a command in your YAML configuration.")
+        return command
 
     def initialize_tools(self) -> List:
         """
@@ -352,10 +300,10 @@ class ConfigManager:
         Get API key.
 
         Returns:
-            API key
+            API key or None if not provided
         """
-        # Prioritize configuration
-        return self.get_config("llm", "api_key", "")
+        # API key is optional
+        return self.get_llm_config().get("api_key")
 
     def get_api_base_url(self) -> str:
         """
@@ -364,8 +312,8 @@ class ConfigManager:
         Returns:
             API base URL as a string
         """
-        # Prioritize configuration
-        return self.get_config("llm", "base_url", "http://0.0.0.0:4000")
+        # get_llm_config() will raise an error if base_url is not found
+        return self.get_llm_config().get("base_url")
 
     def get_model_name(self) -> str:
         """
@@ -374,39 +322,38 @@ class ConfigManager:
         Returns:
             Model name
         """
-        # Prioritize configuration
-        return self.get_config("model", "name", "claude-3-7-sonnet-20240229")
+        # get_llm_config() will raise an error if name is not found
+        return self.get_llm_config().get("name")
 
     def get_model_temperature(self) -> float:
         """
         Get the model temperature to use.
 
         Returns:
-            Model temperature
+            Model temperature or None if not provided
         """
-        # Prioritize configuration
-        return self.get_config("model", "temperature", 0.0)
+        # Temperature is optional
+        return self.get_llm_config().get("temperature")
 
     def get_log_level(self) -> str:
         """
         Get the log level to use.
 
         Returns:
-            Log level
+            Log level (defaults to WARNING if not specified)
         """
-        # Prioritize configuration
-        log_level = self.get_config("logging", "level", "INFO")
-        return log_level
+        # Prioritize configuration with default of WARNING
+        return self.get_config("logging", "level", "WARNING")
 
     def get_log_file(self) -> Optional[str]:
         """
         Get the log file path to use.
 
         Returns:
-            Log file path or None
+            Log file path or None if not specified
         """
-        # Prioritize configuration
-        return self.get_config("logging", "file", None)
+        # Log file is optional
+        return self.get_config("logging", "file")
 
     def get_langfuse_config(self) -> Dict:
         """
@@ -430,129 +377,48 @@ class ConfigManager:
         Returns:
             Dictionary with complete LLM configuration
         """
-        # First check for legacy model configuration
-        if "model" in self.config and "name" in self.config.get("model", {}) and "temperature" in self.config.get("model", {}):
-            return {
-                "name": self.config.get("model", {}).get("name"),
-                "temperature": self.config.get("model", {}).get("temperature", 1.0),
-            }
-
-        # Get LLM-specific configuration
+        result = {}
+        
+        # Get direct configurations from config.yaml
         llm_config = self.config.get("llm", {})
-        temperature = llm_config.get("temperature", 1.0)
-
-        # Check for direct model specification (decoupled from litellm)
+        legacy_model_config = self.config.get("model", {})
+        
+        # Check for model name (from various sources)
         if "model" in llm_config:
-            return {
-                "name": llm_config.get("model"),
-                "temperature": temperature,
-            }
+            result["name"] = llm_config.get("model")
+        elif "name" in legacy_model_config:
+            result["name"] = legacy_model_config.get("name")
+            
+        # Check for temperature (optional)
+        if "temperature" in llm_config:
+            result["temperature"] = llm_config.get("temperature")
+        elif "temperature" in legacy_model_config:
+            result["temperature"] = legacy_model_config.get("temperature")
+            
+        # Check for base_url
+        if "base_url" in llm_config:
+            result["base_url"] = llm_config.get("base_url")
+            
+        # Check for api_key (optional)
+        if "api_key" in llm_config:
+            result["api_key"] = llm_config.get("api_key")
+            
+        # If we have all required configurations, return early
+        if "name" in result and "base_url" in result:
+            return result
+            
+        # If we don't have a base_url but have a LiteLLM config, try to get it from there
+        if "base_url" not in result and self.litellm_config:
+            server_config = self.litellm_config.get("server")
+            if server_config:
+                host = server_config.get("host")
+                port = server_config.get("port")
+                if host and port:
+                    result["base_url"] = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
+                    
+        return result
 
-        # Backward compatibility: check for litellm config
-        if not self.litellm_config:
-            return {
-                "name": None,
-                "temperature": temperature,
-            }
-
-        # Get the preferred model from the config or use first model
-        preferred_model = llm_config.get("preferred_model")
-
-        # Extract models from litellm config
-        all_models = set()
-        model_variant_configs = []
-
-        if "model_list" in self.litellm_config:
-            for model in self.litellm_config.get("model_list", []):
-                all_models.add(model.get("model_name"))
-
-                # Check if this is the preferred model
-                if model.get("model_name") == preferred_model:
-                    model_variant_configs.append(model)
-
-        # Sort model variants by position in the list (priority)
-        if not model_variant_configs and all_models:
-            # Find all variants of the first model
-            first_model = list(all_models)[0]
-            for model in self.litellm_config.get("model_list", []):
-                if model.get("model_name") == first_model:
-                    model_variant_configs.append(model)
-
-        # Choose first model variant
-        model_config = None
-        if model_variant_configs:
-            model_config = model_variant_configs[0]
-
-        # If preferred model not found but we have models, use the first one
-        if not model_config and self.litellm_config.get("model_list"):
-            model_config = self.litellm_config.get("model_list")[0]
-
-        # Get server config for base_url
-        server_config = self.litellm_config.get("server", {})
-        host = server_config.get("host", "0.0.0.0")
-        port = server_config.get("port", 4000)
-        base_url = f"http://{host if host != '0.0.0.0' else 'localhost'}:{port}"
-
-        return {
-            "name": model_config.get("model_name") if model_config else None,
-            "temperature": temperature,
-            "base_url": base_url,
-            "api_key": "sk-any-key",  # Default for local LiteLLM proxy
-            "model_config": model_config,
-            "all_models": list(all_models),
-            "model_variants": model_variant_configs,
-        }
-
-    # Compatibility methods for existing code
-    def get_api_key(self) -> str:
-        """Get the API key for the LLM provider."""
-        # Check for API key in llm section (new format)
-        llm_api_key = self.config.get("llm", {}).get("api_key")
-        if llm_api_key:
-            return llm_api_key
-
-        # Check for API key in api section (legacy format)
-        legacy_api_key = self.config.get("api", {}).get("api_key")
-        if legacy_api_key:
-            return legacy_api_key
-
-        # New method using get_llm_config()
-        return self.get_llm_config().get("api_key")
-
-    def get_api_base_url(self) -> str:
-        """Get the base URL for the LLM API."""
-        # Check for base URL in llm section (new format)
-        llm_base_url = self.config.get("llm", {}).get("base_url")
-        if llm_base_url:
-            return llm_base_url
-
-        # Check for base URL in api section (legacy format)
-        legacy_base_url = self.config.get("api", {}).get("base_url")
-        if legacy_base_url:
-            return legacy_base_url
-
-        # New method using get_llm_config()
-        return self.get_llm_config().get("base_url")
-
-    def get_model_name(self) -> str:
-        """Get the name of the LLM model."""
-        # Legacy method
-        legacy_model_name = self.config.get("model", {}).get("name")
-        if legacy_model_name:
-            return legacy_model_name
-
-        # New method using get_llm_config()
-        return self.get_llm_config().get("name")
-
-    def get_model_temperature(self) -> float:
-        """Get the temperature setting for the LLM model."""
-        # Legacy method
-        legacy_temperature = self.config.get("model", {}).get("temperature")
-        if legacy_temperature is not None:
-            return legacy_temperature
-
-        # New method using get_llm_config()
-        return self.get_llm_config().get("temperature", 1.0)
+    # Removed compatibility methods as they're now handled by the main methods above
 
     def get_litellm_config(self):
         """

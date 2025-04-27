@@ -92,8 +92,7 @@ class ProxyManager:
             logger.warning(f"Could not get LiteLLM config path: {str(e)}")
 
         # Get API settings
-        api_base_url = config_manager.get_api_base_url() or "http://localhost:4000"
-        api_port = 4000
+        api_base_url = config_manager.get_api_base_url()
 
         try:
             parsed_url = urlparse(api_base_url)
