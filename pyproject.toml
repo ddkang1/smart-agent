@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-agent"
-version = "0.8.1"
+version = "0.8.2"
 description = "Smart AI agent with reasoning and tool use capabilities"
 readme = "README.md"
 authors = [
@@ -56,4 +56,4 @@ dev = [
 smart-agent = "smart_agent.cli:main"
 
 [tool.setuptools]
-packages = ["smart_agent", "smart_agent.commands", "smart_agent.web"]
+packages = "find_packages"
