@@ -17,6 +17,8 @@ from contextlib import AsyncExitStack
 
 # Import agent components
 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+from agents.extensions.models.litellm_model import LitellmModel
+from openai.types.responses import ResponseTextDeltaEvent
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -71,7 +73,7 @@ class CLISmartAgent(BaseSmartAgent):
         
         # Define constants for consistent output
         output_interval = 0.05  # 50ms between outputs
-        output_size = 6  # Output 6 characters at a time
+        output_size = 12  # Output 6 characters at a time
         
         # Define colors for different content types
         type_colors = {
@@ -162,9 +164,9 @@ class CLISmartAgent(BaseSmartAgent):
             # Process the stream events with a holistic output approach
             async for event in result.stream_events():
                 # Process all events through the normal CLI processing path
-                
                 # Normal processing (only used when no custom handler is provided)
-                if event.type == "raw_response_event":
+                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):                    
+                    add_to_buffer(event.data.delta, "assistant")
                     continue
                 elif event.type == "agent_updated_stream_event":
                     continue
@@ -279,7 +281,7 @@ class CLISmartAgent(BaseSmartAgent):
                         text_message = ItemHelpers.text_message_output(event.item)
                         if role == "assistant":
                             # Add tokens to buffer for streaming with assistant type
-                            add_to_buffer(text_message, "assistant")
+                            # add_to_buffer(text_message, "assistant")
                             assistant_reply += text_message
                         else:
                             # Add system message to buffer with system type
@@ -384,14 +386,21 @@ class CLISmartAgent(BaseSmartAgent):
                     # Create a fresh agent for each query
                     agent = Agent(
                         name="Assistant",
-                        instructions=self.system_prompt,
+                        # instructions=self.system_prompt,
+                        # model=LitellmModel(
+                        #     model=self.model_name,
+                        #     base_url=self.base_url,
+                        #     api_key=self.api_key,
+                        # ),
                         model=OpenAIChatCompletionsModel(
                             model=self.model_name,
                             openai_client=self.openai_client,
                         ),
                         mcp_servers=mcp_servers,
                     )
-                    
+                    # print(agent.model_settings.to_json_dict(), flush=True)
+                    # agent.model_settings.max_tokens = 10000
+                    # print(self.conversation_history, flush=True)
                     # Process the query with the full conversation history and fresh agent
                     response = await self.process_query(user_input, self.conversation_history, agent=agent)
                     
