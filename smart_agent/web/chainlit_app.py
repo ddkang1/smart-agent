@@ -127,17 +127,42 @@ async def on_chat_start():
         model_name = cl.user_session.config_manager.get_model_name()
         temperature = cl.user_session.config_manager.get_model_temperature()
 
-        # Set up MCP server objects (but don't connect yet - we'll connect for each message)
+        # Set up MCP server objects
         smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
-
+        
+        # Create an exit stack for the session
+        cl.user_session.exit_stack = AsyncExitStack()
+        
         # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
-        cl.user_session.mcp_servers_objects = smart_agent.mcp_servers
         cl.user_session.model_name = model_name
-        cl.user_session.exit_stack = AsyncExitStack()
         cl.user_session.temperature = temperature
         cl.user_session.langfuse_enabled = smart_agent.langfuse_enabled
         cl.user_session.langfuse = smart_agent.langfuse
+        
+        # Connect to all MCP servers at chat start
+        try:
+            logger.info("Connecting to MCP servers...")
+            mcp_servers = await smart_agent.connect_mcp_servers(
+                smart_agent.mcp_servers,
+                shared_exit_stack=cl.user_session.exit_stack
+            )
+            cl.user_session.mcp_servers = mcp_servers
+            logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
+            
+            # Show a message to the user about connected servers
+            if mcp_servers:
+                server_names = [server.name for server in mcp_servers]
+                await cl.Message(
+                    content=f"Connected to MCP servers: {', '.join(server_names)}",
+                    author="System"
+                ).send()
+        except Exception as e:
+            logger.error(f"Error connecting to MCP servers: {e}")
+            await cl.Message(
+                content=f"Warning: Failed to connect to some MCP servers: {str(e)}",
+                author="System"
+            ).send()
 
     except ImportError:
         await cl.Message(
@@ -181,53 +206,49 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        # Use AsyncExitStack to manage MCP server connections for this message
-        # async with AsyncExitStack() as exit_stack:
-            # Connect to MCP servers for this query
-            mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
-                cl.user_session.mcp_servers_objects,
-                exit_stack=cl.user_session.exit_stack
-            )
-            logger.debug(f"Connected to {len(mcp_servers)} MCP servers for this message")
+        # Use the already connected MCP servers
+        mcp_servers = cl.user_session.mcp_servers if hasattr(cl.user_session, 'mcp_servers') else []
+        logger.debug(f"Using {len(mcp_servers)} connected MCP servers for this message")
+        
+        # Create a fresh agent for this query with the connected servers
+        agent = Agent(
+            name="Assistant",
+            instructions=cl.user_session.smart_agent.system_prompt,
+            model=OpenAIChatCompletionsModel(
+                model=cl.user_session.model_name,
+                openai_client=cl.user_session.smart_agent.openai_client,
+            ),
+            mcp_servers=mcp_servers,
+        )
+        
+        # Process the query with the Chainlit-specific method
+        assistant_reply = await cl.user_session.smart_agent.process_query(
+            user_input,
+            conv,
+            agent=agent,
+            assistant_msg=assistant_msg,
+            state=state
+        )
+        
+        # Add the assistant's response to conversation history
+        conv.append({"role": "assistant", "content": assistant_reply})
             
-            # Create a fresh agent for this query with the newly connected servers
-            agent = Agent(
-                name="Assistant",
-                instructions=cl.user_session.smart_agent.system_prompt,
-                model=OpenAIChatCompletionsModel(
+        # Log to Langfuse if enabled
+        if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
+            try:
+                trace = cl.user_session.langfuse.trace(
+                    name="chat_session",
+                    metadata={"model": cl.user_session.model_name, "temperature": cl.user_session.temperature},
+                )
+                trace.generation(
+                    name="assistant_response",
                     model=cl.user_session.model_name,
-                    openai_client=cl.user_session.smart_agent.openai_client,
-                ),
-                mcp_servers=mcp_servers,
-            )
+                    prompt=user_input,
+                    completion=assistant_msg.content,
+                )
+            except Exception as e:
+                logger.error(f"Langfuse logging error: {e}")
             
-            # Process the query with the Chainlit-specific method
-            assistant_reply = await cl.user_session.smart_agent.process_query(
-                user_input,
-                conv,
-                agent=agent,
-                assistant_msg=assistant_msg,
-                state=state
-            )
-            
-            # Add the assistant's response to conversation history
-            conv.append({"role": "assistant", "content": assistant_reply})
-                
-            # Log to Langfuse if enabled
-            if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
-                try:
-                    trace = cl.user_session.langfuse.trace(
-                        name="chat_session",
-                        metadata={"model": cl.user_session.model_name, "temperature": cl.user_session.temperature},
-                    )
-                    trace.generation(
-                        name="assistant_response",
-                        model=cl.user_session.model_name,
-                        prompt=user_input,
-                        completion=assistant_msg.content,
-                    )
-                except Exception as e:
-                    logger.error(f"Langfuse logging error: {e}")
                 
     except Exception as e:
         logger.exception(f"Error processing stream events: {e}")
@@ -239,14 +260,32 @@ async def on_chat_end():
     logger.info("Cleaning up resources...")
 
     try:
-        # Clean up MCP servers
-        await cl.user_session.exit_stack.aclose()
+        # Clean up MCP servers using the agent's cleanup method
+        if hasattr(cl.user_session, 'smart_agent'):
+            cleanup_success = await cl.user_session.smart_agent.cleanup()
+            if cleanup_success:
+                logger.info("MCP servers cleanup successful")
+            else:
+                logger.warning("MCP servers cleanup completed with some issues")
+        
+        # Close the shared exit stack
+        if hasattr(cl.user_session, 'exit_stack'):
+            try:
+                await cl.user_session.exit_stack.aclose()
+                logger.info("Exit stack closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing exit stack: {e}")
+        
         logger.info("Cleanup complete")
     except Exception as e:
         # Catch any exceptions during cleanup to prevent them from propagating
-        logger.warning(f"Error during cleanup: {e}")
+        logger.error(f"Error during cleanup: {e}")
         # Still mark cleanup as complete
         logger.info("Cleanup completed with some errors")
+    finally:
+        # Clear any session variables that might hold references to resources
+        if hasattr(cl.user_session, 'mcp_servers'):
+            cl.user_session.mcp_servers = []
 
 if __name__ == "__main__":
     # This is used when running locally with `chainlit run`

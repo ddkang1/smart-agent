@@ -8,8 +8,9 @@ with features tailored for the Chainlit web interface.
 import asyncio
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Dict
 from collections import deque
+from contextlib import AsyncExitStack
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -26,63 +27,250 @@ class ChainlitSmartAgent(BaseSmartAgent):
     Chainlit-specific implementation of SmartAgent with features tailored for Chainlit interface.
     
     This class extends the BaseSmartAgent with functionality specific to Chainlit interface,
-    including specialized event handling and UI integration.
+    including specialized event handling, UI integration, and robust MCP session management.
+    
+    Features:
+    - Improved MCP server connection management with proper resource cleanup
+    - Support for both shared and dedicated AsyncExitStack for connection lifecycle management
+    - Robust error handling and connection state tracking
+    - Helper methods for MCP session access and management
+    - Specialized event handling for Chainlit UI integration
+    
+    The MCP session management follows the pattern used in chainlit/backend/chainlit/server.py
+    with connect_mcp and disconnect_mcp functions, but adapted for the SmartAgent context.
     """
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize the ChainlitSmartAgent with MCP session tracking."""
+        super().__init__(*args, **kwargs)
+        # Dictionary to store MCP sessions: {server_name: (client_session, exit_stack)}
+        self.mcp_sessions = {}
 
-    async def connect_mcp_servers(self, mcp_servers_objects, exit_stack=None):
-            """
-            Connect to MCP servers with timeout and retry logic for Chainlit interface.
-            
-            Args:
-                mcp_servers_objects: List of MCP server objects to connect to
-                exit_stack: Optional AsyncExitStack to use for connection management
+    async def connect_mcp_servers(self, mcp_servers_objects, shared_exit_stack=None):
+        """
+        Connect to MCP servers with improved session management for Chainlit interface.
+        
+        Args:
+            mcp_servers_objects: List of MCP server objects to connect to
+            shared_exit_stack: Optional AsyncExitStack to use for connection management
                 
-            Returns:
-                List of successfully connected MCP server objects
-            """
-            # If an exit_stack is provided, use it to manage connections
-            if exit_stack is not None:
-                mcp_servers = []
-                for server in mcp_servers_objects:
-                    try:
-                        # Create a fresh connection for each server
-                        connected_server = await exit_stack.enter_async_context(server)
-                        mcp_servers.append(connected_server)
-                        logger.debug(f"Connected to MCP server: {connected_server.name}")
-                    except Exception as e:
-                        logger.error(f"Error connecting to MCP server {getattr(server, 'name', 'unknown')}: {e}")
-                
-                return mcp_servers
+        Returns:
+            List of successfully connected MCP server objects
+        """
+        mcp_servers = []
+        connection_errors = []
+        
+        # Track if we're using a shared exit stack provided by the caller
+        using_shared_stack = shared_exit_stack is not None
+        
+        # If no servers to connect to, return empty list
+        if not mcp_servers_objects:
+            logger.info("No MCP servers to connect to")
+            return mcp_servers
             
-            # Legacy connection method (for backward compatibility)
-            connected_servers = []
-            for server in mcp_servers_objects:
+        logger.info(f"Connecting to {len(mcp_servers_objects)} MCP servers...")
+            
+        for server in mcp_servers_objects:
+            server_name = getattr(server, 'name', 'unknown')
+            
+            # Close existing connection if it exists
+            if server_name in self.mcp_sessions:
+                old_client_session, old_exit_stack = self.mcp_sessions[server_name]
+                logger.debug(f"Closing existing connection to MCP server: {server_name}")
                 try:
-                    # Use a timeout for connection
-                    connection_task = asyncio.create_task(server.connect())
-                    await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
+                    await old_exit_stack.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing existing MCP connection to {server_name}: {e}")
+                
+                # Remove the old session
+                del self.mcp_sessions[server_name]
+            
+            try:
+                # For each server, decide which exit stack to use
+                if using_shared_stack:
+                    # Use the provided shared exit stack
+                    exit_stack = shared_exit_stack
+                else:
+                    # Create a dedicated exit stack for this server
+                    exit_stack = AsyncExitStack()
+                
+                # Create a fresh connection for the server with timeout
+                logger.debug(f"Connecting to MCP server: {server_name}")
+                
+                # Use a timeout for the connection
+                connection_task = asyncio.create_task(exit_stack.enter_async_context(server))
+                try:
+                    connected_server = await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
                     
-                    if hasattr(server, '_connected'):
-                        # Wait for ping to verify connection
-                        await asyncio.sleep(1)
-                        if not server._connected:
-                            logger.warning(f"Connection to {server.name} not fully established. Skipping.")
-                            continue
+                    # Verify connection is established
+                    if hasattr(connected_server, 'initialize'):
+                        logger.debug(f"Initializing MCP server: {server_name}")
+                        await connected_server.initialize()
                     
-                    connected_servers.append(server)
-                    logger.info(f"Connected to {server.name}")
+                    mcp_servers.append(connected_server)
+                    
+                    # Store the session with its exit stack for later cleanup
+                    self.mcp_sessions[server_name] = (connected_server, exit_stack)
+                    
+                    logger.info(f"Successfully connected to MCP server: {server_name}")
                 except asyncio.TimeoutError:
-                    logger.warning(f"Timeout connecting to MCP server {server.name}")
-                    # Cancel the connection task
+                    # Cancel the connection task if it times out
                     connection_task.cancel()
                     try:
                         await connection_task
                     except (asyncio.CancelledError, Exception):
                         pass
+                    error_msg = f"Connection to MCP server {server_name} timed out after 10 seconds"
+                    logger.warning(error_msg)
+                    connection_errors.append(error_msg)
+                    
+                    # Clean up the exit stack if we created it
+                    if not using_shared_stack:
+                        await exit_stack.aclose()
+            except Exception as e:
+                # If we created a dedicated exit stack for this server and an error occurred,
+                # make sure to close it
+                if not using_shared_stack and 'exit_stack' in locals():
+                    await exit_stack.aclose()
+                error_msg = f"Error connecting to MCP server {server_name}: {e}"
+                logger.error(error_msg)
+                connection_errors.append(error_msg)
+        
+        # Log summary of connections
+        if mcp_servers:
+            logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
+        else:
+            logger.warning("Failed to connect to any MCP servers")
+            
+        if connection_errors:
+            logger.warning(f"Connection errors occurred: {'; '.join(connection_errors)}")
+                
+        return mcp_servers
+            
+    async def disconnect_mcp_servers(self, server_names=None):
+        """
+        Disconnect from MCP servers and clean up resources.
+        
+        Args:
+            server_names: Optional list of server names to disconnect from.
+                          If None, disconnect from all servers.
+                          
+        Returns:
+            List of names of successfully disconnected servers
+        """
+        if server_names is None:
+            # Disconnect from all servers if no specific names provided
+            server_names = list(self.mcp_sessions.keys())
+        
+        # If no servers to disconnect, return empty list
+        if not server_names:
+            logger.debug("No MCP servers to disconnect")
+            return []
+            
+        logger.info(f"Disconnecting from {len(server_names)} MCP servers...")
+        
+        disconnected_servers = []
+        disconnect_errors = []
+            
+        for name in server_names:
+            if name in self.mcp_sessions:
+                client_session, exit_stack = self.mcp_sessions[name]
+                logger.debug(f"Disconnecting from MCP server: {name}")
+                
+                try:
+                    # If the client session has a shutdown method, call it
+                    if hasattr(client_session, 'shutdown') and callable(getattr(client_session, 'shutdown')):
+                        try:
+                            await asyncio.wait_for(client_session.shutdown(), timeout=5)
+                            logger.debug(f"Shutdown called for MCP server: {name}")
+                        except (asyncio.TimeoutError, Exception) as e:
+                            logger.warning(f"Error during shutdown of MCP server {name}: {e}")
+                    
+                    # Close the exit stack which will clean up all resources
+                    await exit_stack.aclose()
+                    logger.info(f"Successfully disconnected from MCP server: {name}")
+                    disconnected_servers.append(name)
                 except Exception as e:
-                    logger.error(f"Error connecting to MCP server {server.name}: {e}")
+                    error_msg = f"Error disconnecting from MCP server {name}: {e}"
+                    logger.error(error_msg)
+                    disconnect_errors.append(error_msg)
+                finally:
+                    # Always remove the session from our tracking dict
+                    del self.mcp_sessions[name]
+        
+        # Log summary of disconnections
+        if disconnected_servers:
+            logger.info(f"Successfully disconnected from {len(disconnected_servers)} MCP servers")
+        
+        if disconnect_errors:
+            logger.warning(f"Disconnection errors occurred: {'; '.join(disconnect_errors)}")
+            
+        return disconnected_servers
     
-            return connected_servers
+    async def cleanup(self):
+        """
+        Clean up all resources when shutting down the agent.
+        This ensures all MCP sessions are properly closed.
+        
+        Returns:
+            bool: True if cleanup was successful, False otherwise
+        """
+        logger.info("Cleaning up ChainlitSmartAgent resources")
+        success = True
+        
+        try:
+            # Get the number of active sessions before cleanup
+            active_sessions = len(self.mcp_sessions)
+            if active_sessions > 0:
+                logger.info(f"Disconnecting from {active_sessions} active MCP sessions")
+                
+                # Disconnect from all MCP servers
+                disconnected_servers = await self.disconnect_mcp_servers()
+                
+                # Check if all servers were disconnected
+                if len(disconnected_servers) < active_sessions:
+                    logger.warning(f"Only disconnected {len(disconnected_servers)} out of {active_sessions} MCP servers")
+                    success = False
+                else:
+                    logger.info("All MCP servers successfully disconnected")
+            else:
+                logger.info("No active MCP sessions to clean up")
+        except Exception as e:
+            logger.error(f"Error during ChainlitSmartAgent cleanup: {e}")
+            success = False
+            
+        # Final check to ensure all sessions are removed
+        if self.mcp_sessions:
+            logger.warning(f"Some MCP sessions ({len(self.mcp_sessions)}) were not properly cleaned up")
+            # Force clear the sessions dictionary as a last resort
+            self.mcp_sessions.clear()
+            success = False
+            
+        return success
+    
+    def get_mcp_session(self, server_name):
+        """
+        Get an MCP session by server name.
+        
+        Args:
+            server_name: The name of the MCP server
+            
+        Returns:
+            The client session object if found, None otherwise
+        """
+        if server_name in self.mcp_sessions:
+            client_session, _ = self.mcp_sessions[server_name]
+            return client_session
+        return None
+    
+    def get_connected_servers(self):
+        """
+        Get a list of all connected MCP server names.
+        
+        Returns:
+            List of server names that are currently connected
+        """
+        return list(self.mcp_sessions.keys())
 
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None, assistant_msg=None, state=None) -> str:
         """
