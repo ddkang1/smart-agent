@@ -12,6 +12,7 @@ import logging
 import asyncio
 import time
 import warnings
+import argparse
 from datetime import datetime
 from collections import deque
 from typing import List, Dict, Any, Optional
@@ -52,18 +53,71 @@ except ImportError:
 # Chainlit import
 import chainlit as cl
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+# Parse command line arguments to check for debug flag
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Chainlit web interface for Smart Agent")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
+    
+    # Parse known args only, to avoid conflicts with chainlit's own arguments
+    args, _ = parser.parse_known_args()
+    return args
 
-# Suppress verbose logging from external libraries
-logging.getLogger('asyncio').setLevel(logging.ERROR)
-logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('mcp.client.sse').setLevel(logging.WARNING)
+# Get command line arguments
+args = parse_args()
+
+# Force debug output to console
+if args.debug:
+    # Create a console handler with a specific formatter
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('DEBUG: %(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    # Remove existing handlers to avoid duplicates
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Add our console handler
+    root_logger.addHandler(console_handler)
+    
+    # Configure our logger
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    
+    # Print directly to ensure visibility
+    print("DEBUG MODE ENABLED - Smart Agent running with verbose logging")
+    logger.debug("Debug mode enabled - setting verbose logging")
+    
+    # Configure specific loggers
+    logging.getLogger('smart_agent').setLevel(logging.DEBUG)
+    logging.getLogger('smart_agent.core').setLevel(logging.DEBUG)
+    logging.getLogger('smart_agent.web').setLevel(logging.DEBUG)
+    logging.getLogger('mcp.client').setLevel(logging.DEBUG)
+    
+    # Keep some noisy loggers at higher levels
+    logging.getLogger('asyncio').setLevel(logging.INFO)
+    logging.getLogger('httpx').setLevel(logging.INFO)
+    logging.getLogger('uvicorn').setLevel(logging.INFO)
+else:
+    # Standard logging configuration for normal mode
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger(__name__)
+    
+    # In normal mode, suppress verbose logging from external libraries
+    logging.getLogger('asyncio').setLevel(logging.ERROR)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('mcp.client.sse').setLevel(logging.WARNING)
 
 @cl.on_settings_update
 async def handle_settings_update(settings):
@@ -125,9 +179,6 @@ async def on_chat_start():
         # Set up MCP server objects
         smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
         
-        # Create an exit stack for the session
-        cl.user_session.exit_stack = AsyncExitStack()
-        
         # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
         cl.user_session.model_name = model_name
@@ -135,22 +186,6 @@ async def on_chat_start():
         cl.user_session.langfuse_enabled = smart_agent.langfuse_enabled
         cl.user_session.langfuse = smart_agent.langfuse
         
-        # Connect to all MCP servers at chat start
-        try:
-            logger.info("Connecting to MCP servers...")
-            mcp_servers = await smart_agent.connect_mcp_servers(
-                smart_agent.mcp_servers,
-                shared_exit_stack=cl.user_session.exit_stack
-            )
-            cl.user_session.mcp_servers = mcp_servers
-            logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
-        except Exception as e:
-            logger.error(f"Error connecting to MCP servers: {e}")
-            await cl.Message(
-                content=f"Warning: Failed to connect to some MCP servers: {str(e)}",
-                author="System"
-            ).send()
-
     except ImportError:
         await cl.Message(
             content="Required packages not installed. Run 'pip install openai agent' to use the agent.",
@@ -191,11 +226,14 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        # Use the already connected MCP servers
-        mcp_servers = cl.user_session.mcp_servers if hasattr(cl.user_session, 'mcp_servers') else []
-        logger.debug(f"Using {len(mcp_servers)} connected MCP servers for this message")
-        
-        # Create a fresh agent for this query with the connected servers
+        logger.info("Connecting to MCP servers...")
+        mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
+            cl.user_session.smart_agent.mcp_servers,
+            shared_exit_stack=None  # Let each server use its own exit_stack
+        )
+        cl.user_session.mcp_servers = mcp_servers
+        logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
+
         agent = Agent(
             name="Assistant",
             instructions=cl.user_session.smart_agent.system_prompt,
@@ -203,10 +241,9 @@ async def on_message(msg: cl.Message):
                 model=cl.user_session.model_name,
                 openai_client=cl.user_session.smart_agent.openai_client,
             ),
-            mcp_servers=mcp_servers,
+            mcp_servers=cl.user_session.mcp_servers,
         )
-        
-        # Process the query with the Chainlit-specific method
+
         assistant_reply = await cl.user_session.smart_agent.process_query(
             user_input,
             conv,
@@ -233,7 +270,6 @@ async def on_message(msg: cl.Message):
                 )
             except Exception as e:
                 logger.error(f"Langfuse logging error: {e}")
-            
                 
     except Exception as e:
         logger.exception(f"Error processing stream events: {e}")
@@ -242,31 +278,24 @@ async def on_message(msg: cl.Message):
 @cl.on_chat_end
 async def on_chat_end():
     """Clean up resources when the chat session ends."""
-    logger.info("Cleaning up resources...")
+    logger.info("Final cleanup of resources...")
 
     try:
-        # Clean up MCP servers using the agent's cleanup method
+        # Perform any final cleanup if needed
         if hasattr(cl.user_session, 'smart_agent'):
+            # We already clean up after each message, but do a final cleanup just in case
             cleanup_success = await cl.user_session.smart_agent.cleanup()
             if cleanup_success:
-                logger.info("MCP servers cleanup successful")
+                logger.info("Final MCP servers cleanup successful")
             else:
-                logger.warning("MCP servers cleanup completed with some issues")
+                logger.warning("Final MCP servers cleanup completed with some issues")
         
-        # Close the shared exit stack
-        if hasattr(cl.user_session, 'exit_stack'):
-            try:
-                await cl.user_session.exit_stack.aclose()
-                logger.info("Exit stack closed successfully")
-            except Exception as e:
-                logger.warning(f"Error closing exit stack: {e}")
-        
-        logger.info("Cleanup complete")
+        logger.info("Final cleanup complete")
     except Exception as e:
         # Catch any exceptions during cleanup to prevent them from propagating
-        logger.error(f"Error during cleanup: {e}")
+        logger.error(f"Error during final cleanup: {e}")
         # Still mark cleanup as complete
-        logger.info("Cleanup completed with some errors")
+        logger.info("Final cleanup completed with some errors")
     finally:
         # Clear any session variables that might hold references to resources
         if hasattr(cl.user_session, 'mcp_servers'):

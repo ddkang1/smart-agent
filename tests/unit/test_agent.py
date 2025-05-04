@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 
 # Check if required classes from agents package are available
 try:
-    from agents.mcp import MCPServerSse
     from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
+    from smart_agent.core.mcp_server import MCPServerSse
     agents_classes_available = True
 except (ImportError, AttributeError):
     agents_classes_available = False

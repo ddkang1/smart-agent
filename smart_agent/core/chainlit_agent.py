@@ -8,6 +8,7 @@ with features tailored for the Chainlit web interface.
 import asyncio
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional, Tuple, Dict
 from collections import deque
 from contextlib import AsyncExitStack
@@ -77,26 +78,14 @@ class ChainlitSmartAgent(BaseSmartAgent):
         for server in mcp_servers_objects:
             server_name = getattr(server, 'name', 'unknown')
             
-            # Close existing connection if it exists
-            if server_name in self.mcp_sessions:
-                old_client_session, old_exit_stack = self.mcp_sessions[server_name]
-                logger.debug(f"Closing existing connection to MCP server: {server_name}")
-                try:
-                    await old_exit_stack.aclose()
-                except Exception as e:
-                    logger.warning(f"Error closing existing MCP connection to {server_name}: {e}")
-                
-                # Remove the old session
-                del self.mcp_sessions[server_name]
-            
             try:
                 # For each server, decide which exit stack to use
                 if using_shared_stack:
                     # Use the provided shared exit stack
                     exit_stack = shared_exit_stack
                 else:
-                    # Create a dedicated exit stack for this server
-                    exit_stack = AsyncExitStack()
+                    # Use the server's own exit_stack instead of creating a new one
+                    exit_stack = server.exit_stack
                 
                 # Create a fresh connection for the server with timeout
                 logger.debug(f"Connecting to MCP server: {server_name}")
@@ -106,10 +95,23 @@ class ChainlitSmartAgent(BaseSmartAgent):
                 try:
                     connected_server = await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
                     
-                    # Verify connection is established
+                    # CRITICAL: Always explicitly initialize the server
+                    # First try initialize() method
                     if hasattr(connected_server, 'initialize'):
                         logger.debug(f"Initializing MCP server: {server_name}")
                         await connected_server.initialize()
+                    
+                    # Then try connect() method - some servers need both or either
+                    if hasattr(connected_server, 'connect'):
+                        logger.debug(f"Calling connect() on MCP server: {server_name}")
+                        await connected_server.connect()
+                    
+                    # Verify the server is ready by calling a simple method
+                    if hasattr(connected_server, 'list_tools'):
+                        logger.debug(f"Verifying connection by calling list_tools on {server_name}")
+                        # This will throw an exception if the server is not properly initialized
+                        await connected_server.list_tools()
+                        logger.debug(f"Server {server_name} verified with list_tools")
                     
                     mcp_servers.append(connected_server)
                     
@@ -128,14 +130,13 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     logger.warning(error_msg)
                     connection_errors.append(error_msg)
                     
-                    # Clean up the exit stack if we created it
-                    if not using_shared_stack:
-                        await exit_stack.aclose()
+                    # We don't need to close the exit_stack here since we're using the server's own exit_stack
+                    # which will be closed when the server is cleaned up
+                    pass
             except Exception as e:
-                # If we created a dedicated exit stack for this server and an error occurred,
-                # make sure to close it
-                if not using_shared_stack and 'exit_stack' in locals():
-                    await exit_stack.aclose()
+                # We don't need to close the exit_stack here since we're using the server's own exit_stack
+                # which will be closed when the server is cleaned up
+                pass
                 error_msg = f"Error connecting to MCP server {server_name}: {e}"
                 logger.error(error_msg)
                 connection_errors.append(error_msg)
@@ -296,8 +297,8 @@ class ChainlitSmartAgent(BaseSmartAgent):
             self.stream_ended = asyncio.Event()
             
             # Define constants for consistent output
-            self.output_interval = 0.05  # 50ms between outputs
-            self.output_size = 12  # Output 12 characters at a time
+            self.output_interval = 0.025  # 50ms between outputs
+            self.output_size = 24  # Output 24 characters at a time
             
             # Start the streaming task
             self.streaming_task = asyncio.create_task(

@@ -27,9 +27,12 @@ mcp_client_logger.setLevel(logging.WARNING)
 
 # Import OpenAI agents components
 from agents import Agent, Runner, set_tracing_disabled, ItemHelpers
-from agents.mcp import MCPServer, MCPServerSse
+from agents.mcp import MCPServer
 from agents import OpenAIChatCompletionsModel
 set_tracing_disabled(disabled=True)
+
+# Import our custom MCPServerSse implementation
+from .mcp_server import MCPServerSse
 
 # Import OpenAI client
 from openai import AsyncOpenAI
