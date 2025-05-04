@@ -179,46 +179,32 @@ class CLISmartAgent(BaseSmartAgent):
                                 is_thought = True
                                 
                                 # Add the opening thought tag to the buffer with thought type
-                                add_to_buffer("\n<thought>", "thought")
+                                add_to_buffer("\n<thought>\n", "thought")
                                 
                                 # Add the thought content with thought type
                                 add_to_buffer(str(value), "thought")
                                 
                                 # Add the closing thought tag with thought type
-                                add_to_buffer("</thought>", "thought")
+                                add_to_buffer("\n</thought>", "thought")
                                 
                                 # Update assistant reply
                                 # assistant_reply += f"\n<thought>{value}</thought>"
                             else:
                                 is_thought = False
                                 
-                                # Check if this is a code tool
-                                if key == "code":
-                                    # Get code string
-                                    code_str = str(value)
-                                    
-                                    # Add tool call to buffer with tool type
-                                    tool_opening = f"\n<tool name=\"{key}\">"
-                                    add_to_buffer(tool_opening, "tool")
-                                    
-                                    # Add code with markdown formatting (no language specification)
-                                    add_to_buffer(f"\n```\n", "tool")
-                                    add_to_buffer(code_str, "tool")
-                                    add_to_buffer("\n```", "tool")
-                                    
-                                    add_to_buffer("</tool>", "tool")
-                                    
-                                    # Update assistant reply with formatted code (no language specification)
-                                    # assistant_reply += f"\n<tool name=\"{key}\">\n```\n{code_str}\n```</tool>"
-                                else:
-                                    # Regular tool call
-                                    tool_opening = f"\n<tool name=\"{key}\">"
-                                    add_to_buffer(tool_opening, "tool")
-                                    add_to_buffer(str(value), "tool")
-                                    add_to_buffer("</tool>", "tool")
-                                    
-                                    # Update assistant reply
-                                    # assistant_reply += f"\n<tool name=\"{key}\">{value}</tool>"
+                                # Regular tool call
+                                tool_opening = f"\n<tool>\n"
+                                add_to_buffer(tool_opening, "tool")
+                                # Add all key-value pairs from arguments_dict
+                                for arg_key, arg_value in arguments_dict.items():
+                                    add_to_buffer(f"{arg_key}={str(arg_value)}\n", "tool")
+                                add_to_buffer("</tool>", "tool")
+                                
+                                # Update assistant reply
+                                # assistant_reply += f"\n<tool>"
+                                # for arg_key, arg_value in arguments_dict.items():
+                                #     assistant_reply += f"{arg_key}={str(arg_value)} "
+                                # assistant_reply += f"</tool>"
                         except (json.JSONDecodeError, StopIteration) as e:
                             # Add error to buffer with error type
                             error_text = f"Error parsing tool call: {e}"
@@ -238,10 +224,10 @@ class CLISmartAgent(BaseSmartAgent):
                                 await streaming_task
                                 
                                 # Print tool output all at once
-                                rich_console.print("\n<tool_output>", end="", style="bright_green bold")
+                                rich_console.print("\n<tool_output>\n", end="", style="bright_green bold")
                                 rich_console.print(str(output_text), style="bright_green", end="")
                                     
-                                rich_console.print("</tool_output>", style="bright_green bold")
+                                rich_console.print("\n</tool_output>", style="bright_green bold")
                                 
                                 # Ensure output is flushed immediately
                                 sys.stdout.flush()
