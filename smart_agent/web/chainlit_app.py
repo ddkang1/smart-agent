@@ -12,6 +12,7 @@ import logging
 import asyncio
 import time
 import warnings
+from datetime import datetime
 from collections import deque
 from typing import List, Dict, Any, Optional
 from contextlib import AsyncExitStack
@@ -25,6 +26,12 @@ warnings.filterwarnings("ignore", message="Attempted to exit cancel scope in a d
 os.environ["GRPC_VERBOSITY"] = "ERROR"
 os.environ["ABSL_LOGGING_LOG_TO_STDERR"] = "0"
 
+# Explicitly unset environment variables that would trigger Chainlit's data persistence layer
+if "LITERAL_API_KEY" in os.environ:
+    del os.environ["LITERAL_API_KEY"]
+if "DATABASE_URL" in os.environ:
+    del os.environ["DATABASE_URL"]
+
 # Add parent directory to path to import smart_agent modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -34,19 +41,7 @@ from smart_agent.agent import PromptGenerator
 from smart_agent.core.chainlit_agent import ChainlitSmartAgent
 from smart_agent.web.helpers.setup import create_translation_files
 
-# Import optional dependencies
 try:
-    from openai import AsyncOpenAI
-except ImportError:
-    AsyncOpenAI = None
-
-try:
-    from langfuse import Langfuse
-except ImportError:
-    Langfuse = None
-
-try:
-    from agents.mcp import MCPServerSse, MCPServerStdio
     from agents import Agent, OpenAIChatCompletionsModel
 except ImportError:
     Agent = None
@@ -149,14 +144,6 @@ async def on_chat_start():
             )
             cl.user_session.mcp_servers = mcp_servers
             logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
-            
-            # Show a message to the user about connected servers
-            if mcp_servers:
-                server_names = [server.name for server in mcp_servers]
-                await cl.Message(
-                    content=f"Connected to MCP servers: {', '.join(server_names)}",
-                    author="System"
-                ).send()
         except Exception as e:
             logger.error(f"Error connecting to MCP servers: {e}")
             await cl.Message(
