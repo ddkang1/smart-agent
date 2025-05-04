@@ -258,17 +258,7 @@ class CLISmartAgent(BaseSmartAgent):
                         role = event.item.raw_item.role
                         text_message = ItemHelpers.text_message_output(event.item)
                         if role == "assistant":
-                            # Add tokens to buffer for streaming with assistant type
-                            # add_to_buffer(text_message, "assistant")
                             assistant_reply += text_message
-                        else:
-                            # Add system message to buffer with system type
-                            add_to_buffer(f"\n<{role}>", "system")
-                            add_to_buffer(str(text_message), "system")
-                            add_to_buffer(f"</{role}>", "system")
-                            
-                            # Update assistant reply
-                            # assistant_reply += f"\n<{role}>{text_message}</{role}>"
             
             # Signal that the stream has ended
             stream_ended.set()

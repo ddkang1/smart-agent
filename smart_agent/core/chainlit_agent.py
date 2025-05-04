@@ -303,6 +303,10 @@ class ChainlitSmartAgent(BaseSmartAgent):
         # Track the assistant's response
         assistant_reply = ""
         
+        # Add assistant_reply to state for accumulating tokens
+        if state is not None:
+            state["assistant_reply"] = assistant_reply
+        
         try:
             # Run the agent with streaming
             result = Runner.run_streamed(agent, history, max_turns=100)
@@ -310,7 +314,10 @@ class ChainlitSmartAgent(BaseSmartAgent):
             # Process the stream events using handle_event
             async for event in result.stream_events():
                 await self.handle_event(event, state, assistant_msg)
-                
+            
+            # Get the accumulated assistant reply from state if available
+            if state is not None and "assistant_reply" in state:
+                return state["assistant_reply"].strip()
             return assistant_reply.strip()
         except Exception as e:
             # Log the error and return a user-friendly message
@@ -328,7 +335,18 @@ class ChainlitSmartAgent(BaseSmartAgent):
         """
         try:
             # ── token delta from the LLM ────────────────────────────────────────────
-
+            
+            # Handle raw response events (immediate token streaming)
+            if event.type == "raw_response_event" and hasattr(event, "data") and hasattr(event.data, "delta"):
+                # Stream tokens immediately as they arrive
+                await assistant_msg.stream_token(event.data.delta)
+                state["buffer"].append((event.data.delta, "assistant"))
+                
+                # Accumulate tokens for conversation history
+                if "assistant_reply" in state:
+                    state["assistant_reply"] += event.data.delta
+                return
+                
             if event.type != "run_item_stream_event":
                 return
 
@@ -420,13 +438,10 @@ class ChainlitSmartAgent(BaseSmartAgent):
 
             # ── final assistant chunk that is not streamed as delta ────────────────
             elif item.type == "message_output_item":
-                txt = ItemHelpers.text_message_output(item)
-                
-                # Stream tokens character by character like CLI
-                for char in txt:
-                    await assistant_msg.stream_token(char)
-                    state["buffer"].append((char, "assistant"))
-                    await asyncio.sleep(0.001)  # Small delay for visual effect
+                role = item.raw_item.role
+                text_message = ItemHelpers.text_message_output(item)
+                if role == "assistant":
+                    state["assistant_reply"] += text_message
                 
         except Exception as e:
             # Catch any exceptions to prevent the event handling from crashing
