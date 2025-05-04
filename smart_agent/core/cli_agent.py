@@ -187,8 +187,6 @@ class CLISmartAgent(BaseSmartAgent):
                                 # Add the closing thought tag with thought type
                                 add_to_buffer("\n</thought>", "thought")
                                 
-                                # Update assistant reply
-                                # assistant_reply += f"\n<thought>{value}</thought>"
                             else:
                                 is_thought = False
                                 
@@ -199,12 +197,6 @@ class CLISmartAgent(BaseSmartAgent):
                                 for arg_key, arg_value in arguments_dict.items():
                                     add_to_buffer(f"{arg_key}={str(arg_value)}\n", "tool")
                                 add_to_buffer("</tool>", "tool")
-                                
-                                # Update assistant reply
-                                # assistant_reply += f"\n<tool>"
-                                # for arg_key, arg_value in arguments_dict.items():
-                                #     assistant_reply += f"{arg_key}={str(arg_value)} "
-                                # assistant_reply += f"</tool>"
                         except (json.JSONDecodeError, StopIteration) as e:
                             # Add error to buffer with error type
                             error_text = f"Error parsing tool call: {e}"
