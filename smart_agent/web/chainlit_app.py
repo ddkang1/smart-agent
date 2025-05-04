@@ -184,10 +184,8 @@ async def on_message(msg: cl.Message):
     assistant_msg = cl.Message(content="", author="Smart Agent")
     await assistant_msg.send()
 
-    # State container passed to the event handler with buffer for token streaming
     state = {
         "assistant_msg": assistant_msg,
-        "buffer": [],  # Buffer for token streaming like CLI
         "current_type": "assistant",  # Default type is assistant message
         "is_thought": False           # Track pending <thought> output
     }

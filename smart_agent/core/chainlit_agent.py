@@ -11,6 +11,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple, Dict
 from collections import deque
 from contextlib import AsyncExitStack
+from openai.types.responses import ResponseTextDeltaEvent
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -284,7 +285,6 @@ class ChainlitSmartAgent(BaseSmartAgent):
             history: Optional conversation history
             agent: The Agent instance to use for processing the query
             assistant_msg: The Chainlit message object to stream tokens to
-            state: State object containing UI elements and buffer
             
         Returns:
             The agent's response
@@ -337,14 +337,13 @@ class ChainlitSmartAgent(BaseSmartAgent):
             # ── token delta from the LLM ────────────────────────────────────────────
             
             # Handle raw response events (immediate token streaming)
-            if event.type == "raw_response_event" and hasattr(event, "data") and hasattr(event.data, "delta"):
+            if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                 # Stream tokens immediately as they arrive
                 await assistant_msg.stream_token(event.data.delta)
-                state["buffer"].append((event.data.delta, "assistant"))
-                
+                # await asyncio.sleep(0.001)
                 # Accumulate tokens for conversation history
-                if "assistant_reply" in state:
-                    state["assistant_reply"] += event.data.delta
+                # if "assistant_reply" in state:
+                #     state["assistant_reply"] += event.data.delta
                 return
                 
             if event.type != "run_item_stream_event":
@@ -355,50 +354,51 @@ class ChainlitSmartAgent(BaseSmartAgent):
             # ── model called a tool ───────────────────
             if item.type == "tool_call_item":
                 try:
-                    arg = json.loads(item.raw_item.arguments)
-                    key, value = next(iter(arg.items()))
+                    # Parse arguments as JSON
+                    arguments_dict = json.loads(item.raw_item.arguments)
                     
-                    if key == "thought":
+                    # Check if this is a thought tool call
+                    if "thought" in arguments_dict:
                         state["is_thought"] = True
-                        # Format thought like CLI does
-                        thought_opening = "\n<thought>\n"
-                        thought_closing = "\n</thought>"
+                        value = arguments_dict["thought"]
                         
                         # Stream tokens character by character like CLI for thoughts only
-                        for char in thought_opening:
-                            await assistant_msg.stream_token(char)
-                            state["buffer"].append((char, "thought"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
+                        # for char in thought_opening:
+                        await assistant_msg.stream_token("\n<thought>\n")
+                            # await asyncio.sleep(0.001)  # Small delay for visual effect
                             
-                        for char in value:
-                            await assistant_msg.stream_token(char)
-                            state["buffer"].append((char, "thought"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
+                        # for char in str(value):
+                        await assistant_msg.stream_token(value)
+                            # await asyncio.sleep(0.001)  # Small delay for visual effect
                             
-                        for char in thought_closing:
-                            await assistant_msg.stream_token(char)
-                            state["buffer"].append((char, "thought"))
-                            await asyncio.sleep(0.001)  # Small delay for visual effect
+                        # for char in thought_closing:
+                        await assistant_msg.stream_token("\n</thought>")
+                            # await asyncio.sleep(0.001)  # Small delay for visual effect
                     else:
-                        # Format code without language specification
-                        # Format regular tool call like CLI does
-                        tool_opening = f"\n ``` \n"
-                        tool_closing = "\n ``` \n"
+                        # Regular tool call
+                        tool_opening = "\n<tool>\n"
+                        tool_content = ""
                         
-                        # Show all at once for non-thought items
-                        # Ensure value is a string before concatenation
-                        if isinstance(value, dict):
-                            value = json.dumps(value)
-                        elif not isinstance(value, str):
-                            value = str(value)
+                        # Add all key-value pairs from arguments_dict
+                        for arg_key, arg_value in arguments_dict.items():
+                            tool_content += f"{arg_key}={str(arg_value)}\n"
                             
-                        full_content = tool_opening + value + tool_closing
+                        tool_closing = "</tool>"
+                        
+                        # Combine all parts
+                        full_content = tool_opening + tool_content + tool_closing
+                        
+                        # Stream the tool call content
                         await assistant_msg.stream_token(full_content)
-                        for char in full_content:
-                            state["buffer"].append((char, "tool"))
-                except Exception as e:
+                except (json.JSONDecodeError, Exception) as e:
+                    # Handle error in tool call parsing
+                    error_text = f"Error parsing tool call: {e}"
+                    error_content = f"\n<error>{error_text}</error>"
+                    
+                    # Stream the error message
+                    await assistant_msg.stream_token(error_content)
+                        
                     logger.error(f"Error processing tool call: {e}")
-                    return
 
             # ── tool result ────────────────────────────────────────────────────────
             elif item.type == "tool_call_output_item":
@@ -406,34 +406,33 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     state["is_thought"] = False          # skip duplicate, reset
                     return
                 try:
+                    # Try to parse the output as JSON
                     try:
-                        # Try to parse as JSON for better handling
                         output_json = json.loads(item.output)
                         
-                        # If it's a text response, format it appropriately
+                        # Extract text content if available
                         if isinstance(output_json, dict) and "text" in output_json:
-                            # Format tool output like CLI does
-                            output_opening = "\n ``` \n"
                             output_content = output_json['text']
-                            output_closing = "\n ``` \n"
                         else:
-                            # Format JSON output like CLI does
-                            output_opening = "\n ``` \n"
-                            output_content = json.dumps(output_json)
-                            output_closing = "\n ``` \n"
+                            # Format JSON output
+                            output_content = json.dumps(output_json, indent=2)
                     except json.JSONDecodeError:
-                        # For non-JSON outputs, show as plain text like CLI does
-                        output_opening = "\n ``` \n"
+                        # For non-JSON outputs, use as plain text
                         output_content = item.output
-                        output_closing = "\n ``` \n"
+                    
+                    # Format tool output with consistent tags
+                    output_opening = "\n<tool_output>\n"
+                    output_closing = "\n</tool_output>"
                     
                     # Show tool output all at once
-                    full_output = output_opening + output_content + output_closing
-                    await assistant_msg.stream_token(full_output)
-                    for char in full_output:
-                        state["buffer"].append((char, "tool_output"))
+                    full_output = output_opening + str(output_content) + output_closing
+                    assistant_msg.content += full_output
+                    await assistant_msg.update()
                 except Exception as e:
                     logger.error(f"Error processing tool output: {e}")
+                    # Add error message to the output
+                    error_content = f"\n<error>Error processing tool output: {e}</error>"
+                    await assistant_msg.stream_token(error_content)
                     return
 
             # ── final assistant chunk that is not streamed as delta ────────────────
