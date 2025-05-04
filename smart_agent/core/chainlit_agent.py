@@ -13,6 +13,9 @@ from collections import deque
 from contextlib import AsyncExitStack
 from openai.types.responses import ResponseTextDeltaEvent
 
+# Import for type hints
+from chainlit.message import Message
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -273,6 +276,90 @@ class ChainlitSmartAgent(BaseSmartAgent):
         """
         return list(self.mcp_sessions.keys())
 
+    class SmoothStreamWrapper:
+        """
+        A wrapper for Chainlit message objects that provides consistent output rates
+        for token streaming, similar to the CLI agent's stream_output function.
+        """
+        
+        def __init__(self, original_message: Message):
+            """
+            Initialize the wrapper with the original message.
+            
+            Args:
+                original_message: The Chainlit message object to wrap
+            """
+            self.original_message = original_message
+            
+            # Buffer for tokens
+            self.buffer = deque()
+            self.stream_ended = asyncio.Event()
+            
+            # Define constants for consistent output
+            self.output_interval = 0.05  # 50ms between outputs
+            self.output_size = 12  # Output 12 characters at a time
+            
+            # Start the streaming task
+            self.streaming_task = asyncio.create_task(
+                self._stream_output(self.buffer, self.output_interval, self.output_size, self.stream_ended)
+            )
+        
+        async def _stream_output(self, buffer, interval, size, end_event):
+            """
+            Stream output from the buffer at a consistent rate.
+            
+            Args:
+                buffer: The buffer to stream from
+                interval: The interval between outputs
+                size: The number of characters to output at once
+                end_event: Event to signal the end of streaming
+            """
+            try:
+                while not end_event.is_set() or buffer:  # Continue until signaled and buffer is empty
+                    if buffer:
+                        # Get a batch of tokens from the buffer
+                        batch = []
+                        
+                        for _ in range(min(size, len(buffer))):
+                            if not buffer:
+                                break
+                                
+                            batch.append(buffer.popleft())
+                        
+                        # Send the batch
+                        if batch:
+                            await self.original_message.stream_token(''.join(batch))
+                    
+                    await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                # Task cancellation is expected on completion
+                pass
+            except Exception as e:
+                logging.error(f"Error in stream_output: {e}")
+        
+        async def stream_token(self, token: str, *args, **kwargs):
+            """
+            Override of the original stream_token method with consistent output rates.
+            
+            Args:
+                token: The token to stream
+                *args, **kwargs: Additional arguments passed to the original method
+            """
+            if not token:
+                return
+                
+            # Add the token to the buffer
+            for char in token:
+                self.buffer.append(char)
+        
+        async def cleanup(self):
+            """Clean up resources when done streaming."""
+            self.stream_ended.set()
+            try:
+                await self.streaming_task
+            except Exception as e:
+                logging.error(f"Error cleaning up streaming task: {e}")
+    
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None, assistant_msg=None, state=None) -> str:
         """
         Process a query using the OpenAI agent with MCP tools, optimized for Chainlit interface.
@@ -306,6 +393,11 @@ class ChainlitSmartAgent(BaseSmartAgent):
         # Add assistant_reply to state for accumulating tokens
         if state is not None:
             state["assistant_reply"] = assistant_reply
+            
+        # Create smooth stream wrapper if assistant_msg is provided
+        smooth_stream = None
+        if assistant_msg is not None:
+            smooth_stream = self.SmoothStreamWrapper(assistant_msg)
         
         try:
             # Run the agent with streaming
@@ -313,7 +405,11 @@ class ChainlitSmartAgent(BaseSmartAgent):
             
             # Process the stream events using handle_event
             async for event in result.stream_events():
-                await self.handle_event(event, state, assistant_msg)
+                await self.handle_event(event, state, smooth_stream or assistant_msg)
+            
+            # Clean up smooth stream wrapper if used
+            if smooth_stream:
+                await smooth_stream.cleanup()
             
             # Get the accumulated assistant reply from state if available
             if state is not None and "assistant_reply" in state:
@@ -331,19 +427,14 @@ class ChainlitSmartAgent(BaseSmartAgent):
         Args:
             event: The event to handle
             state: The state object containing UI elements
-            assistant_msg: The Chainlit message object to stream tokens to
+            assistant_msg: The Chainlit message object or SmoothStreamWrapper to stream tokens to
         """
         try:
             # ── token delta from the LLM ────────────────────────────────────────────
             
             # Handle raw response events (immediate token streaming)
             if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
-                # Stream tokens immediately as they arrive
                 await assistant_msg.stream_token(event.data.delta)
-                # await asyncio.sleep(0.001)
-                # Accumulate tokens for conversation history
-                # if "assistant_reply" in state:
-                #     state["assistant_reply"] += event.data.delta
                 return
                 
             if event.type != "run_item_stream_event":
@@ -361,19 +452,9 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     if "thought" in arguments_dict:
                         state["is_thought"] = True
                         value = arguments_dict["thought"]
-                        
-                        # Stream tokens character by character like CLI for thoughts only
-                        # for char in thought_opening:
                         await assistant_msg.stream_token("\n<thought>\n")
-                            # await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        # for char in str(value):
                         await assistant_msg.stream_token(value)
-                            # await asyncio.sleep(0.001)  # Small delay for visual effect
-                            
-                        # for char in thought_closing:
                         await assistant_msg.stream_token("\n</thought>")
-                            # await asyncio.sleep(0.001)  # Small delay for visual effect
                     else:
                         # Regular tool call
                         tool_opening = "\n<tool>\n"
@@ -384,20 +465,12 @@ class ChainlitSmartAgent(BaseSmartAgent):
                             tool_content += f"{arg_key}={str(arg_value)}\n"
                             
                         tool_closing = "</tool>"
-                        
-                        # Combine all parts
                         full_content = tool_opening + tool_content + tool_closing
-                        
-                        # Stream the tool call content
                         await assistant_msg.stream_token(full_content)
                 except (json.JSONDecodeError, Exception) as e:
-                    # Handle error in tool call parsing
                     error_text = f"Error parsing tool call: {e}"
                     error_content = f"\n<error>{error_text}</error>"
-                    
-                    # Stream the error message
                     await assistant_msg.stream_token(error_content)
-                        
                     logger.error(f"Error processing tool call: {e}")
 
             # ── tool result ────────────────────────────────────────────────────────
@@ -406,31 +479,31 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     state["is_thought"] = False          # skip duplicate, reset
                     return
                 try:
-                    # Try to parse the output as JSON
                     try:
                         output_json = json.loads(item.output)
                         
-                        # Extract text content if available
                         if isinstance(output_json, dict) and "text" in output_json:
                             output_content = output_json['text']
                         else:
-                            # Format JSON output
                             output_content = json.dumps(output_json, indent=2)
                     except json.JSONDecodeError:
-                        # For non-JSON outputs, use as plain text
                         output_content = item.output
                     
-                    # Format tool output with consistent tags
                     output_opening = "\n<tool_output>\n"
                     output_closing = "\n</tool_output>"
                     
-                    # Show tool output all at once
                     full_output = output_opening + str(output_content) + output_closing
-                    assistant_msg.content += full_output
-                    await assistant_msg.update()
+                    
+                    # For tool outputs, we need to update the message directly
+                    # This bypasses the smooth streaming for tool outputs
+                    if hasattr(assistant_msg, 'original_message'):
+                        assistant_msg.original_message.content += full_output
+                        await assistant_msg.original_message.update()
+                    else:
+                        assistant_msg.content += full_output
+                        await assistant_msg.update()
                 except Exception as e:
                     logger.error(f"Error processing tool output: {e}")
-                    # Add error message to the output
                     error_content = f"\n<error>Error processing tool output: {e}</error>"
                     await assistant_msg.stream_token(error_content)
                     return
@@ -440,12 +513,11 @@ class ChainlitSmartAgent(BaseSmartAgent):
                 role = item.raw_item.role
                 text_message = ItemHelpers.text_message_output(item)
                 if role == "assistant":
-                    state["assistant_reply"] += text_message
+                    if state is not None and "assistant_reply" in state:
+                        state["assistant_reply"] += text_message
                 
         except Exception as e:
-            # Catch any exceptions to prevent the event handling from crashing
             logger.exception(f"Error in handle_event: {e}")
-            # Try to notify the user about the error
             try:
                 await assistant_msg.stream_token(f"\n\n[Error processing response: {str(e)}]\n\n")
             except Exception:
