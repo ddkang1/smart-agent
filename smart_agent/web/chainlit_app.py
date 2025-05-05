@@ -18,6 +18,9 @@ from collections import deque
 from typing import List, Dict, Any, Optional
 from contextlib import AsyncExitStack
 
+# Import custom logging configuration
+from smart_agent.web.logging_config import configure_logging
+
 # Configure agents tracing
 from agents import Runner, set_tracing_disabled, ItemHelpers
 set_tracing_disabled(disabled=True)
@@ -68,56 +71,11 @@ def parse_args():
 # Get command line arguments
 args = parse_args()
 
-# Force debug output to console
-if args.debug:
-    # Create a console handler with a specific formatter
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('DEBUG: %(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    
-    # Remove existing handlers to avoid duplicates
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-    
-    # Add our console handler
-    root_logger.addHandler(console_handler)
-    
-    # Configure our logger
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
-    
-    # Print directly to ensure visibility
-    print("DEBUG MODE ENABLED - Smart Agent running with verbose logging")
-    logger.debug("Debug mode enabled - setting verbose logging")
-    
-    # Configure specific loggers
-    logging.getLogger('smart_agent').setLevel(logging.DEBUG)
-    logging.getLogger('smart_agent.core').setLevel(logging.DEBUG)
-    logging.getLogger('smart_agent.web').setLevel(logging.DEBUG)
-    logging.getLogger('mcp.client').setLevel(logging.DEBUG)
-    
-    # Keep some noisy loggers at higher levels
-    logging.getLogger('asyncio').setLevel(logging.INFO)
-    logging.getLogger('httpx').setLevel(logging.INFO)
-    logging.getLogger('uvicorn').setLevel(logging.INFO)
-else:
-    # Standard logging configuration for normal mode
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger(__name__)
-    
-    # In normal mode, suppress verbose logging from external libraries
-    logging.getLogger('asyncio').setLevel(logging.ERROR)
-    logging.getLogger('httpx').setLevel(logging.WARNING)
-    logging.getLogger('mcp.client.sse').setLevel(logging.WARNING)
+# Configure logging using our custom configuration
+configure_logging(debug=args.debug)
+
+# Define logger
+logger = logging.getLogger(__name__)
 
 @cl.on_settings_update
 async def handle_settings_update(settings):
@@ -231,7 +189,7 @@ async def on_message(msg: cl.Message):
             cl.user_session.smart_agent.mcp_servers,
             shared_exit_stack=None  # Let each server use its own exit_stack
         )
-        cl.user_session.mcp_servers = mcp_servers
+        # cl.user_session.mcp_servers = mcp_servers
         logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
 
         agent = Agent(
@@ -241,7 +199,7 @@ async def on_message(msg: cl.Message):
                 model=cl.user_session.model_name,
                 openai_client=cl.user_session.smart_agent.openai_client,
             ),
-            mcp_servers=cl.user_session.mcp_servers,
+            mcp_servers=mcp_servers,
         )
 
         assistant_reply = await cl.user_session.smart_agent.process_query(
@@ -312,5 +270,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default=None, help="Path to configuration file")
 
     args = parser.parse_args()
+    
+    # Apply our custom logging configuration
+    configure_logging(debug=args.debug)
 
     # Note: Chainlit handles the server startup when run with `chainlit run`

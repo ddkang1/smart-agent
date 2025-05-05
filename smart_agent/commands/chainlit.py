@@ -8,6 +8,7 @@ import socket
 import time
 import subprocess
 import argparse
+import logging
 from pathlib import Path
 
 def find_available_port(start_port=8000, max_attempts=100):
@@ -89,10 +90,19 @@ def run_chainlit_ui(args):
     if args.debug:
         cmd.append("--debug")
     
+    # Import our custom logging configuration
+    from smart_agent.web.logging_config import configure_logging
+    
+    # Configure logging with the appropriate debug level
+    configure_logging(debug=args.debug)
+    
+    # Set environment variables for the subprocess
+    env = os.environ.copy()
+    
     # Run Chainlit
     try:
         print(f"Starting Chainlit web UI on http://{args.host}:{args.port}")
-        process = subprocess.Popen(cmd)
+        process = subprocess.Popen(cmd, env=env)
         process.wait()
         return process.returncode
     except KeyboardInterrupt:
