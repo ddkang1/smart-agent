@@ -36,6 +36,7 @@ if "DATABASE_URL" in os.environ:
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
 from smart_agent.core.chainlit_agent import ChainlitSmartAgent
+from smart_agent.core.smooth_stream import SmoothStreamWrapper
 from smart_agent.web.helpers.setup import create_translation_files
 
 try:
@@ -68,6 +69,17 @@ configure_logging(debug=args.debug)
 
 # Define logger
 logger = logging.getLogger(__name__)
+
+# Get token batching settings from environment variables (set by the CLI)
+use_token_batching = os.environ.get("SMART_AGENT_NO_STREAM_BATCHING", "") != "1"
+batch_size = int(os.environ.get("SMART_AGENT_BATCH_SIZE", "20"))
+flush_interval = float(os.environ.get("SMART_AGENT_FLUSH_INTERVAL", "0.1"))
+
+# Log token batching settings
+if use_token_batching:
+    logger.info(f"Token batching enabled with batch size {batch_size} and flush interval {flush_interval}s")
+else:
+    logger.info("Token batching disabled")
 
 @cl.on_settings_update
 async def handle_settings_update(settings):
@@ -128,6 +140,11 @@ async def on_chat_start():
         cl.user_session.langfuse_enabled = smart_agent.langfuse_enabled
         cl.user_session.langfuse = smart_agent.langfuse
         
+        # Store token batching settings
+        cl.user_session.use_token_batching = use_token_batching
+        cl.user_session.batch_size = batch_size
+        cl.user_session.flush_interval = flush_interval
+        
     except ImportError:
         await cl.Message(
             content="Required packages not installed. Run 'pip install openai agent' to use the agent.",
@@ -152,9 +169,20 @@ async def on_message(msg: cl.Message):
     # Create a placeholder message that will receive streamed tokens
     assistant_msg = cl.Message(content="", author="Smart Agent")
     await assistant_msg.send()
+    
+    # Wrap the message with SmoothStreamWrapper if token batching is enabled
+    if getattr(cl.user_session, 'use_token_batching', False):
+        stream_msg = SmoothStreamWrapper(
+            assistant_msg,
+            batch_size=cl.user_session.batch_size,
+            flush_interval=cl.user_session.flush_interval,
+            debug=args.debug
+        )
+    else:
+        stream_msg = assistant_msg
 
     state = {
-        "assistant_msg": assistant_msg,
+        "assistant_msg": stream_msg,
         "current_type": "assistant",  # Default type is assistant message
         "is_thought": False           # Track pending <thought> output
     }
@@ -184,7 +212,7 @@ async def on_message(msg: cl.Message):
                 user_input,
                 conv,
                 agent=agent,
-                assistant_msg=assistant_msg,
+                assistant_msg=stream_msg,
                 state=state
             )
         

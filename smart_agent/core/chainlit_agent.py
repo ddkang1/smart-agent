@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from collections import deque
 from contextlib import AsyncExitStack
 from openai.types.responses import ResponseTextDeltaEvent
 
@@ -190,70 +189,6 @@ class ChainlitSmartAgent(BaseSmartAgent):
             
         return success
 
-    class SmoothStreamWrapper:
-        """
-        A wrapper for Chainlit message objects that provides consistent output rates
-        for token streaming.
-        """
-        
-        def __init__(self, original_message: Message):
-            """Initialize the wrapper with the original message."""
-            self.original_message = original_message
-            
-            # Buffer for tokens
-            self.buffer = deque()
-            self.stream_ended = asyncio.Event()
-            
-            # Define constants for consistent output
-            self.output_interval = 0.025  # 25ms between outputs
-            self.output_size = 24  # Output 24 characters at a time
-            
-            # Start the streaming task
-            self.streaming_task = asyncio.create_task(
-                self._stream_output(self.buffer, self.output_interval, self.output_size, self.stream_ended)
-            )
-        
-        async def _stream_output(self, buffer, interval, size, end_event):
-            """Stream output from the buffer at a consistent rate."""
-            try:
-                while not end_event.is_set() or buffer:  # Continue until signaled and buffer is empty
-                    if buffer:
-                        # Get a batch of tokens from the buffer
-                        batch = []
-                        
-                        for _ in range(min(size, len(buffer))):
-                            if not buffer:
-                                break
-                                
-                            batch.append(buffer.popleft())
-                        
-                        # Send the batch
-                        if batch:
-                            await self.original_message.stream_token(''.join(batch))
-                    
-                    await asyncio.sleep(interval)
-            except asyncio.CancelledError:
-                # Task cancellation is expected on completion
-                pass
-            except Exception as e:
-                logging.error(f"Error in stream_output: {e}")
-        
-        async def stream_token(self, token: str, *args, **kwargs):
-            """Override of the original stream_token method with consistent output rates."""
-            if not token:
-                return
-                
-            # Add the token to the buffer
-            for char in token:
-                self.buffer.append(char)
-        
-        async def cleanup(self):
-            """Clean up resources when done streaming."""
-            self.stream_ended.set()
-            try:
-                await self.streaming_task
-            except Exception as e:
-                logging.error(f"Error cleaning up streaming task: {e}")
     
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None, assistant_msg=None, state=None) -> str:
         """
@@ -284,11 +219,6 @@ class ChainlitSmartAgent(BaseSmartAgent):
         if state is not None:
             state["assistant_reply"] = ""
             
-        # Create smooth stream wrapper if assistant_msg is provided
-        smooth_stream = None
-        if assistant_msg is not None:
-            smooth_stream = self.SmoothStreamWrapper(assistant_msg)
-        
         try:
             # Run the agent with streaming
             from agents import Runner
@@ -296,11 +226,7 @@ class ChainlitSmartAgent(BaseSmartAgent):
             
             # Process the stream events using handle_event
             async for event in result.stream_events():
-                await self.handle_event(event, state, smooth_stream or assistant_msg)
-            
-            # Clean up smooth stream wrapper if used
-            if smooth_stream:
-                await smooth_stream.cleanup()
+                await self.handle_event(event, state, assistant_msg)
             
             # Get the accumulated assistant reply from state if available
             if state is not None and "assistant_reply" in state:
@@ -341,9 +267,7 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     if "thought" in arguments_dict:
                         state["is_thought"] = True
                         value = arguments_dict["thought"]
-                        await assistant_msg.stream_token("\n<thought>\n")
-                        await assistant_msg.stream_token(value)
-                        await assistant_msg.stream_token("\n</thought>")
+                        await assistant_msg.stream_token(f"\n<thought>\n{value}\n</thought>")
                     else:
                         # Regular tool call
                         tool_content = "\n<tool>\n"

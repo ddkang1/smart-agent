@@ -99,6 +99,21 @@ def run_chainlit_ui(args):
     # Set environment variables for the subprocess
     env = os.environ.copy()
     
+    # Add token batching configuration as environment variables
+    # This allows us to pass these settings to the chainlit app
+    if args.no_stream_batching:
+        env["SMART_AGENT_NO_STREAM_BATCHING"] = "1"
+    
+    env["SMART_AGENT_BATCH_SIZE"] = str(args.batch_size)
+    env["SMART_AGENT_FLUSH_INTERVAL"] = str(args.flush_interval)
+    
+    # Log the token batching configuration
+    logger = logging.getLogger(__name__)
+    if args.no_stream_batching:
+        logger.info("Token batching disabled")
+    else:
+        logger.info(f"Token batching enabled with batch size {args.batch_size} and flush interval {args.flush_interval}s")
+    
     # Run Chainlit
     try:
         print(f"Starting Chainlit web UI on http://{args.host}:{args.port}")
@@ -131,6 +146,24 @@ def setup_parser(parser):
         "--debug",
         action="store_true",
         help="Run in debug mode"
+    )
+    # Add token batching arguments
+    parser.add_argument(
+        "--no-stream-batching",
+        action="store_true",
+        help="Disable token batching for streaming"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Token batch size for streaming (default: 20)"
+    )
+    parser.add_argument(
+        "--flush-interval",
+        type=float,
+        default=0.1,
+        help="Flush interval for token batching in seconds (default: 0.1)"
     )
     return parser
 
