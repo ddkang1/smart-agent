@@ -12,7 +12,8 @@ from typing import List, Dict, Any, Optional
 from contextlib import AsyncExitStack
 from openai.types.responses import ResponseTextDeltaEvent
 
-# Import for type hints
+# Import chainlit
+import chainlit as cl
 from chainlit.message import Message
 
 # Set up logging
@@ -218,6 +219,15 @@ class ChainlitSmartAgent(BaseSmartAgent):
         # Initialize state if needed
         if state is not None:
             state["assistant_reply"] = ""
+            state["tool_count"] = 0
+            
+        # Create a single step that will be used for all tool calls and thoughts
+        tools_step = cl.Step(type="run", name="Agent Steps")
+        await tools_step.send()
+        
+        # Store the step in state for later reference
+        if state is not None:
+            state["tools_step"] = tools_step
             
         try:
             # Run the agent with streaming
@@ -227,6 +237,12 @@ class ChainlitSmartAgent(BaseSmartAgent):
             # Process the stream events using handle_event
             async for event in result.stream_events():
                 await self.handle_event(event, state, assistant_msg)
+            
+            # Update the final step name to show the total number of steps
+            if state is not None and "tools_step" in state and state.get("tool_count", 0) > 0:
+                tools_step = state["tools_step"]
+                tools_step.name = f"Took {state['tool_count']} steps"
+                await tools_step.update()
             
             # Get the accumulated assistant reply from state if available
             if state is not None and "assistant_reply" in state:
@@ -267,17 +283,57 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     if "thought" in arguments_dict:
                         state["is_thought"] = True
                         value = arguments_dict["thought"]
-                        await assistant_msg.stream_token(f"\n<thought>\n{value}\n</thought>")
-                    else:
-                        # Regular tool call
-                        tool_content = "\n<tool>\n"
                         
-                        # Add all key-value pairs from arguments_dict
-                        for arg_key, arg_value in arguments_dict.items():
-                            tool_content += f"{arg_key}={str(arg_value)}\n"
+                        # Increment tool count
+                        if state:
+                            state["tool_count"] = state.get("tool_count", 0) + 1
                             
-                        tool_content += "</tool>"
-                        await assistant_msg.stream_token(tool_content)
+                        # Update the tools step with the thought
+                        if state and "tools_step" in state:
+                            tools_step = state["tools_step"]
+                            current_count = state.get("tool_count", 0)
+                            
+                            # Update the step content
+                            if tools_step.output:
+                                tools_step.output += f"\n\n**Step {current_count}: Thinking**\n{value}"
+                            else:
+                                tools_step.output = f"**Step {current_count}: Thinking**\n{value}"
+                                
+                            # Update the step name to show progress
+                            tools_step.name = f"Steps ({current_count})"
+                            await tools_step.update()
+                    else:
+                        # Get the tool name
+                        tool_name = item.raw_item.name if hasattr(item.raw_item, 'name') else "tool"
+                        
+                        # Format the arguments
+                        formatted_input = {}
+                        for arg_key, arg_value in arguments_dict.items():
+                            formatted_input[arg_key] = arg_value
+                            
+                        # Format the input as a string
+                        input_str = json.dumps(formatted_input, indent=2)
+                        
+                        # Increment tool count
+                        if state:
+                            state["tool_count"] = state.get("tool_count", 0) + 1
+                            state["current_tool"] = tool_name
+                            state["current_tool_count"] = state.get("tool_count", 0)
+                            
+                        # Update the tools step with the tool call
+                        if state and "tools_step" in state:
+                            tools_step = state["tools_step"]
+                            current_count = state.get("tool_count", 0)
+                            
+                            # Update the step content
+                            if tools_step.output:
+                                tools_step.output += f"\n\n**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
+                            else:
+                                tools_step.output = f"**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
+                                
+                            # Update the step name to show progress
+                            tools_step.name = f"Steps ({current_count})"
+                            await tools_step.update()
                 except Exception as e:
                     error_text = f"Error parsing tool call: {e}"
                     await assistant_msg.stream_token(f"\n<error>{error_text}</error>")
@@ -286,8 +342,8 @@ class ChainlitSmartAgent(BaseSmartAgent):
             # Handle tool output
             elif item.type == "tool_call_output_item":
                 if state and state.get("is_thought"):
-                    state["is_thought"] = False  # Skip duplicate, reset
-                    return
+                    state["is_thought"] = False  # Reset thought flag
+                    return  # Skip processing thought outputs
                     
                 try:
                     # Try to parse output as JSON
@@ -297,15 +353,29 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     except json.JSONDecodeError:
                         output_content = item.output
                     
-                    full_output = f"\n<tool_output>\n{str(output_content)}\n</tool_output>"
-                    
-                    # For tool outputs, update the message directly
-                    if hasattr(assistant_msg, 'original_message'):
-                        assistant_msg.original_message.content += full_output
-                        await assistant_msg.original_message.update()
+                    # Update the tools step with the tool output
+                    if state and "tools_step" in state and state.get("current_tool_count"):
+                        tools_step = state["tools_step"]
+                        
+                        # Add the tool output to the existing output
+                        tools_step.output += f"\n\n**Output:**\n```\n{str(output_content)}\n```"
+                        
+                        # Update the step
+                        await tools_step.update()
+                        
+                        # Clear the current tool count from state
+                        state["current_tool_count"] = None
                     else:
-                        assistant_msg.content += full_output
-                        await assistant_msg.update()
+                        # If we don't have a step, fall back to the old behavior
+                        full_output = f"\n<tool_output>\n{str(output_content)}\n</tool_output>\n"
+                        
+                        # For tool outputs, update the message directly
+                        if hasattr(assistant_msg, 'original_message'):
+                            assistant_msg.original_message.content += full_output
+                            await assistant_msg.original_message.update()
+                        else:
+                            assistant_msg.content += full_output
+                            await assistant_msg.update()
                 except Exception as e:
                     logger.error(f"Error processing tool output: {e}")
                     await assistant_msg.stream_token(f"\n<error>Error processing tool output: {e}</error>")
