@@ -32,7 +32,7 @@ from agents import OpenAIChatCompletionsModel
 set_tracing_disabled(disabled=True)
 
 # Import our custom MCPServerSse implementation
-from .mcp_server import MCPServerSse
+from .mcp_server import MCPServerSse, MCPServerStdio
 
 # Import OpenAI client
 from openai import AsyncOpenAI
@@ -49,6 +49,9 @@ class BaseSmartAgent:
     This class provides the core functionality for interacting with OpenAI models and MCP servers.
     It is designed to be subclassed for specific interfaces (CLI, web, etc.).
     """
+    
+    # Track whether cleanup has been performed
+    _cleanup_done = False
 
     def __init__(self, config_manager: ConfigManager):
         """
@@ -91,16 +94,75 @@ class BaseSmartAgent:
             base_url=self.base_url,
             api_key=self.api_key,
         )
-
-    def setup_mcp_servers(self) -> List[MCPServer]:
-        """
-        Set up MCP servers based on the configuration.
-
-        Returns:
-            List of MCP server objects
-        """
-        mcp_servers = []
         
+        # Initialize MCP servers list but don't connect yet
+        self._setup_mcp_servers()
+        
+    async def connect(self, validate=False, force=False):
+        """
+        Asynchronously connect the agent, including connecting to MCP servers.
+        This method should be called after creating the agent instance.
+        If a connection error occurs, it will recreate the server with the same arguments
+        and try to connect again.
+        """
+        
+        if force:
+            self.mcp_servers = []
+            self._setup_mcp_servers()
+
+        for i, server in enumerate(self.mcp_servers[:]):  # Create a copy of the list to iterate
+            server_name = getattr(server, 'name', 'unknown')
+            
+            try:
+                logger.debug(f"Connecting to MCP server: {server_name}")
+                await server.exit_stack.enter_async_context(server)
+                if validate:
+                    await server.list_tools()
+                logger.debug(f"Connected to MCP server: {server_name}")
+
+            except Exception as e:
+                logger.error(f"Error connecting to MCP server {server_name}: {e}")
+                
+                # Attempt to recreate the server with the same arguments
+                try:
+                    logger.info(f"Recreating MCP server {server_name} after connection error")
+                    
+                    # Close the existing server's exit stack
+                    # await server.exit_stack.aclose()
+                    
+                    # Create a new server of the same type with the same parameters
+                    new_server = None
+                    
+                    # Determine server type and recreate accordingly
+                    if isinstance(server, MCPServerSse):
+                        new_server = MCPServerSse(
+                            name=server.name,
+                            params=server.params,
+                            client_session_timeout_seconds=server.client_session_timeout_seconds
+                        )
+                    elif isinstance(server, MCPServerStdio):
+                        new_server = MCPServerStdio(
+                            name=server.name,
+                            params=server.params,
+                            client_session_timeout_seconds=server.client_session_timeout_seconds
+                        )
+                    
+                    if new_server:
+                        # Replace the old server with the new one
+                        self.mcp_servers[i] = new_server
+                        
+                        # Try to connect with the new server
+                        logger.debug(f"Attempting to connect with recreated MCP server: {server_name}")
+                        await new_server.exit_stack.enter_async_context(new_server)
+                        logger.debug(f"Successfully connected to recreated MCP server: {server_name}")
+                    else:
+                        logger.error(f"Failed to recreate MCP server {server_name}: Unknown server type")
+                        
+                except Exception as e2:
+                    logger.error(f"Error reconnecting to recreated MCP server {server_name}: {e2}")
+                
+    def _setup_mcp_servers(self):
+        """Set up MCP server objects based on configuration."""
         # Get enabled tools
         for tool_id, tool_config in self.config_manager.get_tools_config().items():
             if not self.config_manager.is_tool_enabled(tool_id):
@@ -118,7 +180,7 @@ class BaseSmartAgent:
                     client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
                     
                     logger.info(f"Adding MCP server {tool_id} at {url} with timeouts: HTTP={http_timeout}s, SSE={sse_read_timeout}s, Session={client_session_timeout}s")
-                    mcp_servers.append(MCPServerSse(
+                    self.mcp_servers.append(MCPServerSse(
                         name=tool_id,
                         params={
                             "url": url,
@@ -131,9 +193,6 @@ class BaseSmartAgent:
             elif transport_type == "stdio":
                 command = tool_config.get("command")
                 if command:
-                    # Import MCPServerStdio here to avoid circular imports
-                    from agents.mcp import MCPServerStdio
-                    
                     # Get timeout configuration from config
                     client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
                     
@@ -143,7 +202,7 @@ class BaseSmartAgent:
                     args = command_parts[1:] if len(command_parts) > 1 else []
                     
                     logger.info(f"Adding MCP server {tool_id} with command '{command}' and session timeout: {client_session_timeout}s")
-                    mcp_servers.append(MCPServerStdio(
+                    self.mcp_servers.append(MCPServerStdio(
                         name=tool_id,
                         params={
                             "command": executable,
@@ -156,9 +215,6 @@ class BaseSmartAgent:
                 # Get the URL from the configuration
                 url = tool_config.get("url")
                 if url:
-                    # Import MCPServerStdio here to avoid circular imports
-                    from agents.mcp import MCPServerStdio
-                    
                     # Get timeout configuration from config
                     client_session_timeout = self.config_manager.get_tool_timeout(tool_id, "client_session_timeout", 30)
                     
@@ -171,7 +227,7 @@ class BaseSmartAgent:
                     args = command_parts[1:] if len(command_parts) > 1 else []
                     
                     logger.info(f"Adding MCP server {tool_id} with sse_to_stdio transport and session timeout: {client_session_timeout}s")
-                    mcp_servers.append(MCPServerStdio(
+                    self.mcp_servers.append(MCPServerStdio(
                         name=tool_id,
                         params={
                             "command": executable,
@@ -184,8 +240,6 @@ class BaseSmartAgent:
             # For any other transport types, log a warning
             else:
                 logger.warning(f"Unknown transport type '{transport_type}' for tool {tool_id}")
-        
-        return mcp_servers
 
     @abstractmethod
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None) -> str:
@@ -205,3 +259,62 @@ class BaseSmartAgent:
             The agent's response
         """
         pass
+        
+    async def aclose(self):
+        """
+        Asynchronously clean up resources, particularly MCP servers.
+        
+        This method should be called when the agent is no longer needed to ensure
+        proper cleanup of async resources.
+        """
+        if self._cleanup_done:
+            return
+            
+        # Mark cleanup as done to prevent multiple cleanups
+        self._cleanup_done = True
+        
+        # Clean up MCP servers
+        for server in self.mcp_servers:
+            try:
+                await server.exit_stack.aclose()
+            except Exception as e:
+                logger.error(f"Error closing MCP server {getattr(server, 'name', 'unknown')}: {e}")
+    
+    def close(self):
+        """
+        Synchronously clean up resources.
+        
+        This is a convenience method that creates a new event loop if necessary
+        to run the async cleanup.
+        """
+        if self._cleanup_done:
+            return
+            
+        try:
+            # Try to get the current event loop
+            loop = asyncio.get_event_loop()
+            
+            # If the loop is closed or not running, create a new one
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            # Run the async cleanup
+            if loop.is_running():
+                # Create a future for the cleanup
+                future = asyncio.run_coroutine_threadsafe(self.aclose(), loop)
+                # Wait for the future to complete with a timeout
+                future.result(timeout=5)
+            else:
+                # If the loop is not running, run the cleanup directly
+                loop.run_until_complete(self.aclose())
+                
+        except Exception as e:
+            logger.error(f"Error during synchronous cleanup: {e}")
+    
+    def __del__(self):
+        """
+        Destructor to ensure resources are cleaned up when the object is garbage collected.
+        """
+        if not self._cleanup_done:
+            self.close()

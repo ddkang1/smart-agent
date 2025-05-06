@@ -125,7 +125,7 @@ async def on_chat_start():
     try:
         # Create the ChainlitSmartAgent
         smart_agent = ChainlitSmartAgent(config_manager=cl.user_session.config_manager)
-        
+                
         # Initialize conversation history with system prompt
         system_prompt = PromptGenerator.create_system_prompt()
         cl.user_session.conversation_history = [{"role": "system", "content": system_prompt}]
@@ -135,7 +135,7 @@ async def on_chat_start():
         temperature = cl.user_session.config_manager.get_model_temperature()
 
         # Set up MCP server objects
-        smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
+        # smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
         
         # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
@@ -155,7 +155,7 @@ async def on_chat_start():
         error_message = f"An error occurred during initialization: {str(e)}"
         logger.exception(error_message)
         await cl.Message(content=error_message, author="System").send()
-        await cl.user_session.exit_stack.aclose()
+        # await cl.user_session.exit_stack.aclose()
 
 @cl.on_message
 async def on_message(msg: cl.Message):
@@ -184,34 +184,41 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        logger.info("Connecting to MCP servers...")
-        mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
-            cl.user_session.smart_agent.mcp_servers,
-            shared_exit_stack=None  # Let each server use its own exit_stack
-        )
-        # cl.user_session.mcp_servers = mcp_servers
-        logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
+        # await cl.user_session.smart_agent.connect(force=True)
+        # mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
+        #     cl.user_session.smart_agent.mcp_servers,
+        #     shared_exit_stack=None  # Let each server use its own exit_stack
+        # )
+        async with AsyncExitStack() as exit_stack:
+            logger.info("Connecting to MCP servers...")
+            mcp_servers = []
+            for server in cl.user_session.smart_agent.mcp_servers:
+                connected_server = await exit_stack.enter_async_context(server)
+                mcp_servers.append(connected_server)
+                logger.debug(f"Connected to MCP server: {connected_server.name}")
 
-        agent = Agent(
-            name="Assistant",
-            instructions=cl.user_session.smart_agent.system_prompt,
-            model=OpenAIChatCompletionsModel(
-                model=cl.user_session.model_name,
-                openai_client=cl.user_session.smart_agent.openai_client,
-            ),
-            mcp_servers=mcp_servers,
-        )
+            # cl.user_session.mcp_servers = mcp_servers
+            logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
 
-        assistant_reply = await cl.user_session.smart_agent.process_query(
-            user_input,
-            conv,
-            agent=agent,
-            assistant_msg=assistant_msg,
-            state=state
-        )
+            agent = Agent(
+                name="Assistant",
+                instructions=cl.user_session.smart_agent.system_prompt,
+                model=OpenAIChatCompletionsModel(
+                    model=cl.user_session.model_name,
+                    openai_client=cl.user_session.smart_agent.openai_client,
+                ),
+                mcp_servers=mcp_servers,
+            )
+
+            assistant_reply = await cl.user_session.smart_agent.process_query(
+                user_input,
+                conv,
+                agent=agent,
+                assistant_msg=assistant_msg,
+                state=state
+            )
         
-        # Add the assistant's response to conversation history
-        conv.append({"role": "assistant", "content": assistant_reply})
+            conv.append({"role": "assistant", "content": assistant_reply})
             
         # Log to Langfuse if enabled
         if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
@@ -235,29 +242,7 @@ async def on_message(msg: cl.Message):
 
 @cl.on_chat_end
 async def on_chat_end():
-    """Clean up resources when the chat session ends."""
-    logger.info("Final cleanup of resources...")
-
-    try:
-        # Perform any final cleanup if needed
-        if hasattr(cl.user_session, 'smart_agent'):
-            # We already clean up after each message, but do a final cleanup just in case
-            cleanup_success = await cl.user_session.smart_agent.cleanup()
-            if cleanup_success:
-                logger.info("Final MCP servers cleanup successful")
-            else:
-                logger.warning("Final MCP servers cleanup completed with some issues")
-        
-        logger.info("Final cleanup complete")
-    except Exception as e:
-        # Catch any exceptions during cleanup to prevent them from propagating
-        logger.error(f"Error during final cleanup: {e}")
-        # Still mark cleanup as complete
-        logger.info("Final cleanup completed with some errors")
-    finally:
-        # Clear any session variables that might hold references to resources
-        if hasattr(cl.user_session, 'mcp_servers'):
-            cl.user_session.mcp_servers = []
+    logger.info("on_chat_end")
 
 if __name__ == "__main__":
     # This is used when running locally with `chainlit run`

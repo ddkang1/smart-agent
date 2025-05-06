@@ -50,7 +50,7 @@ class ChainlitSmartAgent(BaseSmartAgent):
         super().__init__(*args, **kwargs)
         # Dictionary to store MCP sessions: {server_name: (client_session, exit_stack)}
         self.mcp_sessions = {}
-
+        
     async def connect_mcp_servers(self, mcp_servers_objects, shared_exit_stack=None):
         """
         Connect to MCP servers with improved session management for Chainlit interface.
