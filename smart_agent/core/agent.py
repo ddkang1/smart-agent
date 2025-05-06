@@ -127,9 +127,6 @@ class BaseSmartAgent:
                 try:
                     logger.info(f"Recreating MCP server {server_name} after connection error")
                     
-                    # Close the existing server's exit stack
-                    # await server.exit_stack.aclose()
-                    
                     # Create a new server of the same type with the same parameters
                     new_server = None
                     

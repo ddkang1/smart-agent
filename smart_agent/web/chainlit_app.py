@@ -1,7 +1,6 @@
 """Chainlit web interface for Smart Agent.
 
 This module provides a web interface for Smart Agent using Chainlit.
-It directly translates the CLI chat client functionality to a web interface.
 """
 
 # Standard library imports
@@ -10,19 +9,16 @@ import sys
 import json
 import logging
 import asyncio
-import time
 import warnings
 import argparse
-from datetime import datetime
-from collections import deque
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from contextlib import AsyncExitStack
 
 # Import custom logging configuration
 from smart_agent.web.logging_config import configure_logging
 
 # Configure agents tracing
-from agents import Runner, set_tracing_disabled, ItemHelpers
+from agents import Runner, set_tracing_disabled
 set_tracing_disabled(disabled=True)
 
 # Suppress specific warnings
@@ -36,9 +32,6 @@ if "LITERAL_API_KEY" in os.environ:
 if "DATABASE_URL" in os.environ:
     del os.environ["DATABASE_URL"]
 
-# Add parent directory to path to import smart_agent modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
 # Smart Agent imports
 from smart_agent.tool_manager import ConfigManager
 from smart_agent.agent import PromptGenerator
@@ -50,19 +43,18 @@ try:
 except ImportError:
     Agent = None
     OpenAIChatCompletionsModel = None
-    MCPServerSse = None
-    MCPServerStdio = None
 
 # Chainlit import
 import chainlit as cl
 
-# Parse command line arguments to check for debug flag
+# Parse command line arguments
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Chainlit web interface for Smart Agent")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
+    parser.add_argument("--config", type=str, default=None, help="Path to configuration file")
     
     # Parse known args only, to avoid conflicts with chainlit's own arguments
     args, _ = parser.parse_known_args()
@@ -99,11 +91,7 @@ async def handle_settings_update(settings):
 
 @cl.on_chat_start
 async def on_chat_start():
-    """Initialize the chat session.
-
-    This function is called when a new chat session starts. It initializes
-    the user session variables, creates the agent, and connects to MCP servers.
-    """
+    """Initialize the chat session."""
     # Create translation files
     create_translation_files()
 
@@ -112,7 +100,6 @@ async def on_chat_start():
 
     # Get API configuration
     api_key = cl.user_session.config_manager.get_api_key()
-    base_url = cl.user_session.config_manager.get_api_base_url()
 
     # Check if API key is set
     if not api_key:
@@ -133,9 +120,6 @@ async def on_chat_start():
         # Get model configuration
         model_name = cl.user_session.config_manager.get_model_name()
         temperature = cl.user_session.config_manager.get_model_temperature()
-
-        # Set up MCP server objects
-        # smart_agent.mcp_servers = smart_agent.setup_mcp_servers()
         
         # Store the agent and other session variables
         cl.user_session.smart_agent = smart_agent
@@ -155,18 +139,10 @@ async def on_chat_start():
         error_message = f"An error occurred during initialization: {str(e)}"
         logger.exception(error_message)
         await cl.Message(content=error_message, author="System").send()
-        # await cl.user_session.exit_stack.aclose()
 
 @cl.on_message
 async def on_message(msg: cl.Message):
-    """Handle user messages.
-    
-    This function is called when a user sends a message. It processes the message,
-    runs the agent, and displays the response.
-    
-    Args:
-        msg: The user message
-    """
+    """Handle user messages."""
     user_input = msg.content
     conv = cl.user_session.conversation_history
     
@@ -184,11 +160,6 @@ async def on_message(msg: cl.Message):
     }
 
     try:
-        # await cl.user_session.smart_agent.connect(force=True)
-        # mcp_servers = await cl.user_session.smart_agent.connect_mcp_servers(
-        #     cl.user_session.smart_agent.mcp_servers,
-        #     shared_exit_stack=None  # Let each server use its own exit_stack
-        # )
         async with AsyncExitStack() as exit_stack:
             logger.info("Connecting to MCP servers...")
             mcp_servers = []
@@ -197,7 +168,6 @@ async def on_message(msg: cl.Message):
                 mcp_servers.append(connected_server)
                 logger.debug(f"Connected to MCP server: {connected_server.name}")
 
-            # cl.user_session.mcp_servers = mcp_servers
             logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
 
             agent = Agent(
@@ -242,21 +212,10 @@ async def on_message(msg: cl.Message):
 
 @cl.on_chat_end
 async def on_chat_end():
-    logger.info("on_chat_end")
+    """Handle chat end event."""
+    logger.info("Chat session ended")
 
 if __name__ == "__main__":
     # This is used when running locally with `chainlit run`
-    # The port can be overridden with the `--port` flag
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run the Chainlit web UI for Smart Agent")
-    parser.add_argument("--port", type=int, default=8000, help="Port to run the server on")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
-    parser.add_argument("--config", type=str, default=None, help="Path to configuration file")
-
-    args = parser.parse_args()
-    
-    # Apply our custom logging configuration
-    configure_logging(debug=args.debug)
-
     # Note: Chainlit handles the server startup when run with `chainlit run`
+    configure_logging(debug=args.debug)

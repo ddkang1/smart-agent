@@ -17,7 +17,6 @@ from contextlib import AsyncExitStack
 
 # Import agent components
 from agents import Agent, OpenAIChatCompletionsModel, Runner, ItemHelpers
-from agents.extensions.models.litellm_model import LitellmModel
 from openai.types.responses import ResponseTextDeltaEvent
 
 # Set up logging
@@ -25,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Rich imports for CLI formatting
 from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.text import Text
 
 # Import base SmartAgent
 from .agent import BaseSmartAgent
@@ -69,11 +65,10 @@ class CLISmartAgent(BaseSmartAgent):
         # Create a buffer for tokens with type information
         buffer = deque()
         stream_ended = asyncio.Event()
-        current_type = "assistant"  # Default type is assistant message
         
         # Define constants for consistent output
         output_interval = 0.05  # 50ms between outputs
-        output_size = 12  # Output 6 characters at a time
+        output_size = 12  # Output characters at a time
         
         # Define colors for different content types
         type_colors = {
@@ -81,8 +76,7 @@ class CLISmartAgent(BaseSmartAgent):
             "thought": "cyan",
             "tool_output": "bright_green",
             "tool": "yellow",
-            "error": "red",
-            "system": "magenta"
+            "error": "red"
         }
         
         # Function to add content to buffer with type information
@@ -97,13 +91,12 @@ class CLISmartAgent(BaseSmartAgent):
         
         # Function to stream output at a consistent rate with different colors
         async def stream_output(buffer, interval, size, end_event):
-            nonlocal current_type
+            current_batch_type = "assistant"
             try:
                 while not end_event.is_set() or buffer:  # Continue until signaled and buffer is empty
                     if buffer:
                         # Get a batch of tokens from the buffer
                         batch = []
-                        current_batch_type = None
                         
                         for _ in range(min(size, len(buffer))):
                             if not buffer:
@@ -116,13 +109,8 @@ class CLISmartAgent(BaseSmartAgent):
                                 if batch:  # Print current batch before changing type
                                     rich_console.print(''.join(batch), end="", style=type_colors.get(current_batch_type, "green"))
                                     batch = []
-                                current_type = item[1]
-                                current_batch_type = current_type
-                                continue
-                            
-                            # Initialize batch type if not set
-                            if current_batch_type is None:
                                 current_batch_type = item[1]
+                                continue
                             
                             # If type changes within batch, print current batch and start new one
                             if item[1] != current_batch_type:
@@ -161,104 +149,67 @@ class CLISmartAgent(BaseSmartAgent):
             result = Runner.run_streamed(agent, history, max_turns=100)
             is_thought = False
             
-            # Process the stream events with a holistic output approach
+            # Process the stream events
             async for event in result.stream_events():
-                # Process all events through the normal CLI processing path
-                # Normal processing (only used when no custom handler is provided)
-                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):                    
+                # Handle token streaming
+                if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
                     add_to_buffer(event.data.delta, "assistant")
                     continue
                 elif event.type == "agent_updated_stream_event":
                     continue
                 elif event.type == "run_item_stream_event":
+                    # Handle tool calls
                     if event.item.type == "tool_call_item":
                         try:
                             arguments_dict = json.loads(event.item.raw_item.arguments)
                             key, value = next(iter(arguments_dict.items()))
                             if key == "thought":
                                 is_thought = True
-                                
-                                # Add the opening thought tag to the buffer with thought type
                                 add_to_buffer("\n<thought>\n", "thought")
-                                
-                                # Add the thought content with thought type
                                 add_to_buffer(str(value), "thought")
-                                
-                                # Add the closing thought tag with thought type
                                 add_to_buffer("\n</thought>", "thought")
-                                
                             else:
                                 is_thought = False
-                                
-                                # Regular tool call
-                                tool_opening = f"\n<tool>\n"
-                                add_to_buffer(tool_opening, "tool")
-                                # Add all key-value pairs from arguments_dict
+                                add_to_buffer("\n<tool>\n", "tool")
                                 for arg_key, arg_value in arguments_dict.items():
                                     add_to_buffer(f"{arg_key}={str(arg_value)}\n", "tool")
                                 add_to_buffer("</tool>", "tool")
-                        except (json.JSONDecodeError, StopIteration) as e:
-                            # Add error to buffer with error type
+                        except Exception as e:
                             error_text = f"Error parsing tool call: {e}"
-                            add_to_buffer("\n<error>", "error")
-                            add_to_buffer(error_text, "error")
-                            add_to_buffer("</error>", "error")
-                            
-                            # Update assistant reply
-                            # assistant_reply += f"\n<error>{error_text}</error>"
-                    elif event.item.type == "tool_call_output_item":
-                        if not is_thought:
+                            add_to_buffer(f"\n<error>{error_text}</error>", "error")
+                    
+                    # Handle tool outputs
+                    elif event.item.type == "tool_call_output_item" and not is_thought:
+                        try:
                             try:
-                                output_text = json.loads(event.item.output).get("text", "")
-                                
-                                # Pause token streaming
-                                stream_ended.set()
-                                await streaming_task
-                                
-                                # Print tool output all at once
-                                rich_console.print("\n<tool_output>\n", end="", style="bright_green bold")
-                                rich_console.print(str(output_text), style="bright_green", end="")
-                                    
-                                rich_console.print("\n</tool_output>", style="bright_green bold")
-                                
-                                # Ensure output is flushed immediately
-                                sys.stdout.flush()
-                                
-                                # Update assistant reply
-                                # assistant_reply += f"\n<tool_output>{output_text}</tool_output>"
-                                
-                                # Reset for continued streaming
-                                stream_ended.clear()
-                                streaming_task = asyncio.create_task(
-                                    stream_output(buffer, output_interval, output_size, stream_ended)
-                                )
+                                output_json = json.loads(event.item.output)
+                                output_text = output_json.get("text", json.dumps(output_json, indent=2))
                             except json.JSONDecodeError:
-                                # Pause token streaming
-                                stream_ended.set()
-                                await streaming_task
-                                
-                                # Print tool output all at once
-                                rich_console.print("\n<tool_output>", end="", style="bright_green bold")
-                                rich_console.print(str(event.item.output), style="bright_green", end="")
-                                    
-                                rich_console.print("</tool_output>", style="bright_green bold")
-                                
-                                # Ensure output is flushed immediately
-                                sys.stdout.flush()
-                                
-                                # Update assistant reply
-                                # assistant_reply += f"\n<tool_output>{event.item.output}</tool_output>"
-                                
-                                # Reset for continued streaming
-                                stream_ended.clear()
-                                streaming_task = asyncio.create_task(
-                                    stream_output(buffer, output_interval, output_size, stream_ended)
-                                )
-                    elif event.item.type == "message_output_item":
-                        role = event.item.raw_item.role
-                        text_message = ItemHelpers.text_message_output(event.item)
-                        if role == "assistant":
-                            assistant_reply += text_message
+                                output_text = event.item.output
+                            
+                            # Pause token streaming
+                            stream_ended.set()
+                            await streaming_task
+                            
+                            # Print tool output all at once
+                            rich_console.print("\n<tool_output>\n", end="", style="bright_green bold")
+                            rich_console.print(str(output_text), style="bright_green", end="")
+                            rich_console.print("\n</tool_output>", style="bright_green bold")
+                            
+                            # Ensure output is flushed immediately
+                            sys.stdout.flush()
+                            
+                            # Reset for continued streaming
+                            stream_ended.clear()
+                            streaming_task = asyncio.create_task(
+                                stream_output(buffer, output_interval, output_size, stream_ended)
+                            )
+                        except Exception as e:
+                            add_to_buffer(f"\n<error>Error processing tool output: {e}</error>", "error")
+                    
+                    # Handle final message
+                    elif event.item.type == "message_output_item" and event.item.raw_item.role == "assistant":
+                        assistant_reply += ItemHelpers.text_message_output(event.item)
             
             # Signal that the stream has ended
             stream_ended.set()
@@ -279,7 +230,7 @@ class CLISmartAgent(BaseSmartAgent):
                 stream_ended.set()
                 try:
                     await streaming_task
-                except:
+                except Exception:
                     pass
 
     async def run_chat_loop(self):
@@ -311,7 +262,7 @@ class CLISmartAgent(BaseSmartAgent):
         self.conversation_history = [{"role": "system", "content": self.system_prompt}]
         
         # Set up MCP servers
-        self.mcp_servers = self.setup_mcp_servers()
+        # self.mcp_servers = self.setup_mcp_servers()
         
         # Chat loop
         async with AsyncExitStack() as exit_stack:
@@ -394,8 +345,6 @@ class CLISmartAgent(BaseSmartAgent):
                 except Exception as e:
                     logger.error(f"Error processing query: {e}")
                     print(f"\nError: {e}")
-                    import traceback
-                    traceback.print_exc()
             
             print("\nChat session ended")
             
