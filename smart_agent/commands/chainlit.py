@@ -162,8 +162,8 @@ def setup_parser(parser):
     parser.add_argument(
         "--flush-interval",
         type=float,
-        default=0.1,
-        help="Flush interval for token batching in seconds (default: 0.1)"
+        default=0.05,
+        help="Flush interval for token batching in seconds (default: 0.05)"
     )
     return parser
 

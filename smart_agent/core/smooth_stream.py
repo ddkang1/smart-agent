@@ -9,6 +9,7 @@ import asyncio
 import time
 import logging
 from typing import Optional, Dict, Any
+from collections import deque
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -19,13 +20,16 @@ class SmoothStreamWrapper:
     
     This class buffers tokens and sends them in batches to reduce the number of socket events
     and React state updates, resulting in smoother streaming for long messages.
+    
+    Implementation is based on a producer-consumer pattern with a dedicated streaming task
+    that runs continuously until streaming is complete.
     """
     
     def __init__(
         self,
         original_message,
         batch_size: int = 20,
-        flush_interval: float = 0.1,
+        flush_interval: float = 0.05,
         debug: bool = False
     ):
         """
@@ -43,10 +47,9 @@ class SmoothStreamWrapper:
         self.debug = debug
         
         # Batching state
-        self.token_buffer = []
-        self.last_flush_time = time.time()
-        self.flush_task = None
-        self.is_sequence = False
+        self.token_buffer = deque()
+        self.stream_ended = asyncio.Event()
+        self.streaming_task = None
         self.total_tokens = 0
         self.batch_count = 0
         
@@ -77,33 +80,80 @@ class SmoothStreamWrapper:
             return
             
         # Add token to buffer
-        self.token_buffer.append(token)
+        self.token_buffer.extend(token)
         # Update our content tracking
         self.content += token
         
-        # Start the background flush task if not already running
-        if self.flush_task is None or self.flush_task.done():
-            self.flush_task = asyncio.create_task(self._background_flush())
+        # Start the streaming task if not already running
+        if not self.streaming_task or self.streaming_task.done():
+            self.streaming_task = asyncio.create_task(
+                self._stream_output_task(
+                    self.original_message,
+                    self.token_buffer,
+                    self.flush_interval,
+                    self.batch_size,
+                    self.stream_ended
+                )
+            )
             
-        # Flush immediately if buffer reaches batch size
-        if len(self.token_buffer) >= self.batch_size:
-            await self._flush_buffer()
-            
-    async def _background_flush(self):
-        """Background task to periodically flush the token buffer"""
+    async def _stream_output_task(self, msg, buffer, interval, size, end_event):
+        """
+        Background task to periodically flush the token buffer.
+        
+        This task runs continuously until streaming is complete and the buffer is empty.
+        
+        Args:
+            msg: The message to stream tokens to
+            buffer: The token buffer (deque)
+            interval: Time in seconds between flushes
+            size: Maximum number of tokens to flush at once
+            end_event: Event to signal when streaming is complete
+        """
         try:
-            while self.token_buffer:
-                current_time = time.time()
-                if current_time - self.last_flush_time >= self.flush_interval:
-                    await self._flush_buffer()
-                await asyncio.sleep(self.flush_interval / 2)  # Check twice per interval
+            # Initialize streaming if needed
+            if not hasattr(msg, 'streaming') or not msg.streaming:
+                if len(buffer) > 0:
+                    # Get one token to start streaming
+                    first_token = buffer.popleft()
+                    await msg.stream_token(first_token)
+            
+            # Continue until signaled and buffer is empty
+            while not end_event.is_set() or buffer:
+                if buffer:
+                    # Calculate how many tokens to flush
+                    flush_count = min(size, len(buffer))
+                    
+                    if flush_count > 0:
+                        # Join tokens into a single string
+                        to_flush = ''.join([buffer.popleft() for _ in range(flush_count)])
+                        
+                        # Send the combined token
+                        await msg.stream_token(to_flush)
+                        
+                        # Update batch count
+                        self.batch_count += 1
+                        
+                        if self.debug:
+                            logger.debug(f"Flushed batch #{self.batch_count} with {flush_count} tokens")
+                
+                # Wait before checking again
+                await asyncio.sleep(interval)
+                
         except asyncio.CancelledError:
-            # Ensure buffer is flushed on cancellation
-            if self.token_buffer:
-                await self._flush_buffer()
+            # Task cancellation is expected on completion
+            if self.debug:
+                logger.debug("Streaming task cancelled")
+            
+            # Make sure to flush any remaining tokens
+            if buffer:
+                to_flush = ''.join(list(buffer))
+                buffer.clear()
+                await msg.stream_token(to_flush)
+                
             raise
+            
         except Exception as e:
-            logger.error(f"Error in background flush task: {e}")
+            logger.error(f"Error in streaming task: {e}")
     
     async def _flush_buffer(self):
         """Flush the token buffer to the underlying Message"""
@@ -111,32 +161,31 @@ class SmoothStreamWrapper:
             return
             
         # Join all buffered tokens
-        combined_token = "".join(self.token_buffer)
+        to_flush = ''.join(list(self.token_buffer))
         buffer_size = len(self.token_buffer)
-        self.token_buffer = []
+        self.token_buffer.clear()
         
         # Send to the underlying message
         try:
-            await self.original_message.stream_token(combined_token, is_sequence=False)
-            self.last_flush_time = time.time()
+            await self.original_message.stream_token(to_flush, is_sequence=False)
             self.batch_count += 1
             
             if self.debug:
-                logger.debug(f"Flushed batch #{self.batch_count} with {buffer_size} tokens")
+                logger.debug(f"Manually flushed batch with {buffer_size} tokens")
         except Exception as e:
             logger.error(f"Error flushing token buffer: {e}")
     
     async def send(self):
         """Send the message, ensuring all buffered tokens are flushed first"""
-        # Flush any remaining tokens
-        await self._flush_buffer()
+        # Signal that streaming is complete
+        self.stream_ended.set()
         
-        # Cancel the background flush task if it's running
-        if self.flush_task and not self.flush_task.done():
-            self.flush_task.cancel()
+        # Wait for the streaming task to finish processing the buffer
+        if self.streaming_task and not self.streaming_task.done():
             try:
-                await self.flush_task
+                await self.streaming_task
             except asyncio.CancelledError:
+                # This is expected
                 pass
         
         # Send the underlying message
@@ -149,8 +198,16 @@ class SmoothStreamWrapper:
         
     async def update(self):
         """Update the message, ensuring all buffered tokens are flushed first"""
-        # Flush any remaining tokens
-        await self._flush_buffer()
+        # Signal that streaming is complete
+        self.stream_ended.set()
+        
+        # Wait for the streaming task to finish processing the buffer
+        if self.streaming_task and not self.streaming_task.done():
+            try:
+                await self.streaming_task
+            except asyncio.CancelledError:
+                # This is expected
+                pass
         
         # Update the underlying message
         return await self.original_message.update()

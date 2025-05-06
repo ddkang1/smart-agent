@@ -136,7 +136,7 @@ if has_chainlit:
     @click.option("--debug", is_flag=True, help="Run in debug mode")
     @click.option("--no-stream-batching", is_flag=True, help="Disable token batching for streaming")
     @click.option("--batch-size", default=20, type=int, help="Token batch size for streaming (default: 20)")
-    @click.option("--flush-interval", default=0.1, type=float, help="Flush interval for token batching in seconds (default: 0.1)")
+    @click.option("--flush-interval", default=0.05, type=float, help="Flush interval for token batching in seconds (default: 0.05)")
     def chainlit_ui(port, host, debug, no_stream_batching, batch_size, flush_interval):
         """Start Chainlit web interface."""
         from .commands.chainlit import run_chainlit_ui
