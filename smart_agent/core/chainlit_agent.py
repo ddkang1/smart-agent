@@ -87,52 +87,12 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     # Use the server's own exit_stack instead of creating a new one
                     exit_stack = server.exit_stack
                 
-                # Create a fresh connection for the server with timeout
                 logger.debug(f"Connecting to MCP server: {server_name}")
-                
-                # Use a timeout for the connection
-                connection_task = asyncio.create_task(exit_stack.enter_async_context(server))
-                try:
-                    connected_server = await asyncio.wait_for(connection_task, timeout=10)  # 10 seconds timeout
-                    
-                    # CRITICAL: Always explicitly initialize the server
-                    # First try initialize() method
-                    if hasattr(connected_server, 'initialize'):
-                        logger.debug(f"Initializing MCP server: {server_name}")
-                        await connected_server.initialize()
-                    
-                    # Then try connect() method - some servers need both or either
-                    if hasattr(connected_server, 'connect'):
-                        logger.debug(f"Calling connect() on MCP server: {server_name}")
-                        await connected_server.connect()
-                    
-                    # Verify the server is ready by calling a simple method
-                    if hasattr(connected_server, 'list_tools'):
-                        logger.debug(f"Verifying connection by calling list_tools on {server_name}")
-                        # This will throw an exception if the server is not properly initialized
-                        await connected_server.list_tools()
-                        logger.debug(f"Server {server_name} verified with list_tools")
-                    
-                    mcp_servers.append(connected_server)
-                    
-                    # Store the session with its exit stack for later cleanup
-                    self.mcp_sessions[server_name] = (connected_server, exit_stack)
-                    
-                    logger.info(f"Successfully connected to MCP server: {server_name}")
-                except asyncio.TimeoutError:
-                    # Cancel the connection task if it times out
-                    connection_task.cancel()
-                    try:
-                        await connection_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                    error_msg = f"Connection to MCP server {server_name} timed out after 10 seconds"
-                    logger.warning(error_msg)
-                    connection_errors.append(error_msg)
-                    
-                    # We don't need to close the exit_stack here since we're using the server's own exit_stack
-                    # which will be closed when the server is cleaned up
-                    pass
+                connected_server = await exit_stack.enter_async_context(server)
+                mcp_servers.append(connected_server)
+                logger.debug(f"Connected to MCP server: {server_name}")
+                self.mcp_sessions[server_name] = (connected_server, exit_stack)
+
             except Exception as e:
                 # We don't need to close the exit_stack here since we're using the server's own exit_stack
                 # which will be closed when the server is cleaned up

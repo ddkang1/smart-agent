@@ -148,12 +148,6 @@ def start_tools(
             port = next_port
             next_port += 1
             
-        # Special handling for pubmed tool which has no port argument in command
-        if tool_id == "pubmed" and transport_type == "sse":
-            # For pubmed, always use the port from URL if available
-            if url_port is not None:
-                port = url_port
-
         # For 'sse' transport type with a command-specified port, don't allow automatic port reassignment
         if transport_type == "sse" and command_port is not None:
             # Check if the port is already in use by another tool we started
