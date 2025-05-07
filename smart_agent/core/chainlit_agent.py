@@ -189,7 +189,6 @@ class ChainlitSmartAgent(BaseSmartAgent):
             success = False
             
         return success
-
     
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None, assistant_msg=None, state=None) -> str:
         """
@@ -221,14 +220,9 @@ class ChainlitSmartAgent(BaseSmartAgent):
             state["assistant_reply"] = ""
             state["tool_count"] = 0
             
-        # Create a single step that will be used for all tool calls and thoughts
-        tools_step = cl.Step(type="run", name="Agent Steps")
-        await tools_step.send()
-        
-        # Store the step in state for later reference
-        if state is not None:
-            state["tools_step"] = tools_step
-            
+        # The agent_step is now created in chainlit_app.py
+        await state["agent_step"].send()
+
         try:
             # Run the agent with streaming
             from agents import Runner
@@ -238,11 +232,25 @@ class ChainlitSmartAgent(BaseSmartAgent):
             async for event in result.stream_events():
                 await self.handle_event(event, state, assistant_msg)
             
-            # Update the final step name to show the total number of steps
-            if state is not None and "tools_step" in state and state.get("tool_count", 0) > 0:
-                tools_step = state["tools_step"]
-                tools_step.name = f"Took {state['tool_count']} steps"
-                await tools_step.update()
+            # Update the final step name to show a more descriptive summary
+            if state is not None and "agent_step" in state and state.get("tool_count", 0) > 0:
+                agent_step = state["agent_step"]
+                
+                # Track different types of operations performed
+                thinking_steps = state.get("thinking_count", 0)
+                tool_steps = state.get("tool_count", 0) - thinking_steps
+                
+                # Create a more descriptive summary that works with the "Used" prefix
+                if tool_steps > 0 and thinking_steps > 0:
+                    agent_step.name = f"{tool_steps} tools and {thinking_steps} thinking steps to complete the task"
+                elif tool_steps > 0:
+                    agent_step.name = f"{tool_steps} tools to complete the task"
+                elif thinking_steps > 0:
+                    agent_step.name = f"{thinking_steps} thinking steps to complete the task"
+                else:
+                    agent_step.name = f"{state['tool_count']} operations to complete the task"
+                
+                await agent_step.update()
             
             # Get the accumulated assistant reply from state if available
             if state is not None and "assistant_reply" in state:
@@ -284,24 +292,25 @@ class ChainlitSmartAgent(BaseSmartAgent):
                         state["is_thought"] = True
                         value = arguments_dict["thought"]
                         
-                        # Increment tool count
+                        # Increment tool count and thinking count
                         if state:
                             state["tool_count"] = state.get("tool_count", 0) + 1
+                            state["thinking_count"] = state.get("thinking_count", 0) + 1
                             
-                        # Update the tools step with the thought
-                        if state and "tools_step" in state:
-                            tools_step = state["tools_step"]
+                        # Update the agent step with the thought
+                        if state and "agent_step" in state:
+                            agent_step = state["agent_step"]
                             current_count = state.get("tool_count", 0)
                             
                             # Update the step content
-                            if tools_step.output:
-                                tools_step.output += f"\n\n**Step {current_count}: Thinking**\n{value}"
+                            if agent_step.output:
+                                agent_step.output += f"\n\n**Step {current_count}: Thinking**\n{value}"
                             else:
-                                tools_step.output = f"**Step {current_count}: Thinking**\n{value}"
+                                agent_step.output = f"**Step {current_count}: Thinking**\n{value}"
                                 
-                            # Update the step name to show progress
-                            tools_step.name = f"Steps ({current_count})"
-                            await tools_step.update()
+                            # Update the step name to flow naturally after "Using"/"Used" prefix
+                            agent_step.name = f"thinking to analyze the request"
+                            await agent_step.update()
                     else:
                         # Get the tool name
                         tool_name = item.raw_item.name if hasattr(item.raw_item, 'name') else "tool"
@@ -320,20 +329,20 @@ class ChainlitSmartAgent(BaseSmartAgent):
                             state["current_tool"] = tool_name
                             state["current_tool_count"] = state.get("tool_count", 0)
                             
-                        # Update the tools step with the tool call
-                        if state and "tools_step" in state:
-                            tools_step = state["tools_step"]
+                        # Update the agent step with the tool call
+                        if state and "agent_step" in state:
+                            agent_step = state["agent_step"]
                             current_count = state.get("tool_count", 0)
                             
                             # Update the step content
-                            if tools_step.output:
-                                tools_step.output += f"\n\n**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
+                            if agent_step.output:
+                                agent_step.output += f"\n\n**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
                             else:
-                                tools_step.output = f"**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
+                                agent_step.output = f"**Step {current_count}: {tool_name}**\n```json\n{input_str}\n```"
                                 
-                            # Update the step name to show progress
-                            tools_step.name = f"Steps ({current_count})"
-                            await tools_step.update()
+                            # Update the step name to flow naturally after "Using"/"Used" prefix
+                            agent_step.name = f"{tool_name} to process the request"
+                            await agent_step.update()
                 except Exception as e:
                     error_text = f"Error parsing tool call: {e}"
                     await assistant_msg.stream_token(f"\n<error>{error_text}</error>")
@@ -353,15 +362,18 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     except json.JSONDecodeError:
                         output_content = item.output
                     
-                    # Update the tools step with the tool output
-                    if state and "tools_step" in state and state.get("current_tool_count"):
-                        tools_step = state["tools_step"]
+                    # Update the agent step with the tool output
+                    if state and "agent_step" in state and state.get("current_tool_count"):
+                        agent_step = state["agent_step"]
                         
-                        # Add the tool output to the existing output
-                        tools_step.output += f"\n\n**Output:**\n```\n{str(output_content)}\n```"
+                        # Add the tool output to the existing output with more context
+                        agent_step.output += f"\n\n**Output from {state.get('current_tool', 'tool')}:**\n```\n{str(output_content)}\n```"
+                        
+                        # Update the step name to flow naturally after "Using"/"Used" prefix
+                        agent_step.name = f"{state.get('current_tool', 'tool')} to process the result"
                         
                         # Update the step
-                        await tools_step.update()
+                        await agent_step.update()
                         
                         # Clear the current tool count from state
                         state["current_tool_count"] = None

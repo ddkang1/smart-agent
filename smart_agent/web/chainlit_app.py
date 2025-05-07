@@ -165,9 +165,24 @@ async def on_message(msg: cl.Message):
     
     # Add the user message to history
     conv.append({"role": "user", "content": user_input})
+    
+    # Initialize state
+    state = {
+        "current_type": "assistant",  # Default type is assistant message
+        "is_thought": False,          # Track pending <thought> output
+        "tool_count": 0               # Track the number of tool calls
+    }
 
+    # Create a dummy step first
+    dummy_step = cl.Step(type="run", name="Tools")
+    # await dummy_step.send()
+    
+    # Store the step in state for later reference
+    state["agent_step"] = dummy_step
+    
     # Create a placeholder message that will receive streamed tokens
-    assistant_msg = cl.Message(content="", author="Smart Agent")
+    # Set the parent_id to the step's ID to make it appear inside the step
+    assistant_msg = cl.Message(content="", author="Smart Agent", parent_id=dummy_step.id)
     await assistant_msg.send()
     
     # Wrap the message with SmoothStreamWrapper if token batching is enabled
@@ -181,11 +196,8 @@ async def on_message(msg: cl.Message):
     else:
         stream_msg = assistant_msg
 
-    state = {
-        "assistant_msg": stream_msg,
-        "current_type": "assistant",  # Default type is assistant message
-        "is_thought": False           # Track pending <thought> output
-    }
+    # Add the message to state
+    state["assistant_msg"] = stream_msg
 
     try:
         async with AsyncExitStack() as exit_stack:
