@@ -200,13 +200,20 @@ class MCPServerStdio(MCPServer):
         self.client_session_timeout_seconds = client_session_timeout_seconds
         
         # Create a fastmcp Client with stdio transport
+        # Structure the transport dictionary according to fastmcp's requirements
+        transport_dict = {
+            "mcpServers": {
+                self._name: {  # Use the server name as the key
+                    "command": self.params.get("command"),
+                    "args": self.params.get("args", []),
+                    "env": self.params.get("env"),
+                    "cwd": self.params.get("cwd")
+                }
+            }
+        }
+        
         self.client = Client(
-            transport={
-                "command": self.params.get("command"),
-                "args": self.params.get("args", []),
-                "env": self.params.get("env"),
-                "cwd": self.params.get("cwd"),
-            },
+            transport=transport_dict,
             read_timeout_seconds=datetime.timedelta(seconds=client_session_timeout_seconds) if client_session_timeout_seconds else None,
         )
         self._cleanup_lock = asyncio.Lock()
