@@ -7,6 +7,9 @@ import logging
 import os
 import sys
 
+# Flag to track if logging has been configured
+_logging_configured = False
+
 # Create a null handler that doesn't output anything
 class NullHandler(logging.Handler):
     def emit(self, record):
@@ -18,7 +21,16 @@ def configure_logging(debug=False):
     
     Args:
         debug (bool): Whether to enable debug logging.
+        
+    Returns:
+        bool: True if this was the first time configuring logging, False if already configured
     """
+    global _logging_configured
+    
+    # If logging is already configured, just return False
+    if _logging_configured:
+        return False
+        
     # Set default log level based on debug flag
     default_level = logging.DEBUG if debug else logging.INFO
     
@@ -118,3 +130,7 @@ def configure_logging(debug=False):
     if debug:
         print("DEBUG MODE ENABLED - Smart Agent running with verbose logging (WebSocket logs suppressed)")
         logging.getLogger(__name__).debug("Debug mode enabled - setting verbose logging")
+    
+    # Mark logging as configured
+    _logging_configured = True
+    return True

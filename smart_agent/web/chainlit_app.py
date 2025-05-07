@@ -175,7 +175,7 @@ async def on_message(msg: cl.Message):
 
     # Create a dummy step first
     dummy_step = cl.Step(type="run", name="Tools")
-    # await dummy_step.send()
+    await dummy_step.send()
     
     # Store the step in state for later reference
     state["agent_step"] = dummy_step
@@ -255,7 +255,7 @@ async def on_chat_end():
     """Handle chat end event."""
     logger.info("Chat session ended")
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
     # This is used when running locally with `chainlit run`
     # Note: Chainlit handles the server startup when run with `chainlit run`
-    configure_logging(debug=args.debug)
+    # configure_logging(debug=args.debug)

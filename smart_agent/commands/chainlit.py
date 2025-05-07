@@ -93,9 +93,6 @@ def run_chainlit_ui(args):
     # Import our custom logging configuration
     from smart_agent.web.logging_config import configure_logging
     
-    # Configure logging with the appropriate debug level
-    configure_logging(debug=args.debug)
-    
     # Set environment variables for the subprocess
     env = os.environ.copy()
     

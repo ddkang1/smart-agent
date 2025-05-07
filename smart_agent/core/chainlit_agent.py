@@ -221,7 +221,6 @@ class ChainlitSmartAgent(BaseSmartAgent):
             state["tool_count"] = 0
             
         # The agent_step is now created in chainlit_app.py
-        await state["agent_step"].send()
 
         try:
             # Run the agent with streaming
