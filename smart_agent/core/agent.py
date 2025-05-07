@@ -288,10 +288,14 @@ class BaseSmartAgent:
             return
             
         try:
-            # Try to get the current event loop
-            loop = asyncio.get_event_loop()
+            # Try to get the current event loop, or create a new one if there isn't one
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:  # This is raised when there is no current event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
             
-            # If the loop is closed or not running, create a new one
+            # If the loop is closed, create a new one
             if loop.is_closed():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
