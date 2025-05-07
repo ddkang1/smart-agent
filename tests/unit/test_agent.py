@@ -173,4 +173,4 @@ class TestSmartAgent:
         agent = BaseSmartAgent(mock_config_manager)
         
         # Just verify the method exists
-        assert hasattr(agent, "setup_mcp_servers")
+        assert hasattr(agent, "_setup_mcp_servers")
