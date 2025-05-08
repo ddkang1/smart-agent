@@ -198,13 +198,24 @@ class BaseSmartAgent:
                     executable = command_parts[0]
                     args = command_parts[1:] if len(command_parts) > 1 else []
                     
+                    # Get environment variables if specified
+                    env = tool_config.get("env")
+                    
+                    # Prepare params dictionary
+                    params = {
+                        "command": executable,
+                        "args": args
+                    }
+                    
+                    # Add environment variables if specified
+                    if env:
+                        params["env"] = env
+                        logger.info(f"Adding environment variables for MCP server {tool_id}")
+                    
                     logger.info(f"Adding MCP server {tool_id} with command '{command}' and session timeout: {client_session_timeout}s")
                     self.mcp_servers.append(MCPServerStdio(
                         name=tool_id,
-                        params={
-                            "command": executable,
-                            "args": args
-                        },
+                        params=params,
                         client_session_timeout_seconds=client_session_timeout
                     ))
             # For sse_to_stdio transport, always construct the command from the URL
