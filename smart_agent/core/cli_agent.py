@@ -36,6 +36,16 @@ class CLISmartAgent(BaseSmartAgent):
     """
     CLI-specific implementation of SmartAgent with features tailored for command-line interaction.
     """
+    
+    def __init__(self, config_manager, session_id=None):
+        """
+        Initialize the CLI Smart Agent.
+        
+        Args:
+            config_manager: Configuration manager instance
+            session_id: Unique identifier for this chat session
+        """
+        super().__init__(config_manager, session_id=session_id)
 
     async def process_query(self, query: str, history: List[Dict[str, str]] = None, agent=None) -> str:
         """
@@ -243,8 +253,10 @@ class CLISmartAgent(BaseSmartAgent):
             return
 
         print("\nSmart Agent Chat")
+        print(f"Session ID: {self.session_id}")
         print("Type 'exit' or 'quit' to end the conversation")
         print("Type 'clear' to clear the conversation history")
+        print(f"To continue this session later, use: smart-agent chat --session-id {self.session_id}")
 
         # Set up readline for command history
         history_file = os.path.expanduser("~/.smart_agent_history")

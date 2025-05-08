@@ -45,7 +45,7 @@ class PromptGenerator:
     """
 
     @staticmethod
-    def create_system_prompt(custom_instructions: Optional[str] = None) -> str:
+    def create_system_prompt(custom_instructions: Optional[str] = None, session_id: Optional[str] = None) -> str:
         """Generate a system prompt with current date and time.
 
         This method generates a system prompt that includes the current date and time,
@@ -55,12 +55,15 @@ class PromptGenerator:
 
         Args:
             custom_instructions: Optional custom instructions to include
+            session_id: Optional unique identifier for the chat session
 
         Returns:
             A formatted system prompt
         """
         # Get current date and time with proper locale handling
         current_datetime = PromptGenerator._get_formatted_datetime()
+        
+        session_id_prompt = f"- Current session id for the chat is {session_id}, which is utilized to store and retrieve memory from memory tool if available." if session_id else ""
 
         # Base system prompt
         base_prompt = f"""## Guidelines for Using the Think Tool
@@ -68,6 +71,7 @@ The think tool is designed to help you "take a break and think"—a deliberate p
 
 0. Assumption
    - Current date and time is {current_datetime}
+   {session_id_prompt}
 
 1. **Pre-Action Pause ("Take a Break and Think"):**
    - Before initiating any external action or calling a tool, pause to use the think tool.

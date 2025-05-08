@@ -53,12 +53,13 @@ class BaseSmartAgent:
     # Track whether cleanup has been performed
     _cleanup_done = False
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager: ConfigManager, session_id: str = None):
         """
         Initialize the Base Smart Agent.
 
         Args:
             config_manager: Configuration manager instance
+            session_id: Unique identifier for this chat session
         """
         self.config_manager = config_manager
         self.api_key = config_manager.get_api_key()
@@ -67,7 +68,8 @@ class BaseSmartAgent:
         self.temperature = config_manager.get_model_temperature()
         self.mcp_servers = []
         self.conversation_history = []
-        self.system_prompt = PromptGenerator.create_system_prompt()
+        self.session_id = session_id
+        self.system_prompt = PromptGenerator.create_system_prompt(session_id=self.session_id)
         
         # Get Langfuse configuration
         self.langfuse_config = config_manager.get_langfuse_config()
