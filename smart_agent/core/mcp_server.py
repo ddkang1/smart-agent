@@ -65,7 +65,7 @@ class MCPServerSse(MCPServer):
         # Create a fastmcp Client with SSE transport
         self.client = Client(
             transport=self.params["url"],
-            read_timeout_seconds=datetime.timedelta(seconds=client_session_timeout_seconds) if client_session_timeout_seconds else None,
+            timeout=client_session_timeout_seconds,
         )
         self._cleanup_lock = asyncio.Lock()
         self._connected = False
@@ -214,7 +214,7 @@ class MCPServerStdio(MCPServer):
         
         self.client = Client(
             transport=transport_dict,
-            read_timeout_seconds=datetime.timedelta(seconds=client_session_timeout_seconds) if client_session_timeout_seconds else None,
+            timeout=client_session_timeout_seconds,
         )
         self._cleanup_lock = asyncio.Lock()
         self._connected = False

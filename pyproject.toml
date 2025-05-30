@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-agent"
-version = "0.8.6"
+version = "0.8.7"
 description = "Smart AI agent with reasoning and tool use capabilities"
 readme = "README.md"
 authors = [
@@ -25,9 +25,9 @@ dependencies = [
     "python-dotenv",
     "pyyaml>=6.0",
     "uv",
-    "openai-agents[litellm]==0.0.14",
+    "openai-agents[litellm]==0.0.16",
     "rich",
-    "fastmcp>=2.2.7",
+    "fastmcp>=2.5.2",
     "mcp[cli]>=1.6",
     "backoff>=2.2.1",
     "anyio>=3.7.0"
