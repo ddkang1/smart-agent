@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "smart-agent"
-version = "0.8.7"
+version = "0.8.8"
 description = "Smart AI agent with reasoning and tool use capabilities"
 readme = "README.md"
 authors = [
@@ -16,7 +16,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "colorama",
     "openai",
@@ -25,12 +25,13 @@ dependencies = [
     "python-dotenv",
     "pyyaml>=6.0",
     "uv",
-    "openai-agents[litellm]==0.0.16",
+    "openai-agents[litellm]==0.0.17",
     "rich",
-    "fastmcp>=2.5.2",
+    "fastmcp>=2.6.1",
     "mcp[cli]>=1.6",
     "backoff>=2.2.1",
-    "anyio>=3.7.0"
+    "anyio>=3.7.0",
+    "httpcore>=1.0.9",
 ]
 
 [project.optional-dependencies]

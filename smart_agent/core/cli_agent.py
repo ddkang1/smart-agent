@@ -165,9 +165,9 @@ class CLISmartAgent(BaseSmartAgent):
                             key, value = next(iter(arguments_dict.items()))
                             if key == "thought":
                                 is_thought = True
-                                add_to_buffer("\n<thought>\n", "thought")
+                                add_to_buffer("\n\n<thought>\n", "thought")
                                 add_to_buffer(str(value), "thought")
-                                add_to_buffer("\n</thought>", "thought")
+                                add_to_buffer("\n</thought>\n\n", "thought")
                             else:
                                 is_thought = False
                                 add_to_buffer("\n<tool>\n", "tool")
@@ -297,7 +297,7 @@ class CLISmartAgent(BaseSmartAgent):
                     # Set up MCP servers for this query
                     mcp_servers = []
                     for server in self.mcp_servers:
-                        # Create a fresh connection for each server
+                        # Enter the server as an async context manager
                         connected_server = await exit_stack.enter_async_context(server)
                         mcp_servers.append(connected_server)
                         logger.debug(f"Connected to MCP server: {connected_server.name}")

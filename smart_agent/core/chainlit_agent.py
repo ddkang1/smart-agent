@@ -69,11 +69,24 @@ class ChainlitSmartAgent(BaseSmartAgent):
                 exit_stack = shared_exit_stack if shared_exit_stack else server.exit_stack
                 
                 logger.debug(f"Connecting to MCP server: {server_name}")
-                connected_server = await exit_stack.enter_async_context(server)
+                
+                # Use timeout for connection to prevent hanging
+                connected_server = await asyncio.wait_for(
+                    exit_stack.enter_async_context(server),
+                    timeout=10.0
+                )
+                
                 mcp_servers.append(connected_server)
                 logger.debug(f"Connected to MCP server: {server_name}")
                 self.mcp_sessions[server_name] = (connected_server, exit_stack)
 
+            except asyncio.TimeoutError:
+                error_msg = f"Timeout connecting to MCP server: {server_name}"
+                logger.warning(error_msg)
+                connection_errors.append(error_msg)
+            except asyncio.CancelledError:
+                logger.info(f"Connection cancelled for MCP server: {server_name}")
+                raise  # Re-raise to properly handle cancellation
             except Exception as e:
                 error_msg = f"Error connecting to MCP server {server_name}: {e}"
                 logger.error(error_msg)
@@ -124,13 +137,26 @@ class ChainlitSmartAgent(BaseSmartAgent):
                     # If the client session has a shutdown method, call it
                     if hasattr(client_session, 'shutdown') and callable(getattr(client_session, 'shutdown')):
                         try:
-                            await asyncio.wait_for(client_session.shutdown(), timeout=5)
+                            await asyncio.wait_for(client_session.shutdown(), timeout=3.0)
                             logger.debug(f"Shutdown called for MCP server: {name}")
                         except (asyncio.TimeoutError, Exception) as e:
-                            logger.warning(f"Error during shutdown of MCP server {name}: {e}")
+                            logger.debug(f"Timeout or error during shutdown of MCP server {name}: {e}")
+                    
+                    # If the client session has a cleanup method, call it
+                    if hasattr(client_session, 'cleanup') and callable(getattr(client_session, 'cleanup')):
+                        try:
+                            await asyncio.wait_for(client_session.cleanup(), timeout=3.0)
+                            logger.debug(f"Cleanup called for MCP server: {name}")
+                        except (asyncio.TimeoutError, Exception) as e:
+                            logger.debug(f"Timeout or error during cleanup of MCP server {name}: {e}")
                     
                     # Close the exit stack which will clean up all resources
-                    await exit_stack.aclose()
+                    # Use a shorter timeout to avoid hanging
+                    try:
+                        await asyncio.wait_for(exit_stack.aclose(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Timeout closing exit stack for MCP server {name}")
+                    
                     logger.info(f"Successfully disconnected from MCP server: {name}")
                     disconnected_servers.append(name)
                 except Exception as e:
@@ -227,38 +253,65 @@ class ChainlitSmartAgent(BaseSmartAgent):
             from agents import Runner
             result = Runner.run_streamed(agent, history, max_turns=100)
             
-            # Process the stream events using handle_event
-            async for event in result.stream_events():
-                await self.handle_event(event, state, assistant_msg)
+            # Process the stream events using handle_event with individual error handling
+            try:
+                async for event in result.stream_events():
+                    try:
+                        await self.handle_event(event, state, assistant_msg)
+                    except Exception as e:
+                        logger.error(f"Error handling event {event.type}: {e}")
+                        # Continue processing other events instead of failing completely
+                        if assistant_msg:
+                            try:
+                                await assistant_msg.stream_token(f"\n[Error processing event: {str(e)}]\n")
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.error(f"Error in stream processing: {e}")
+                if assistant_msg:
+                    try:
+                        await assistant_msg.stream_token(f"\n[Error during streaming: {str(e)}]\n")
+                    except Exception:
+                        pass
             
             # Update the final step name to show a more descriptive summary
             if state is not None and "agent_step" in state and state.get("tool_count", 0) > 0:
-                agent_step = state["agent_step"]
-                
-                # Track different types of operations performed
-                thinking_steps = state.get("thinking_count", 0)
-                tool_steps = state.get("tool_count", 0) - thinking_steps
-                
-                # Create a more descriptive summary that works with the "Used" prefix
-                if tool_steps > 0 and thinking_steps > 0:
-                    agent_step.name = f"{tool_steps} tools and {thinking_steps} thinking steps to complete the task"
-                elif tool_steps > 0:
-                    agent_step.name = f"{tool_steps} tools to complete the task"
-                elif thinking_steps > 0:
-                    agent_step.name = f"{thinking_steps} thinking steps to complete the task"
-                else:
-                    agent_step.name = f"{state['tool_count']} operations to complete the task"
-                
-                await agent_step.update()
+                try:
+                    agent_step = state["agent_step"]
+                    
+                    # Track different types of operations performed
+                    thinking_steps = state.get("thinking_count", 0)
+                    tool_steps = state.get("tool_count", 0) - thinking_steps
+                    
+                    # Create a more descriptive summary that works with the "Used" prefix
+                    if tool_steps > 0 and thinking_steps > 0:
+                        agent_step.name = f"{tool_steps} tools and {thinking_steps} thinking steps to complete the task"
+                    elif tool_steps > 0:
+                        agent_step.name = f"{tool_steps} tools to complete the task"
+                    elif thinking_steps > 0:
+                        agent_step.name = f"{thinking_steps} thinking steps to complete the task"
+                    else:
+                        agent_step.name = f"{state['tool_count']} operations to complete the task"
+                    
+                    await agent_step.update()
+                except Exception as e:
+                    logger.error(f"Error updating agent step: {e}")
             
             # Get the accumulated assistant reply from state if available
             if state is not None and "assistant_reply" in state:
                 return state["assistant_reply"].strip()
             return ""
+            
+        except asyncio.CancelledError:
+            logger.info("Query processing was cancelled")
+            return "Request was cancelled."
+        except asyncio.TimeoutError:
+            logger.error("Query processing timed out")
+            return "Request timed out. Please try a simpler query."
         except Exception as e:
             # Log the error and return a user-friendly message
-            logger.error(f"Error processing query: {e}")
-            return f"I'm sorry, I encountered an error: {str(e)}. Please try again later."
+            logger.exception(f"Unexpected error processing query: {e}")
+            return f"I'm sorry, I encountered an unexpected error: {str(e)}. Please try again later."
 
     async def handle_event(self, event, state, assistant_msg):
         """
@@ -396,9 +449,18 @@ class ChainlitSmartAgent(BaseSmartAgent):
                 if item.raw_item.role == "assistant" and state and "assistant_reply" in state:
                     state["assistant_reply"] += ItemHelpers.text_message_output(item)
                 
+        except asyncio.CancelledError:
+            logger.debug("Event handling was cancelled")
+            raise  # Re-raise cancellation to properly handle it
         except Exception as e:
-            logger.exception(f"Error in handle_event: {e}")
+            logger.exception(f"Error in handle_event for {event.type}: {e}")
             try:
-                await assistant_msg.stream_token(f"\n\n[Error processing response: {str(e)}]\n\n")
-            except Exception:
-                pass
+                # Try to provide user feedback without breaking the stream
+                error_msg = f"\n\n[Error processing {event.type}: {str(e)}]\n\n"
+                if hasattr(assistant_msg, 'stream_token'):
+                    await assistant_msg.stream_token(error_msg)
+                elif hasattr(assistant_msg, 'content'):
+                    assistant_msg.content += error_msg
+                    await assistant_msg.update()
+            except Exception as stream_error:
+                logger.error(f"Failed to stream error message: {stream_error}")

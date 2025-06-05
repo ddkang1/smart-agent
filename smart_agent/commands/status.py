@@ -92,6 +92,23 @@ def get_tools_status(
                 status["running"] = True
             
             status["url"] = tool_config.get("url", "")
+        elif transport_type in ["streamable-http", "streamable_http"]:
+            # Check if there's a command for this streamable-http tool
+            command = config_manager.get_tool_command(tool_id)
+            if command:
+                # If there's a command, check if it's running locally
+                running = process_manager.is_tool_running(tool_id)
+                status["running"] = running
+                
+                if running:
+                    # Get port information for locally running streamable-http tools
+                    port = process_manager.get_tool_port(tool_id)
+                    status["port"] = port
+            else:
+                # For remote streamable-http tools without a command, assume they're always running
+                status["running"] = True
+            
+            status["url"] = tool_config.get("url", "")
         else:
             # Check if the tool is running
             running = process_manager.is_tool_running(tool_id)

@@ -3,6 +3,9 @@
 This module provides a web interface for Smart Agent using Chainlit.
 """
 
+from smart_agent.web.suppress_errors import install_global_error_suppression
+from smart_agent.web.httpcore_patch import patch_httpcore, suppress_async_warnings
+
 # Standard library imports
 import os
 import sys
@@ -11,18 +14,75 @@ import logging
 import asyncio
 import warnings
 import argparse
+import signal
 from typing import List, Dict, Any
 from contextlib import AsyncExitStack
+import sys
 
-# Import custom logging configuration
+# Suppress specific warnings that can cause runtime errors
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*async generator ignored GeneratorExit.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Attempted to exit cancel scope in a different task.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*was never awaited.*")
+
+# Suppress httpcore and anyio related warnings
+warnings.filterwarnings("ignore", module="httpcore.*")
+warnings.filterwarnings("ignore", module="anyio.*")
+
+# Configure asyncio to handle connection cleanup better
+def configure_asyncio():
+    """Configure asyncio for better connection handling."""
+    try:
+        import asyncio
+        import platform
+        
+        # Set a more robust event loop policy for better cleanup
+        if platform.system() == 'Windows':
+            # Use ProactorEventLoop on Windows
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        else:
+            # Use default policy but with better exception handling
+            loop = asyncio.get_event_loop()
+            # Set exception handler to suppress connection errors
+            def exception_handler(loop, context):
+                exception = context.get('exception')
+                if exception:
+                    # Suppress specific connection-related exceptions
+                    if isinstance(exception, (ConnectionResetError, BrokenPipeError)):
+                        return
+                    if 'async generator ignored GeneratorExit' in str(exception):
+                        return
+                    if 'cancel scope in a different task' in str(exception):
+                        return
+                # Log other exceptions normally
+                loop.default_exception_handler(context)
+            
+            loop.set_exception_handler(exception_handler)
+    except Exception as e:
+        # If configuration fails, continue without it
+        logger.debug(f"Failed to configure asyncio: {e}")
+
+# Configure asyncio when module loads
+configure_asyncio()
+
+# Global shutdown flag
+_shutdown_requested = False
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    global _shutdown_requested
+    _shutdown_requested = True
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
 from smart_agent.web.logging_config import configure_logging
 
 # Configure agents tracing
 from agents import Runner, set_tracing_disabled
 set_tracing_disabled(disabled=True)
 
-# Suppress specific warnings
-warnings.filterwarnings("ignore", message="Attempted to exit cancel scope in a different task than it was entered in")
 os.environ["GRPC_VERBOSITY"] = "ERROR"
 os.environ["ABSL_LOGGING_LOG_TO_STDERR"] = "0"
 
@@ -203,12 +263,34 @@ async def on_message(msg: cl.Message):
         async with AsyncExitStack() as exit_stack:
             logger.info("Connecting to MCP servers...")
             mcp_servers = []
+            connection_errors = []
+            
+            # Connect to MCP servers with individual error handling
             for server in cl.user_session.smart_agent.mcp_servers:
-                connected_server = await exit_stack.enter_async_context(server)
-                mcp_servers.append(connected_server)
-                logger.debug(f"Connected to MCP server: {connected_server.name}")
+                server_name = getattr(server, 'name', 'unknown')
+                try:
+                    # Use timeout for connection to prevent hanging
+                    connected_server = await asyncio.wait_for(
+                        exit_stack.enter_async_context(server),
+                        timeout=10.0
+                    )
+                    mcp_servers.append(connected_server)
+                    logger.debug(f"Connected to MCP server: {connected_server.name}")
+                except asyncio.TimeoutError:
+                    error_msg = f"Timeout connecting to MCP server: {server_name}"
+                    logger.warning(error_msg)
+                    connection_errors.append(error_msg)
+                except Exception as e:
+                    error_msg = f"Error connecting to MCP server {server_name}: {e}"
+                    logger.warning(error_msg)
+                    connection_errors.append(error_msg)
 
             logger.info(f"Successfully connected to {len(mcp_servers)} MCP servers")
+            
+            # Show connection warnings to user if any
+            if connection_errors:
+                warning_msg = "Warning: Some MCP servers failed to connect:\n" + "\n".join(connection_errors)
+                await cl.Message(content=warning_msg, author="System").send()
 
             agent = Agent(
                 name="Assistant",
@@ -220,17 +302,33 @@ async def on_message(msg: cl.Message):
                 mcp_servers=mcp_servers,
             )
 
-            assistant_reply = await cl.user_session.smart_agent.process_query(
-                user_input,
-                conv,
-                agent=agent,
-                assistant_msg=stream_msg,
-                state=state
-            )
-        
-            conv.append({"role": "assistant", "content": assistant_reply})
+            try:
+                # Process query with timeout to prevent hanging
+                assistant_reply = await asyncio.wait_for(
+                    cl.user_session.smart_agent.process_query(
+                        user_input,
+                        conv,
+                        agent=agent,
+                        assistant_msg=stream_msg,
+                        state=state
+                    ),
+                    timeout=300.0  # 5 minute timeout for query processing
+                )
+                
+                conv.append({"role": "assistant", "content": assistant_reply})
+                
+            except asyncio.TimeoutError:
+                error_msg = "Request timed out. Please try a simpler query or try again later."
+                logger.error("Query processing timed out")
+                await cl.Message(content=error_msg, author="System").send()
+                return
+            except Exception as e:
+                error_msg = f"Error processing query: {str(e)}"
+                logger.exception(error_msg)
+                await cl.Message(content=error_msg, author="System").send()
+                return
             
-        # Log to Langfuse if enabled
+        # Log to Langfuse if enabled (with error handling)
         if cl.user_session.langfuse_enabled and cl.user_session.langfuse:
             try:
                 trace = cl.user_session.langfuse.trace(
@@ -247,13 +345,87 @@ async def on_message(msg: cl.Message):
                 logger.error(f"Langfuse logging error: {e}")
                 
     except Exception as e:
-        logger.exception(f"Error processing stream events: {e}")
-        await cl.Message(content=f"Error: {e}", author="System").send()
+        logger.exception(f"Unexpected error in message handler: {e}")
+        error_msg = "An unexpected error occurred. Please refresh the page and try again."
+        try:
+            await cl.Message(content=error_msg, author="System").send()
+        except Exception:
+            # If we can't even send an error message, log it
+            logger.critical("Failed to send error message to user")
 
 @cl.on_chat_end
 async def on_chat_end():
-    """Handle chat end event."""
-    logger.info("Chat session ended")
+    """Handle chat end event with robust cleanup."""
+    logger.info("Chat session ended - starting cleanup")
+    
+    cleanup_tasks = []
+    
+    # Clean up the smart agent if it exists
+    if hasattr(cl.user_session, 'smart_agent') and cl.user_session.smart_agent:
+        try:
+            # Create a cleanup task with timeout
+            async def cleanup_agent():
+                try:
+                    if hasattr(cl.user_session.smart_agent, 'cleanup'):
+                        await cl.user_session.smart_agent.cleanup()
+                    elif hasattr(cl.user_session.smart_agent, 'aclose'):
+                        await cl.user_session.smart_agent.aclose()
+                    logger.info("Smart agent cleaned up successfully")
+                except Exception as e:
+                    logger.error(f"Error in smart agent cleanup: {e}")
+            
+            # Add cleanup task with timeout
+            cleanup_tasks.append(asyncio.wait_for(cleanup_agent(), timeout=10.0))
+            
+        except Exception as e:
+            logger.error(f"Error setting up smart agent cleanup: {e}")
+    
+    # Clean up HTTP client connections if they exist
+    if hasattr(cl.user_session, 'smart_agent') and cl.user_session.smart_agent:
+        try:
+            async def cleanup_http_client():
+                try:
+                    if hasattr(cl.user_session.smart_agent, 'openai_client'):
+                        client = cl.user_session.smart_agent.openai_client
+                        if hasattr(client, 'close'):
+                            await client.close()
+                        elif hasattr(client, 'aclose'):
+                            await client.aclose()
+                    logger.debug("HTTP client cleaned up successfully")
+                except Exception as e:
+                    logger.debug(f"Error cleaning up HTTP client: {e}")
+            
+            cleanup_tasks.append(asyncio.wait_for(cleanup_http_client(), timeout=5.0))
+            
+        except Exception as e:
+            logger.error(f"Error setting up HTTP client cleanup: {e}")
+    
+    # Execute all cleanup tasks concurrently with individual error handling
+    if cleanup_tasks:
+        try:
+            # Use asyncio.gather with return_exceptions=True to handle individual failures
+            results = await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+            
+            # Log any cleanup failures
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    if isinstance(result, asyncio.TimeoutError):
+                        logger.warning(f"Cleanup task {i} timed out")
+                    else:
+                        logger.error(f"Cleanup task {i} failed: {result}")
+                        
+        except Exception as e:
+            logger.error(f"Unexpected error during cleanup: {e}")
+    
+    # Force cleanup of session variables
+    try:
+        for attr in ['smart_agent', 'config_manager', 'conversation_history', 'langfuse']:
+            if hasattr(cl.user_session, attr):
+                setattr(cl.user_session, attr, None)
+    except Exception as e:
+        logger.error(f"Error clearing session variables: {e}")
+    
+    logger.info("Chat session cleanup completed")
 
 # if __name__ == "__main__":
     # This is used when running locally with `chainlit run`

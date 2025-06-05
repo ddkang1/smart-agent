@@ -235,6 +235,11 @@ def start_tools(
             #     if process_manager.debug:
             #         logger.debug(f"Using stdio_to_ws transport with command: '{command}'")
             # sse_to_stdio is handled in the command construction section above
+            elif transport_type in ["streamable-http", "streamable_http"]:
+                # For streamable-http transport, we run the command directly with streamable-http transport
+                # The command should already include the --transport streamable-http parameter
+                if process_manager.debug:
+                    logger.debug(f"Using streamable-http transport with command: '{command}'")
             else:
                 logger.warning(f"Unknown transport type '{transport_type}' for {tool_id}, defaulting to stdio_to_sse")
                 command = f"npx -y supergateway --stdio \"{command}\" --header \"X-Accel-Buffering: no\" --port {{port}} --baseUrl http://{hostname}:{{port}} --cors"
@@ -251,6 +256,15 @@ def start_tools(
                     port=port,
                     background=background,
                     redirect_io=False  # Don't redirect stdin/stdout/stderr for 'sse' transport type
+                )
+            elif transport_type in ["streamable-http", "streamable_http"]:
+                # Start the tool process with special handling for streamable-http transport type
+                pid, actual_port = process_manager.start_tool_process(
+                    tool_id=tool_id,
+                    command=command,
+                    port=port,
+                    background=background,
+                    redirect_io=False  # Don't redirect stdin/stdout/stderr for streamable-http transport type
                 )
             else:
                 # Start the tool process normally for other transport types
