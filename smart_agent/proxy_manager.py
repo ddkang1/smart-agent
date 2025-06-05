@@ -123,6 +123,7 @@ class ProxyManager:
             "docker",
             "run",
             "-d",  # Run as daemon
+            "--pull=always",  # Always pull the latest image before starting
             "-p",
             f"{api_port}:{api_port}",
             "--name",
